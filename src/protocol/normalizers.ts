@@ -67,7 +67,7 @@ export function normalizeToolEvent(
     };
   }
 
-  const data = msg.data && typeof msg.data === 'object' ? asRecord(msg.data) : {};
+  const data = msg.data && typeof msg.data === 'object' && !Array.isArray(msg.data) ? asRecord(msg.data) : {};
 
   return {
     id: msg.toolCallId || asString(data.tool_call_id) || makeId(),
@@ -94,13 +94,19 @@ function formatToolCall(call: unknown): string {
 }
 
 function formatToolResult(data: Record<string, unknown>, msg: ServerMessage): string {
-  const details = {
-    tool_call_id: data.tool_call_id || msg.toolCallId,
-    function_name: data.function_name || msg.name,
-    result: parseJsonMaybe(data.result ?? data.data ?? msg.result ?? msg.content ?? msg.data),
-  };
+  if (Object.keys(data).length) {
+    return formatObject(parseToolResultData(data));
+  }
 
-  return formatObject(details);
+  return formatObject(parseJsonMaybe(msg.result ?? msg.content ?? msg.data));
+}
+
+function parseToolResultData(data: Record<string, unknown>): Record<string, unknown> {
+  const parsed = { ...data };
+  for (const key of ['result', 'content', 'data', 'output']) {
+    if (key in parsed) parsed[key] = parseJsonMaybe(parsed[key]);
+  }
+  return parsed;
 }
 
 function parseJsonMaybe(value: unknown): unknown {
