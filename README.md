@@ -138,15 +138,15 @@ python -m http.server 8080
 }
 ```
 
-当消息包含图片或文本文件时，会继续追加多模态内容：
+当消息包含附件时，前端会将每个附件读取为纯 Base64，并统一追加为 `file` 内容：
 
 ```json
 {
   "type": "chat",
   "content": [
     { "type": "text", "text": "用户输入" },
-    { "type": "file", "file": { "filename": "notes.md", "mimeType": "text/markdown", "content": "文件文本" } },
-    { "type": "image_url", "image_url": { "url": "data:image/png;base64,..." } }
+    { "type": "file", "file": { "filename": "notes.md", "mimeType": "text/markdown", "content": "IyBOb3Rlcy4uLg==" } },
+    { "type": "file", "file": { "filename": "R.png", "mimeType": "image/png", "content": "iVBORw0KGgo..." } }
   ]
 }
 ```
@@ -290,15 +290,15 @@ All user messages are sent as `type: "chat"`. Plain text is also placed in the `
 }
 ```
 
-When a message includes images or text files, the frontend appends multimodal content parts:
+When a message includes attachments, the frontend reads every attachment as raw Base64 and appends file content parts:
 
 ```json
 {
   "type": "chat",
   "content": [
     { "type": "text", "text": "User input" },
-    { "type": "file", "file": { "filename": "notes.md", "mimeType": "text/markdown", "content": "File text" } },
-    { "type": "image_url", "image_url": { "url": "data:image/png;base64,..." } }
+    { "type": "file", "file": { "filename": "notes.md", "mimeType": "text/markdown", "content": "IyBOb3Rlcy4uLg==" } },
+    { "type": "file", "file": { "filename": "R.png", "mimeType": "image/png", "content": "iVBORw0KGgo..." } }
   ]
 }
 ```

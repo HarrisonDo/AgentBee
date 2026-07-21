@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, toRaw, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue';
 import {
   ArrowDownToLine,
   PanelLeftClose,
@@ -14,6 +14,8 @@ import SettingsView from './components/SettingsView.vue';
 import SessionList from './components/SessionList.vue';
 import SystemLogGroup from './components/SystemLogGroup.vue';
 import SubAgentPanel from './components/SubAgentPanel.vue';
+import SubAgentMenu from './components/SubAgentMenu.vue';
+import type { SubAgentSummary } from './components/SubAgentMenu.vue';
 import { useI18n } from './composables/useI18n';
 import { useSessions } from './composables/useSessions';
 import { useTheme } from './composables/useTheme';
@@ -44,6 +46,7 @@ type VisibleChatItem =
   };
 
 const chatContainer = ref<HTMLElement | null>(null);
+const chatShell = ref<HTMLElement | null>(null);
 const shouldAutoScroll = ref(true);
 const sidebarCollapsed = ref(false);
 const currentView = ref<'chat' | 'settings'>('chat');
@@ -54,7 +57,20 @@ const settingStatus = ref('');
 const settingStatusTone = ref<SettingStatusTone>('success');
 const availableModels = ref<string[]>([]);
 const showDebugInfo = ref(false);
+const selectedSubAgentName = ref<string | null>(null);
+const subAgentPaneWidth = ref(readSubAgentPaneWidth());
+const isSubAgentResizing = ref(false);
 const appVersion = __APP_VERSION__;
+
+const SUB_AGENT_MIN_WIDTH = 300;
+const SUB_AGENT_MAX_WIDTH = 680;
+const CHAT_PANE_MIN_WIDTH = 360;
+const SUB_AGENT_DIVIDER_WIDTH = 8;
+const SUB_AGENT_WIDTH_STORAGE_KEY = 'agentbee.subAgentPaneWidth';
+let resizeStartX = 0;
+let resizeStartWidth = 0;
+let resizePointerId: number | null = null;
+let chatShellResizeObserver: ResizeObserver | null = null;
 
 const { locale, setLocale, t } = useI18n();
 const { setTheme, theme } = useTheme();
@@ -130,23 +146,47 @@ const subAgentMessages = computed(() => {
   return messages.filter((msg) => msg.isSubTalk === 1);
 });
 
-const subAgents = computed(() => {
-  const agents = new Map<string, { name: string; count: number }>();
+const subAgents = computed<SubAgentSummary[]>(() => {
+  const agents = new Map<string, SubAgentSummary>();
   subAgentMessages.value.forEach((msg) => {
     const name = msg.WindowName;
     if (name) {
       const existing = agents.get(name);
       if (existing) {
         existing.count += 1;
+        existing.lastActive = msg.time || existing.lastActive;
+        existing.role ||= msg.senderRole?.trim() || msg.senderName?.trim() || '';
+        existing.status = msg.status || existing.status;
       } else {
         agents.set(name, {
           name,
           count: 1,
+          lastActive: msg.time || '',
+          role: msg.senderRole?.trim() || msg.senderName?.trim() || '',
+          status: msg.status || '',
         });
       }
     }
   });
   return Array.from(agents.values());
+});
+
+const selectedSubAgent = computed(() => (
+  subAgents.value.find((agentItem) => agentItem.name === selectedSubAgentName.value) || null
+));
+
+watch(subAgents, (agents) => {
+  if (
+    selectedSubAgentName.value &&
+    !agents.some((agentItem) => agentItem.name === selectedSubAgentName.value)
+  ) {
+    selectedSubAgentName.value = null;
+  }
+});
+
+watch(chatShell, (nextShell, previousShell) => {
+  if (previousShell) chatShellResizeObserver?.unobserve(previousShell);
+  if (nextShell) chatShellResizeObserver?.observe(nextShell);
 });
 
 function onSend(text: string, attachments: ClientAttachment[]) {
@@ -227,7 +267,89 @@ function deleteSubAgent(agentName: string) {
   const session = sessions.activeSession.value;
   if (!session) return;
   session.messages = session.messages.filter((msg) => msg.WindowName !== agentName);
+  if (selectedSubAgentName.value === agentName) {
+    selectedSubAgentName.value = null;
+  }
   sessions.saveSessions();
+}
+
+function selectSubAgent(agentName: string) {
+  selectedSubAgentName.value = agentName;
+  nextTick(() => {
+    subAgentPaneWidth.value = clampSubAgentPaneWidth(subAgentPaneWidth.value);
+  });
+}
+
+function closeSubAgentPanel() {
+  selectedSubAgentName.value = null;
+}
+
+function startSubAgentResize(event: PointerEvent) {
+  if (event.button !== 0 || !selectedSubAgent.value) return;
+  const target = event.currentTarget as HTMLElement;
+  resizePointerId = event.pointerId;
+  resizeStartX = event.clientX;
+  resizeStartWidth = subAgentPaneWidth.value;
+  isSubAgentResizing.value = true;
+  target.setPointerCapture(event.pointerId);
+  event.preventDefault();
+}
+
+function resizeSubAgentPanel(event: PointerEvent) {
+  if (!isSubAgentResizing.value || resizePointerId !== event.pointerId) return;
+  subAgentPaneWidth.value = clampSubAgentPaneWidth(
+    resizeStartWidth + resizeStartX - event.clientX,
+  );
+}
+
+function stopSubAgentResize(event: PointerEvent) {
+  if (resizePointerId !== event.pointerId) return;
+  const target = event.currentTarget as HTMLElement;
+  if (target.hasPointerCapture(event.pointerId)) {
+    target.releasePointerCapture(event.pointerId);
+  }
+  isSubAgentResizing.value = false;
+  resizePointerId = null;
+  persistSubAgentPaneWidth();
+}
+
+function resizeSubAgentWithKeyboard(event: KeyboardEvent) {
+  const steps: Record<string, number> = {
+    ArrowLeft: 24,
+    ArrowRight: -24,
+  };
+  if (!(event.key in steps) && event.key !== 'Home' && event.key !== 'End') return;
+  event.preventDefault();
+
+  if (event.key === 'Home') {
+    subAgentPaneWidth.value = SUB_AGENT_MIN_WIDTH;
+  } else if (event.key === 'End') {
+    subAgentPaneWidth.value = clampSubAgentPaneWidth(SUB_AGENT_MAX_WIDTH);
+  } else {
+    subAgentPaneWidth.value = clampSubAgentPaneWidth(
+      subAgentPaneWidth.value + steps[event.key],
+    );
+  }
+  persistSubAgentPaneWidth();
+}
+
+function clampSubAgentPaneWidth(width: number) {
+  const shellWidth = chatShell.value?.getBoundingClientRect().width || window.innerWidth;
+  const availableWidth = shellWidth - CHAT_PANE_MIN_WIDTH - SUB_AGENT_DIVIDER_WIDTH;
+  const maxWidth = Math.max(
+    SUB_AGENT_MIN_WIDTH,
+    Math.min(SUB_AGENT_MAX_WIDTH, availableWidth),
+  );
+  return Math.round(Math.max(SUB_AGENT_MIN_WIDTH, Math.min(width, maxWidth)));
+}
+
+function persistSubAgentPaneWidth() {
+  localStorage.setItem(SUB_AGENT_WIDTH_STORAGE_KEY, String(subAgentPaneWidth.value));
+}
+
+function readSubAgentPaneWidth() {
+  const savedWidth = Number(localStorage.getItem('agentbee.subAgentPaneWidth'));
+  return Number.isFinite(savedWidth) && savedWidth > 0 ? savedWidth : 420;
 }
 
 function toggleSidebar() {
@@ -465,8 +587,22 @@ function parseModels(value: unknown): string[] {
 }
 
 onMounted(() => {
+  chatShellResizeObserver = new ResizeObserver(() => {
+    if (!selectedSubAgent.value) return;
+    const clampedWidth = clampSubAgentPaneWidth(subAgentPaneWidth.value);
+    if (clampedWidth !== subAgentPaneWidth.value) {
+      subAgentPaneWidth.value = clampedWidth;
+      persistSubAgentPaneWidth();
+    }
+  });
+  if (chatShell.value) chatShellResizeObserver.observe(chatShell.value);
   scrollToLatestAfterRender();
   agent.startAutoConnect();
+});
+
+onBeforeUnmount(() => {
+  chatShellResizeObserver?.disconnect();
+  chatShellResizeObserver = null;
 });
 
 function readAgentConfig(): Record<string, unknown> {
@@ -662,56 +798,95 @@ function setNestedValue(source: Record<string, unknown>, path: string[], value: 
           <strong>{{ currentView === 'settings' ? t.settings : (sessions.activeSession.value?.title || t.newConversation) }}</strong>
           <span>{{ activeMeta }}</span>
         </div>
-        <button
-          v-if="currentView === 'settings'"
-          type="button"
-          class="topbar-close icon-button"
-          :title="t.closeSettings"
-          @click="closeSettings"
-        >
-          <X :size="17" aria-hidden="true" />
-        </button>
+        <div class="topbar-actions">
+          <SubAgentMenu
+            v-if="currentView === 'chat' && subAgents.length"
+            :agents="subAgents"
+            :labels="t"
+            :selected-agent-name="selectedSubAgentName"
+            @delete-sub-agent="deleteSubAgent"
+            @select-agent="selectSubAgent"
+          />
+          <button
+            v-if="currentView === 'settings'"
+            type="button"
+            class="topbar-close icon-button"
+            :title="t.closeSettings"
+            @click="closeSettings"
+          >
+            <X :size="17" aria-hidden="true" />
+          </button>
+        </div>
       </header>
 
-      <div v-if="currentView === 'chat'" class="chat-shell">
-        <section ref="chatContainer" class="chat-area" @scroll="onScroll">
-          <div v-if="!sessions.activeSession.value?.messages.length" class="empty">
-            {{ t.empty }}
-          </div>
-          <template v-for="item in visibleChatItems" :key="item.key">
-            <SystemLogGroup
-              v-if="item.type === 'system-group'"
-              :labels="t"
-              :messages="item.messages"
-            />
-            <ChatMessage
-              v-else
-              :labels="t"
-              :message="item.message"
-              :show-debug-info="showDebugInfo"
-              @resend-user-message="resendUserMessage"
-              @update-user-message="updateAndResendUserMessage"
-            />
-          </template>
-        </section>
-        <button
-          v-if="!shouldAutoScroll"
-          type="button"
-          class="scroll-bottom-floating"
-          :title="t.scrollToBottom"
-          @click="scrollToBottom"
-        >
-          <ArrowDownToLine :size="18" aria-hidden="true" />
-        </button>
+      <div
+        v-if="currentView === 'chat'"
+        ref="chatShell"
+        class="chat-shell"
+        :class="{
+          'has-subagent': selectedSubAgent,
+          'is-resizing': isSubAgentResizing,
+        }"
+        :style="{ '--subagent-pane-width': `${subAgentPaneWidth}px` }"
+      >
+        <div class="chat-pane">
+          <section ref="chatContainer" class="chat-area" @scroll="onScroll">
+            <div v-if="!sessions.activeSession.value?.messages.length" class="empty">
+              {{ t.empty }}
+            </div>
+            <template v-for="item in visibleChatItems" :key="item.key">
+              <SystemLogGroup
+                v-if="item.type === 'system-group'"
+                :labels="t"
+                :messages="item.messages"
+              />
+              <ChatMessage
+                v-else
+                :labels="t"
+                :message="item.message"
+                :show-debug-info="showDebugInfo"
+                @resend-user-message="resendUserMessage"
+                @update-user-message="updateAndResendUserMessage"
+              />
+            </template>
+          </section>
+          <button
+            v-if="!shouldAutoScroll"
+            type="button"
+            class="scroll-bottom-floating"
+            :title="t.scrollToBottom"
+            @click="scrollToBottom"
+          >
+            <ArrowDownToLine :size="18" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div
+          v-if="selectedSubAgent"
+          class="subagent-resizer"
+          role="separator"
+          tabindex="0"
+          aria-orientation="vertical"
+          :aria-label="t.resizeSubAgentPanel"
+          :aria-valuemin="SUB_AGENT_MIN_WIDTH"
+          :aria-valuemax="SUB_AGENT_MAX_WIDTH"
+          :aria-valuenow="subAgentPaneWidth"
+          @keydown="resizeSubAgentWithKeyboard"
+          @pointerdown="startSubAgentResize"
+          @pointermove="resizeSubAgentPanel"
+          @pointerup="stopSubAgentResize"
+          @pointercancel="stopSubAgentResize"
+        ></div>
 
         <SubAgentPanel
+          v-if="selectedSubAgent"
+          :agent="selectedSubAgent"
           :labels="t"
           :messages="subAgentMessages"
-          :sub-agents="subAgents"
           :show-debug-info="showDebugInfo"
+          @close="closeSubAgentPanel"
           @resend-user-message="resendUserMessage"
           @update-user-message="updateAndResendUserMessage"
-          @delete-sub-agent="deleteSubAgent"
         />
       </div>
 

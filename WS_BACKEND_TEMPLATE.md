@@ -48,11 +48,10 @@ The frontend now sends JSON only. All user messages use `type: "chat"` with a `c
 }
 ```
 
-When images or text files are uploaded, the frontend appends more parts to the same `content` array:
+When attachments are uploaded, the frontend reads every attachment as raw Base64 and appends file parts to the same `content` array:
 
 - Text parts use `{ "type": "text", "text": "..." }`.
-- File parts use `{ "type": "file", "file": { "filename": "...", "mimeType": "...", "content": "..." } }`.
-- Image parts use `{ "type": "image_url", "image_url": { "url": "data:image/..." } }`.
+- All attachment parts use `{ "type": "file", "file": { "filename": "...", "mimeType": "...", "content": "<base64>" } }`.
 
 ```json
 {
@@ -69,13 +68,15 @@ When images or text files are uploaded, the frontend appends more parts to the s
       "file": {
         "filename": "notes.md",
         "mimeType": "text/markdown",
-        "content": "# Notes..."
+        "content": "IyBOb3Rlcy4uLg=="
       }
     },
     {
-      "type": "image_url",
-      "image_url": {
-        "url": "data:image/png;base64,iVBORw0KGgo..."
+      "type": "file",
+      "file": {
+        "filename": "R.png",
+        "mimeType": "image/png",
+        "content": "iVBORw0KGgo..."
       }
     }
   ],

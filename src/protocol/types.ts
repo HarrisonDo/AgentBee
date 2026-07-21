@@ -39,8 +39,6 @@ export interface ChatAttachment {
   name: string;
   size: number;
   type: string;
-  kind: 'text' | 'image' | 'binary';
-  text?: string;
   base64?: string;
 }
 
@@ -76,12 +74,6 @@ export type ClientChatContentPart =
   | {
     type: 'text';
     text: string;
-  }
-  | {
-    type: 'image_url';
-    image_url: {
-      url: string;
-    };
   }
   | {
     type: 'file';

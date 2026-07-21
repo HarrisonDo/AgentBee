@@ -585,11 +585,9 @@ function asString(value: unknown): string {
 function toChatAttachments(attachments: ClientAttachment[]): ChatAttachment[] {
   return attachments.map((attachment) => ({
     id: attachment.id,
-    kind: attachment.kind,
     name: attachment.name,
     size: attachment.size,
     type: attachment.type,
-    text: attachment.text,
     base64: attachment.base64,
   }));
 }
@@ -597,11 +595,9 @@ function toChatAttachments(attachments: ClientAttachment[]): ChatAttachment[] {
 function toClientAttachments(attachments: ChatAttachment[]): ClientAttachment[] {
   return attachments.map((attachment) => ({
     id: attachment.id,
-    kind: attachment.kind,
     name: attachment.name,
     size: attachment.size,
     type: attachment.type,
-    text: attachment.text,
     base64: attachment.base64,
   }));
 }
@@ -613,28 +609,19 @@ function createClientContentPayload(
   type: 'chat';
   content: Array<
     | { type: 'text'; text: string }
-    | { type: 'image_url'; image_url: { url: string } }
     | { type: 'file'; file: { filename: string; mimeType: string; content: string } }
   >;
 } {
   const content = [
     ...(text ? [{ type: 'text' as const, text }] : []),
     ...attachments
-      .filter((attachment) => attachment.kind === 'text' && attachment.text !== undefined)
+      .filter((attachment) => attachment.base64 !== undefined)
       .map((attachment) => ({
         type: 'file' as const,
         file: {
           filename: attachment.name,
           mimeType: attachment.type,
-          content: attachment.text || '',
-        },
-      })),
-    ...attachments
-      .filter((attachment) => attachment.kind === 'image' && attachment.base64)
-      .map((attachment) => ({
-        type: 'image_url' as const,
-        image_url: {
-          url: `data:${attachment.type};base64,${attachment.base64}`,
+          content: attachment.base64 || '',
         },
       })),
   ];

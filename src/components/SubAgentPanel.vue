@@ -1,47 +1,26 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import { MessageSquare, X } from 'lucide-vue-next';
-import ChatMessage from './ChatMessage.vue';
+import { Bot, X } from 'lucide-vue-next';
+import { computed } from 'vue';
 import type { ChatMessage as AgentChatMessage } from '../protocol/types';
+import type { SubAgentSummary } from './SubAgentMenu.vue';
+import ChatMessage from './ChatMessage.vue';
 
 const props = defineProps<{
+  agent: SubAgentSummary;
   labels: Record<string, string>;
   messages: AgentChatMessage[];
-  subAgents: Array<{ name: string; count: number }>;
   showDebugInfo: boolean;
 }>();
 
 const emit = defineEmits<{
+  close: [];
   resendUserMessage: [messageId: string];
   updateUserMessage: [messageId: string, content: string];
-  deleteSubAgent: [agentName: string];
 }>();
 
-const selectedAgentName = ref<string | null>(null);
-const isPanelOpen = ref(false);
-
-const filteredMessages = computed(() => {
-  if (!selectedAgentName.value) return [];
-  return props.messages.filter((msg) => msg.WindowName === selectedAgentName.value);
-});
-
-function selectAgent(agentName: string) {
-  selectedAgentName.value = agentName;
-  isPanelOpen.value = true;
-}
-
-function closePanel() {
-  isPanelOpen.value = false;
-}
-
-function deleteSubAgent(agentName: string, event: MouseEvent) {
-  event.stopPropagation();
-  emit('deleteSubAgent', agentName);
-  if (selectedAgentName.value === agentName) {
-    isPanelOpen.value = false;
-    selectedAgentName.value = null;
-  }
-}
+const filteredMessages = computed(() => (
+  props.messages.filter((message) => message.WindowName === props.agent.name)
+));
 
 function onResendUserMessage(messageId: string) {
   emit('resendUserMessage', messageId);
@@ -50,242 +29,157 @@ function onResendUserMessage(messageId: string) {
 function onUpdateUserMessage(messageId: string, content: string) {
   emit('updateUserMessage', messageId, content);
 }
+
+function getAgentInitial(agentName: string) {
+  return Array.from(agentName.trim())[0]?.toUpperCase() || '?';
+}
+
+function getAgentStatusLabel(status: string) {
+  return {
+    loading: props.labels.subAgentRunning,
+    done: props.labels.subAgentCompleted,
+    error: props.labels.subAgentError,
+    stopped: props.labels.subAgentStopped,
+  }[status] || props.labels.subAgentCompleted;
+}
 </script>
 
 <template>
-  <div class="subagent-container">
-    <div v-if="subAgents.length" class="subagent-tabs">
-      <div
-        v-for="agent in subAgents"
-        :key="agent.name"
-        class="subagent-tab-wrapper"
-      >
-        <button
-          type="button"
-          class="subagent-tab"
-          :class="{ active: selectedAgentName === agent.name && isPanelOpen }"
-          :title="agent.name"
-          @click="selectAgent(agent.name)"
-        >
-          <span class="subagent-tab-char">{{ agent.name.charAt(0).toUpperCase() }}</span>
-          <span v-if="agent.count > 0" class="subagent-badge">{{ agent.count }}</span>
-        </button>
-        <button
-          type="button"
-          class="subagent-delete"
-          :title="labels.deleteSession || 'Delete'"
-          @click="deleteSubAgent(agent.name, $event)"
-        >
-          <X :size="12" aria-hidden="true" />
-        </button>
-      </div>
-    </div>
+  <aside class="subagent-panel" :aria-label="`${labels.subAgent}: ${agent.name}`">
+    <header class="subagent-header">
+      <span class="subagent-avatar" aria-hidden="true">
+        {{ getAgentInitial(agent.name) }}
+        <i class="subagent-status-dot" :class="agent.status || 'done'"></i>
+      </span>
+      <span class="subagent-identity">
+        <strong>{{ agent.name }}</strong>
+        <span>
+          {{ agent.role || labels.subAgent }} · {{ getAgentStatusLabel(agent.status) }} · {{ agent.count }} {{ labels.items }}
+        </span>
+      </span>
+      <Bot :size="16" class="subagent-type-icon" aria-hidden="true" />
+      <button type="button" class="icon-button" :title="labels.closeSubAgent" @click="emit('close')">
+        <X :size="16" aria-hidden="true" />
+      </button>
+    </header>
 
-    <div v-if="isPanelOpen && selectedAgentName" class="subagent-panel">
-      <div class="subagent-header">
-        <div class="subagent-title">
-          <MessageSquare :size="16" aria-hidden="true" />
-          <span>{{ selectedAgentName }}</span>
-        </div>
-        <button type="button" class="icon-button" :title="labels.close || 'Close'" @click="closePanel">
-          <X :size="16" aria-hidden="true" />
-        </button>
+    <div class="subagent-messages">
+      <div v-if="!filteredMessages.length" class="subagent-empty">
+        {{ labels.noMessages }}
       </div>
-      <div class="subagent-messages">
-        <div v-if="!filteredMessages.length" class="subagent-empty">
-          {{ labels.noMessages || 'No messages' }}
-        </div>
-        <ChatMessage
-          v-for="message in filteredMessages"
-          :key="message.id"
-          :labels="labels"
-          :message="message"
-          :show-debug-info="showDebugInfo"
-          @resend-user-message="onResendUserMessage"
-          @update-user-message="onUpdateUserMessage"
-        />
-      </div>
+      <ChatMessage
+        v-for="message in filteredMessages"
+        :key="message.id"
+        :labels="labels"
+        :message="message"
+        :show-debug-info="showDebugInfo"
+        @resend-user-message="onResendUserMessage"
+        @update-user-message="onUpdateUserMessage"
+      />
     </div>
-  </div>
+  </aside>
 </template>
 
 <style scoped>
-.subagent-container {
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  display: flex;
-  align-items: stretch;
-  pointer-events: none;
-}
-
-.subagent-container > * {
-  pointer-events: auto;
-}
-
-.subagent-tabs {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 8px;
-  background: var(--sidebar-bg);
-  border-left: 1px solid var(--line);
-}
-
-.subagent-tab-wrapper {
-  position: relative;
-}
-
-.subagent-tab {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border-radius: 12px;
-  background: var(--surface);
-  border: 1px solid var(--line-soft);
-  color: var(--muted);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.subagent-tab:hover {
-  background: var(--surface-raised);
-  color: var(--text);
-  border-color: var(--accent-soft);
-}
-
-.subagent-tab.active {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-}
-
-.subagent-tab-char {
-  font-size: 18px;
-  font-weight: 600;
-  user-select: none;
-}
-
-.subagent-badge {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 600;
-  background: var(--accent-strong);
-  color: white;
-  border-radius: 9px;
-  border: 2px solid var(--sidebar-bg);
-}
-
-.subagent-delete {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--danger);
-  color: white;
-  border: 2px solid var(--sidebar-bg);
-  cursor: pointer;
-  opacity: 0;
-  transition: all 0.2s;
-  z-index: 10;
-}
-
-.subagent-tab-wrapper:hover .subagent-delete {
-  opacity: 1;
-}
-
-.subagent-delete:hover {
-  background: var(--danger);
-  transform: scale(1.1);
-}
-
 .subagent-panel {
-  position: absolute;
-  right: 60px;
-  top: 0;
-  bottom: 0;
-  width: 420px;
-  background: var(--surface);
-  border-left: 1px solid var(--line);
-  box-shadow: var(--shadow);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  z-index: 100;
+  background: var(--surface);
 }
 
 .subagent-header {
-  display: flex;
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 20px 32px;
   align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--line);
+  gap: 9px;
+  padding: 9px 10px 9px 12px;
+  border-bottom: 1px solid var(--line-soft);
   background: var(--surface-soft);
 }
 
-.subagent-title {
-  display: flex;
+.subagent-avatar {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-weight: 600;
-  color: var(--text);
+  justify-content: center;
+  border-radius: 50%;
+  color: white;
+  background: var(--accent-strong);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.subagent-status-dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--surface-soft);
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.subagent-status-dot.loading {
+  background: var(--success);
+}
+
+.subagent-status-dot.error {
+  background: var(--danger);
+}
+
+.subagent-status-dot.stopped {
+  background: var(--warn);
+}
+
+.subagent-identity {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.subagent-identity strong,
+.subagent-identity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-identity strong {
+  font-size: 0.82rem;
+}
+
+.subagent-identity span {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.subagent-type-icon {
+  color: var(--muted);
 }
 
 .subagent-messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  max-height: 100%;
+  gap: 14px;
 }
 
 .subagent-empty {
+  min-height: 160px;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100%;
   color: var(--muted);
-  font-size: 14px;
-}
-
-.icon-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border-radius: 8px;
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.icon-button:hover {
-  background: var(--surface-raised);
-  color: var(--text);
-  border-color: var(--line);
+  font-size: 0.78rem;
 }
 </style>
