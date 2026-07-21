@@ -403,8 +403,8 @@ async function readAttachment(file: File): Promise<ClientAttachment> {
 }
 
 function getAttachmentKind(file: File): ClientAttachment['kind'] {
-  if (isTextFile(file)) return 'text';
   if (file.type.startsWith('image/')) return 'image';
+  if (isTextFile(file)) return 'text';
   return 'binary';
 }
 
