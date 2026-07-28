@@ -12,6 +12,7 @@ export type ServerEventType =
   | 'tool_call'
   | 'tool'
   | 'tool_result'
+  | 'image'
   | 'error'
   | 'end'
   | 'done'
@@ -29,6 +30,7 @@ export interface ChatMessage {
   senderRole?: string;
   WindowName?: string;
   think?: string;
+  images?: ChatImage[];
   toolEvents?: ToolEvent[];
   status?: AssistantStatus;
   isSubTalk?: number;
@@ -40,6 +42,14 @@ export interface ChatAttachment {
   size: number;
   type: string;
   base64?: string;
+}
+
+export interface ChatImage {
+  id: string;
+  /** Data URL ready for an img src, built from the server base64 payload. */
+  src: string;
+  prompt: string;
+  time: string;
 }
 
 export interface ChatSession {
@@ -148,4 +158,6 @@ export interface ServerMessage {
   ok?: boolean;
   result?: unknown;
   isSubTalk?: number;
+  prompt?: string;
+  mimeType?: string;
 }

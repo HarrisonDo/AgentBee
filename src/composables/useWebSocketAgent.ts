@@ -14,6 +14,7 @@ import {
   getServerType,
   normalizePayload,
   normalizeServerError,
+  normalizeImageEvent,
   normalizeToolEvent,
   parseServerMessage,
 } from '../protocol/normalizers';
@@ -298,6 +299,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     if (['think', 'thinking', 'status'].includes(type)) return appendAssistantThink(messageId, normalizePayload(msg), msg);
     if (['tool_calls', 'tool_call', 'tool'].includes(type)) return appendAssistantToolEvent(messageId, 'tool_calls', msg);
     if (type === 'tool_result') return appendAssistantToolEvent(messageId, 'tool_result', msg);
+    if (type === 'image') return appendAssistantImage(messageId, msg);
     if (type === 'error') {
       options.addMessage('error', normalizeServerError(msg) || normalizePayload(msg) || 'Server returned an error.');
       return finishAssistantMessage(messageId, 'error', msg);
@@ -368,6 +370,24 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     applySenderMeta(turn.assistant, msg);
     turn.assistant.toolEvents ||= [];
     turn.assistant.toolEvents.push(normalizeToolEvent(kind, msg, makeId, nowTime));
+    turn.assistant.status = 'loading';
+    options.touchSession(turn.session);
+    options.saveSessions();
+  }
+
+  function appendAssistantImage(messageId: string | null, msg: ServerMessage) {
+    const image = normalizeImageEvent(msg, makeId, nowTime);
+    if (!image) {
+      appendAssistantContent(messageId, '', msg);
+      return;
+    }
+
+    const turn = ensureAssistantMessage(messageId, msg);
+    if (!turn) return;
+    clearNoResponseTimer(turn.messageId);
+    applySenderMeta(turn.assistant, msg);
+    turn.assistant.images ||= [];
+    turn.assistant.images.push(image);
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
     options.saveSessions();
@@ -570,6 +590,7 @@ function hasAssistantOutput(message: ChatMessage): boolean {
   return Boolean(
     message.content?.trim() ||
     message.think?.trim() ||
+    message.images?.length ||
     message.toolEvents?.length,
   );
 }

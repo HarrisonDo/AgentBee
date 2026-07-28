@@ -1178,6 +1178,47 @@ button:disabled {
   margin-bottom: 8px;
 }
 
+.message-images {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  margin-bottom: 8px;
+}
+
+.message-image {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+}
+
+.message-image img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: min(360px, 46vh);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  object-fit: contain;
+  background: var(--surface-soft);
+}
+
+.subagent-messages .message-image img {
+  max-height: min(240px, 34vh);
+}
+
+.message-image figcaption {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .message-attachment-chip,
 .attachment-chip {
   display: inline-flex;
@@ -1832,6 +1873,10 @@ button:disabled {
 
   .message {
     max-width: 96%;
+  }
+
+  .message-image img {
+    max-height: min(280px, 40vh);
   }
 }
 

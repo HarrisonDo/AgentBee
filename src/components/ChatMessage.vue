@@ -26,6 +26,7 @@ const copied = ref(false);
 const hasAssistantOutput = computed(() => (
   Boolean(props.message.content?.trim()) ||
   Boolean(props.message.think?.trim()) ||
+  Boolean(props.message.images?.length) ||
   Boolean(props.message.toolEvents?.length)
 ));
 
@@ -232,6 +233,13 @@ function renderMarkdownBlocks(markdown: string) {
         :events="message.toolEvents"
         :labels="labels"
       />
+
+      <div v-if="message.images?.length" class="message-images">
+        <figure v-for="image in message.images" :key="image.id" class="message-image">
+          <img :src="image.src" :alt="image.prompt || labels.imageAlt" loading="lazy" />
+          <figcaption v-if="image.prompt">{{ image.prompt }}</figcaption>
+        </figure>
+      </div>
 
       <div v-if="message.attachments?.length" class="message-attachments">
         <span v-for="attachment in message.attachments" :key="attachment.id" class="message-attachment-chip">

@@ -1,4 +1,6 @@
-import type { ServerMessage, ToolEvent } from './types';
+import type { ChatImage, ServerMessage, ToolEvent } from './types';
+
+const DEFAULT_IMAGE_MIME = 'image/png';
 
 export function normalizePayload(msg: ServerMessage): string {
   const data = msg.data ?? msg.text ?? msg.content ?? msg.delta ?? '';
@@ -78,6 +80,44 @@ export function normalizeToolEvent(
     data: formatToolResult(data, msg),
     time: nowTime(),
   };
+}
+
+export function normalizeImageEvent(
+  msg: ServerMessage,
+  makeId: () => string,
+  nowTime: () => string,
+): ChatImage | null {
+  const payload = msg.data ?? msg.content ?? msg.text;
+  const record = asRecord(payload);
+
+  // 优先支持新格式：data 直接是 base64 字符串，prompt 在同级
+  const base64 = asString(payload)
+    || asString(record.url)
+    || asString(record.base64)
+    || asString(record.data)
+    || asString(record.image);
+  if (!base64.trim()) return null;
+
+  // 优先从 msg.prompt 读取（新格式），然后才是嵌套在 data 里的 prompt
+  const mimeType = asString(record.mimeType) || asString(record.mime_type) || asString(msg.mimeType) || DEFAULT_IMAGE_MIME;
+  const prompt = msg.prompt
+    || asString(record.prompt)
+    || asString(record.text)
+    || asString(msg.text)
+    || msg.message
+    || '';
+
+  return {
+    id: asString(record.id) || msg.messageId || makeId(),
+    src: toImageDataUrl(base64.trim(), mimeType),
+    prompt: asString(prompt).trim(),
+    time: nowTime(),
+  };
+}
+
+function toImageDataUrl(value: string, mimeType: string): string {
+  if (/^(data:|https?:\/\/)/i.test(value)) return value;
+  return `data:${mimeType};base64,${value}`;
 }
 
 function formatToolCall(call: unknown): string {

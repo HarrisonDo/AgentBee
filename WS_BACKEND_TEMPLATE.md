@@ -234,6 +234,30 @@ Also supported:
 }
 ```
 
+### Image
+
+`image` renders a base64 picture inside the related assistant message, with the prompt shown as a caption below it.
+
+```json
+{
+  "type": "image",
+  "sessionId": "browser-local-session-id",
+  "messageId": "question-message-id",
+  "data": {
+    "url": "iVBORw0KGgo...",
+    "mimeType": "image/png",
+    "prompt": "一只在键盘上睡觉的猫"
+  }
+}
+```
+
+- `url`: required. Raw base64 without the `data:` prefix. A full `data:` URL or an `http(s)` URL is also accepted and used as-is. Also read from `base64`, `data` or `image`.
+- `mimeType`: optional, defaults to `image/png`. Also accepted as `mime_type`.
+- `prompt`: optional caption text shown under the image. Also accepted as `text`, or as the top-level `text` / `message` field.
+- `data` may also be a plain base64 string when there is no prompt.
+
+Multiple `image` events with the same `messageId` stack in order inside the same assistant reply, and can be mixed with `content`, `think` and tool events. The frontend scales images down to fit the bubble, so any resolution is safe to send.
+
 ### Error
 
 ```json
