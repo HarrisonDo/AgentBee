@@ -90,6 +90,82 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.login-window-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+body:has(.login-window-backdrop) {
+  overflow: hidden;
+}
+
+.login-window {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.login-window-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.login-window-mark {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  color: #ffffff;
+  background: var(--accent-strong);
+}
+
+.login-window-title h1 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
+.login-window-title p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.login-window-error {
+  border: 1px solid color-mix(in srgb, var(--danger) 36%, transparent);
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.login-window-submit {
+  min-height: 40px;
+  color: #ffffff;
+  background: var(--accent-strong);
+}
+
+.login-window-submit:hover {
+  background: var(--accent);
+}
+
 .app {
   display: grid;
   grid-template-columns: clamp(236px, 21vw, 292px) minmax(0, 1fr);

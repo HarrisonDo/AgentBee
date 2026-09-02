@@ -76,7 +76,12 @@ python -m http.server 8080
 默认设置：
 
 - WebSocket URL: `ws://192.168.254.10:8686`
+- protocols ws_token，用于鉴权，并获取ws配置及聊天记录
 - 发送模式：JSON
+
+### wstoken注意事项
+更新为需要配置token的版本，后期可以部署云端进行使用，无需在本地多次部署
+可以为空，以后台服务配置为准，web只做鉴定
 
 ### 本地历史记录
 

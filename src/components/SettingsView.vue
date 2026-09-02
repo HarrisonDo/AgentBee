@@ -46,6 +46,7 @@ defineProps<{
   settingStatusTone: StatusTone;
   showDebugInfo: boolean;
   theme: Theme;
+  wsToken: string;
   wsUrl: string;
 }>();
 
@@ -60,6 +61,7 @@ const emit = defineEmits<{
   'update:basicSetting': [field: keyof BasicSettings, value: boolean | string];
   'update:configJson': [value: string];
   'update:showDebugInfo': [value: boolean];
+  'update:wsToken': [value: string];
   'update:wsUrl': [value: string];
 }>();
 
@@ -197,6 +199,20 @@ const advancedExpanded = ref(false);
             </button>
           </div>
         </div>
+      </label>
+      <label class="settings-field" for="agentServerWsToken">
+        <span>
+          <KeyRound :size="14" aria-hidden="true" />
+          {{ labels.wsToken }}
+        </span>
+        <input
+          id="agentServerWsToken"
+          :value="wsToken"
+          type="password"
+          autocomplete="off"
+          :placeholder="labels.wsTokenPlaceholder"
+          @input="emit('update:wsToken', ($event.target as HTMLInputElement).value)"
+        />
       </label>
     </div>
 

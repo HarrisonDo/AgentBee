@@ -10,6 +10,7 @@ import {
 import ChatMessage from './components/ChatMessage.vue';
 import Composer from './components/Composer.vue';
 import ConnectionPanel from './components/ConnectionPanel.vue';
+import LoginWin from './components/LoginWin.vue';
 import SettingsView from './components/SettingsView.vue';
 import SessionList from './components/SessionList.vue';
 import SystemLogGroup from './components/SystemLogGroup.vue';
@@ -50,6 +51,7 @@ const chatShell = ref<HTMLElement | null>(null);
 const shouldAutoScroll = ref(true);
 const sidebarCollapsed = ref(false);
 const currentView = ref<'chat' | 'settings'>('chat');
+const showLoginWindow = ref(true);
 const agentConfig = ref<Record<string, unknown>>(readAgentConfig());
 const configJson = ref(JSON.stringify(agentConfig.value, null, 2));
 const configJsonError = ref('');
@@ -94,6 +96,7 @@ const agent = useWebSocketAgent({
 });
 watch(() => agent.canSend.value, (canSend) => {
   if (canSend) {
+    showLoginWindow.value = false;
     const sent = agent.sendSettingAct('getConfig');
     if (sent) {
       // Config will be applied in handleSettingMessage
@@ -416,6 +419,10 @@ function updateWsUrl(value: string) {
   localStorage.setItem('agentbee.lastUrl', value);
 }
 
+function updateWsToken(value: string) {
+  agent.wsToken.value = value;
+}
+
 const basicSettings = computed<BasicSettings>(() => ({
   apiKey: readString(agentConfig.value, ['agent_llm', 'api_key']),
   apiUrl: readString(agentConfig.value, ['agent_llm', 'api_url']),
@@ -633,7 +640,6 @@ onMounted(() => {
   });
   if (chatShell.value) chatShellResizeObserver.observe(chatShell.value);
   scrollToLatestAfterRender();
-  agent.startAutoConnect();
 });
 
 onBeforeUnmount(() => {
@@ -782,6 +788,18 @@ function setNestedValue(source: Record<string, unknown>, path: string[], value: 
 </script>
 
 <template>
+  <LoginWin
+    v-if="showLoginWindow"
+    :connection-error="agent.connectionError.value"
+    :connecting="agent.connecting.value"
+    :labels="t"
+    :ws-token="agent.wsToken.value"
+    :ws-url="agent.wsUrl.value"
+    @connect="agent.connect"
+    @update:ws-token="updateWsToken"
+    @update:ws-url="updateWsUrl"
+  />
+
   <div class="app" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
     <aside class="sidebar">
       <div class="brand">
@@ -940,6 +958,7 @@ function setNestedValue(source: Record<string, unknown>, path: string[], value: 
         :setting-status-tone="settingStatusTone"
         :show-debug-info="showDebugInfo"
         :theme="theme"
+        :ws-token="agent.wsToken.value"
         :ws-url="agent.wsUrl.value"
         @connect="agent.connect"
         @disconnect="agent.disconnect"
@@ -951,6 +970,7 @@ function setNestedValue(source: Record<string, unknown>, path: string[], value: 
         @update:basic-setting="updateBasicSetting"
         @update:config-json="updateConfigJson"
         @update:show-debug-info="showDebugInfo = $event"
+        @update:ws-token="updateWsToken"
         @update:ws-url="updateWsUrl"
       />
 
