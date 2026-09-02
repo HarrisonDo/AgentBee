@@ -42,7 +42,18 @@ const endedWithoutResponse = computed(() => (
   !hasAssistantOutput.value
 ));
 
-const renderedMarkdown = computed(() => renderMarkdownBlocks(props.message.content || ''));
+const renderedMarkdown = computed(() => {
+  const markdown = props.message.content || '';
+  if (props.message.status !== 'loading') {
+    return { stable: renderMarkdownBlocks(markdown), tail: '' };
+  }
+
+  const split = splitStreamingMarkdown(markdown);
+  return {
+    stable: renderMarkdownBlocks(split.stable),
+    tail: renderMarkdownBlocks(split.tail),
+  };
+});
 
 const senderIdentity = computed(() => {
   const senderName = props.message.senderName?.trim() || '';
@@ -203,6 +214,42 @@ function renderMarkdownBlocks(markdown: string) {
 
   return container.innerHTML;
 }
+
+const UNSAFE_STREAMING_BLOCK = /^(\s|[-*+]\s|\d+[.)]\s|\||\$\$)/;
+
+function splitStreamingMarkdown(markdown: string): { stable: string; tail: string } {
+  if (!markdown) return { stable: '', tail: '' };
+
+  const lineBreak = markdown.includes('\r\n') ? '\r\n' : '\n';
+  const lines = markdown.split(/\r?\n/);
+  let fence: { marker: string; size: number } | null = null;
+  let splitLine = -1;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      const marker = fenceMatch[1][0];
+      const size = fenceMatch[1].length;
+      if (!fence) fence = { marker, size };
+      else if (marker === fence.marker && size >= fence.size) fence = null;
+      continue;
+    }
+    if (fence || line.trim() !== '') continue;
+
+    let next = index + 1;
+    while (next < lines.length && lines[next].trim() === '') next += 1;
+    if (next < lines.length && !UNSAFE_STREAMING_BLOCK.test(lines[next])) {
+      splitLine = next;
+    }
+  }
+
+  if (splitLine <= 0) return { stable: '', tail: markdown };
+  return {
+    stable: lines.slice(0, splitLine).join(lineBreak),
+    tail: lines.slice(splitLine).join(lineBreak),
+  };
+}
 </script>
 
 <template>
@@ -266,8 +313,10 @@ function renderMarkdownBlocks(markdown: string) {
         v-else-if="message.role === 'assistant'"
         class="markdown-body"
         @click="copyMarkdownBlock"
-        v-html="renderedMarkdown"
-      ></div>
+      >
+        <div v-if="renderedMarkdown.stable" v-html="renderedMarkdown.stable"></div>
+        <div v-if="renderedMarkdown.tail" v-html="renderedMarkdown.tail"></div>
+      </div>
       <div v-else-if="isEditing" class="user-edit-form">
         <textarea
           ref="editTextarea"

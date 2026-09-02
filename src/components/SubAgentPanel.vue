@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Bot, X } from 'lucide-vue-next';
-import { computed } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import type { ChatMessage as AgentChatMessage } from '../protocol/types';
 import type { SubAgentSummary } from './SubAgentMenu.vue';
 import ChatMessage from './ChatMessage.vue';
@@ -18,9 +18,39 @@ const emit = defineEmits<{
   updateUserMessage: [messageId: string, content: string];
 }>();
 
-const filteredMessages = computed(() => (
+const PAGE_SIZE = 50;
+const visibleMessageCount = ref(PAGE_SIZE);
+let restoreDistance: number | null = null;
+let restoringScroll = false;
+
+const allFilteredMessages = computed(() => (
   props.messages.filter((message) => message.WindowName === props.agent.name)
 ));
+
+const filteredMessages = computed(() => (
+  allFilteredMessages.value.slice(-visibleMessageCount.value)
+));
+
+function onScroll(event: Event) {
+  const element = event.currentTarget as HTMLElement;
+  if (restoringScroll || element.scrollTop >= 80 || allFilteredMessages.value.length <= visibleMessageCount.value) return;
+  restoreDistance = element.scrollHeight - element.scrollTop;
+  restoringScroll = true;
+  visibleMessageCount.value += PAGE_SIZE;
+  nextTick(() => {
+    if (restoreDistance !== null) {
+      element.scrollTop = Math.max(0, element.scrollHeight - restoreDistance);
+    }
+    restoreDistance = null;
+    restoringScroll = false;
+  });
+}
+
+watch(() => props.agent.name, () => {
+  visibleMessageCount.value = PAGE_SIZE;
+  restoreDistance = null;
+  restoringScroll = false;
+});
 
 function onResendUserMessage(messageId: string) {
   emit('resendUserMessage', messageId);
@@ -63,7 +93,7 @@ function getAgentStatusLabel(status: string) {
       </button>
     </header>
 
-    <div class="subagent-messages">
+    <div class="subagent-messages" @scroll="onScroll">
       <div v-if="!filteredMessages.length" class="subagent-empty">
         {{ labels.noMessages }}
       </div>

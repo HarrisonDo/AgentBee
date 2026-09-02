@@ -60,6 +60,9 @@ const showDebugInfo = ref(false);
 const selectedSubAgentName = ref<string | null>(null);
 const subAgentPaneWidth = ref(readSubAgentPaneWidth());
 const isSubAgentResizing = ref(false);
+const visibleMessageCount = ref(50);
+let historyRestoreDistance: number | null = null;
+let restoringHistoryScroll = false;
 const appVersion = __APP_VERSION__;
 
 const SUB_AGENT_MIN_WIDTH = 300;
@@ -67,6 +70,7 @@ const SUB_AGENT_MAX_WIDTH = 680;
 const CHAT_PANE_MIN_WIDTH = 360;
 const SUB_AGENT_DIVIDER_WIDTH = 8;
 const SUB_AGENT_WIDTH_STORAGE_KEY = 'agentbee.subAgentPaneWidth';
+const HISTORY_PAGE_SIZE = 50;
 let resizeStartX = 0;
 let resizeStartWidth = 0;
 let resizePointerId: number | null = null;
@@ -84,6 +88,7 @@ const agent = useWebSocketAgent({
   onSettingMessage: handleSettingMessage,
   onSystemMessage: handleSystemMessage,
   saveSessions: sessions.saveSessions,
+  scheduleSaveSessions: sessions.scheduleSaveSessions,
   touchSession: sessions.touchSession,
   updateTitleFromMessage: sessions.updateTitleFromMessage,
 });
@@ -104,7 +109,10 @@ const activeMeta = computed(() => {
 });
 
 const visibleChatItems = computed<VisibleChatItem[]>(() => {
-  const messages = sessions.activeSession.value?.messages || [];
+  const allMessages = sessions.activeSession.value?.messages || [];
+  const mainMessages = allMessages.filter((message) => message.isSubTalk !== 1);
+  const startIndex = Math.max(0, mainMessages.length - visibleMessageCount.value);
+  const messages = mainMessages.slice(startIndex);
   const items: VisibleChatItem[] = [];
   let pendingSystemMessages: AgentChatMessage[] = [];
 
@@ -139,6 +147,15 @@ const visibleChatItems = computed<VisibleChatItem[]>(() => {
 
   flushSystemMessages();
   return items;
+});
+
+const hasOlderMessages = computed(() => {
+  const messages = sessions.activeSession.value?.messages || [];
+  const mainMessageCount = messages.reduce(
+    (count, message) => count + (message.isSubTalk === 1 ? 0 : 1),
+    0,
+  );
+  return mainMessageCount > visibleMessageCount.value;
 });
 
 const subAgentMessages = computed(() => {
@@ -184,6 +201,12 @@ watch(subAgents, (agents) => {
   }
 });
 
+watch(() => sessions.activeSessionId.value, () => {
+  visibleMessageCount.value = HISTORY_PAGE_SIZE;
+  historyRestoreDistance = null;
+  restoringHistoryScroll = false;
+});
+
 watch(chatShell, (nextShell, previousShell) => {
   if (previousShell) chatShellResizeObserver?.unobserve(previousShell);
   if (nextShell) chatShellResizeObserver?.observe(nextShell);
@@ -219,6 +242,19 @@ function onScroll() {
   const el = chatContainer.value;
   if (!el) return;
   shouldAutoScroll.value = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  if (!restoringHistoryScroll && el.scrollTop < 80 && hasOlderMessages.value) {
+    historyRestoreDistance = el.scrollHeight - el.scrollTop;
+    restoringHistoryScroll = true;
+    visibleMessageCount.value += HISTORY_PAGE_SIZE;
+    nextTick(() => {
+      const current = chatContainer.value;
+      if (current && historyRestoreDistance !== null) {
+        current.scrollTop = Math.max(0, current.scrollHeight - historyRestoreDistance);
+      }
+      historyRestoreDistance = null;
+      restoringHistoryScroll = false;
+    });
+  }
 }
 
 function deleteSession(sessionId: string) {

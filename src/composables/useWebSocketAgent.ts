@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import type {
   ChatAttachment,
   ChatMessage,
@@ -24,6 +24,13 @@ const NO_RESPONSE_TIMEOUT_MS = 5 * 60_000;
 const AUTO_CONNECT_WINDOW_MS = 60_000;
 const AUTO_CONNECT_BASE_RETRY_MS = 1000;
 const AUTO_CONNECT_MAX_RETRY_MS = 15_000;
+const STREAM_FLUSH_MS = 80;
+
+interface PendingStreamUpdate {
+  content: string;
+  think: string;
+  message?: ServerMessage;
+}
 
 interface UseWebSocketAgentOptions {
   activeSession: () => ChatSession | null;
@@ -31,6 +38,7 @@ interface UseWebSocketAgentOptions {
   onSettingMessage?: (act: string, content: unknown, msg: ServerMessage) => void;
   onSystemMessage?: (act: string, content: unknown, msg: ServerMessage) => void;
   saveSessions: () => void;
+  scheduleSaveSessions: () => void;
   touchSession: (session: ChatSession) => void;
   updateTitleFromMessage: (session: ChatSession, text: string) => void;
 }
@@ -43,6 +51,8 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   const pendingTurns = ref(new Map<string, string | null>());
   const socket = ref<WebSocket | null>(null);
   const noResponseTimers = new Map<string, number>();
+  const pendingStreamUpdates = new Map<string, PendingStreamUpdate>();
+  let streamFlushTimer: number | null = null;
   let autoRetryTimer: number | null = null;
   let manualDisconnect = false;
   let currentConnectIsAuto = false;
@@ -262,6 +272,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
 
   function clearPendingTurns() {
     clearAllNoResponseTimers();
+    discardPendingStreamUpdates();
     pendingTurns.value.clear();
   }
 
@@ -272,7 +283,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   function handleServerMessage(raw: string) {
     const parsed = parseServerMessage(raw);
     if (typeof parsed === 'string') {
-      appendAssistantContent(null, parsed);
+      queueAssistantContent(null, parsed);
       return;
     }
 
@@ -295,8 +306,10 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       return;
     }
     if (type === 'history') return;
-    if (['content', 'assistant', 'message'].includes(type)) return appendAssistantContent(messageId, normalizePayload(msg), msg);
-    if (['think', 'thinking', 'status'].includes(type)) return appendAssistantThink(messageId, normalizePayload(msg), msg);
+    if (['content', 'assistant', 'message'].includes(type)) return queueAssistantContent(messageId, normalizePayload(msg), msg);
+    if (['think', 'thinking', 'status'].includes(type)) return queueAssistantThink(messageId, normalizePayload(msg), msg);
+    // Preserve ordering when a tool/image/terminal event follows buffered text.
+    flushPendingStreamUpdates(messageId);
     if (['tool_calls', 'tool_call', 'tool'].includes(type)) return appendAssistantToolEvent(messageId, 'tool_calls', msg);
     if (type === 'tool_result') return appendAssistantToolEvent(messageId, 'tool_result', msg);
     if (type === 'image') return appendAssistantImage(messageId, msg);
@@ -307,7 +320,68 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     if (['end', 'done', 'finish'].includes(type)) return finishAssistantMessage(messageId, 'done', msg);
     if (type === 'close') return closeAssistantMessage(messageId);
 
-    appendAssistantContent(messageId, JSON.stringify(msg, null, 2), msg);
+    queueAssistantContent(messageId, JSON.stringify(msg, null, 2), msg);
+  }
+
+  function queueAssistantContent(messageId: string | null, text: string, msg?: ServerMessage) {
+    if (!text) return;
+    const pending = getPendingStreamUpdate(messageId);
+    pending.content += text;
+    if (msg) pending.message = msg;
+    scheduleStreamFlush();
+  }
+
+  function queueAssistantThink(messageId: string | null, text: string, msg?: ServerMessage) {
+    if (!text) return;
+    const pending = getPendingStreamUpdate(messageId);
+    pending.think += text;
+    if (msg) pending.message = msg;
+    scheduleStreamFlush();
+  }
+
+  function getPendingStreamUpdate(messageId: string | null): PendingStreamUpdate {
+    const key = messageId || '__latest__';
+    const existing = pendingStreamUpdates.get(key);
+    if (existing) return existing;
+    const pending: PendingStreamUpdate = { content: '', think: '' };
+    pendingStreamUpdates.set(key, pending);
+    return pending;
+  }
+
+  function scheduleStreamFlush() {
+    if (streamFlushTimer !== null) return;
+    streamFlushTimer = window.setTimeout(() => {
+      streamFlushTimer = null;
+      flushPendingStreamUpdates();
+    }, STREAM_FLUSH_MS);
+  }
+
+  function flushPendingStreamUpdates(messageId?: string | null) {
+    const keys = messageId
+      ? [messageId]
+      : Array.from(pendingStreamUpdates.keys());
+
+    keys.forEach((key) => {
+      const pending = pendingStreamUpdates.get(key);
+      if (!pending) return;
+      pendingStreamUpdates.delete(key);
+      const resolvedMessageId = key === '__latest__' ? null : key;
+      if (pending.content) appendAssistantContentNow(resolvedMessageId, pending.content, pending.message);
+      if (pending.think) appendAssistantThinkNow(resolvedMessageId, pending.think, pending.message);
+    });
+
+    if (!pendingStreamUpdates.size && streamFlushTimer !== null) {
+      window.clearTimeout(streamFlushTimer);
+      streamFlushTimer = null;
+    }
+  }
+
+  function discardPendingStreamUpdates() {
+    pendingStreamUpdates.clear();
+    if (streamFlushTimer !== null) {
+      window.clearTimeout(streamFlushTimer);
+      streamFlushTimer = null;
+    }
   }
 
   function ensureAssistantMessage(messageId: string | null, msg?: ServerMessage) {
@@ -341,7 +415,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     return { session, assistant, messageId: resolvedMessageId };
   }
 
-  function appendAssistantContent(messageId: string | null, text: string, msg?: ServerMessage) {
+  function appendAssistantContentNow(messageId: string | null, text: string, msg?: ServerMessage) {
     const turn = ensureAssistantMessage(messageId, msg);
     if (!turn) return;
     clearNoResponseTimer(turn.messageId);
@@ -349,10 +423,10 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.content += text || '';
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.saveSessions();
+    options.scheduleSaveSessions();
   }
 
-  function appendAssistantThink(messageId: string | null, text: string, msg?: ServerMessage) {
+  function appendAssistantThinkNow(messageId: string | null, text: string, msg?: ServerMessage) {
     const turn = ensureAssistantMessage(messageId, msg);
     if (!turn) return;
     clearNoResponseTimer(turn.messageId);
@@ -360,7 +434,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.think = `${turn.assistant.think || ''}${text || ''}`;
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.saveSessions();
+    options.scheduleSaveSessions();
   }
 
   function appendAssistantToolEvent(messageId: string | null, kind: 'tool_calls' | 'tool_result', msg: ServerMessage) {
@@ -372,13 +446,13 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.toolEvents.push(normalizeToolEvent(kind, msg, makeId, nowTime));
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.saveSessions();
+    options.scheduleSaveSessions();
   }
 
   function appendAssistantImage(messageId: string | null, msg: ServerMessage) {
     const image = normalizeImageEvent(msg, makeId, nowTime);
     if (!image) {
-      appendAssistantContent(messageId, '', msg);
+      queueAssistantContent(messageId, '', msg);
       return;
     }
 
@@ -390,7 +464,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.images.push(image);
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.saveSessions();
+    options.scheduleSaveSessions();
   }
 
   function finishAssistantMessage(
@@ -398,6 +472,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     status: 'done' | 'error' | 'stopped',
     msg?: ServerMessage,
   ) {
+    flushPendingStreamUpdates(messageId);
     const resolvedMessageId = messageId || getLatestPendingMessageId();
     if (resolvedMessageId) clearNoResponseTimer(resolvedMessageId);
     const session = options.activeSession();
@@ -415,6 +490,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   }
 
   function finishAllPendingWithoutResponse() {
+    flushPendingStreamUpdates();
     const session = options.activeSession();
     if (!session || !pendingTurns.value.size) return;
 
@@ -432,6 +508,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   }
 
   function closeAssistantMessage(messageId: string | null) {
+    flushPendingStreamUpdates(messageId);
     const resolvedMessageId = messageId || getLatestPendingMessageId();
     if (resolvedMessageId) clearNoResponseTimer(resolvedMessageId);
     const session = options.activeSession();
@@ -546,6 +623,12 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       message.isSubTalk = msg.isSubTalk;
     }
   }
+
+  onBeforeUnmount(() => {
+    discardPendingStreamUpdates();
+    clearAllNoResponseTimers();
+    clearAutoRetryTimer();
+  });
 
   return {
     canSend,
