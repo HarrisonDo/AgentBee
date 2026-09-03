@@ -2,6 +2,7 @@ export type MessageRole = 'user' | 'assistant' | 'system' | 'error' | 'tool';
 export type AssistantStatus = 'loading' | 'done' | 'error' | 'stopped';
 export type ServerEventType =
   | 'history'
+  | 'memory'
   | 'content'
   | 'assistant'
   | 'message'
@@ -34,6 +35,9 @@ export interface ChatMessage {
   toolEvents?: ToolEvent[];
   status?: AssistantStatus;
   isSubTalk?: number;
+  /** Runtime-only metadata for records loaded through memory/read. */
+  memoryCreateId?: number;
+  isRemoteHistory?: boolean;
 }
 
 export interface ChatAttachment {

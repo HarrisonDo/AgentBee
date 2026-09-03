@@ -39,6 +39,7 @@ interface UseWebSocketAgentOptions {
   onSettingMessage?: (act: string, content: unknown, msg: ServerMessage) => void;
   onSystemMessage?: (act: string, content: unknown, msg: ServerMessage) => void;
   onMemoryMessage?: (act: string, msg: ServerMessage) => void;
+  onTurnFinished?: () => void;
   saveSessions: () => void;
   scheduleSaveSessions: () => void;
   touchSession: (session: ChatSession) => void;
@@ -361,9 +362,8 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       return;
     }
     if (type === 'memory') {
-      const errorMessage = normalizeServerError(msg);
-      if (errorMessage) options.addMessage('error', errorMessage);
-      options.onMemoryMessage?.(msg.act || '', msg);
+      const { act } = unwrapActContent(msg);
+      options.onMemoryMessage?.(act, msg);
       return;
     }
     if (type === 'history') return;
@@ -548,6 +548,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     }
     if (resolvedMessageId) pendingTurns.value.delete(resolvedMessageId);
     options.saveSessions();
+    if (status === 'done') options.onTurnFinished?.();
   }
 
   function finishAllPendingWithoutResponse() {

@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue';
-import { Check, Copy, Paperclip, Pencil, RotateCcw, SquareTerminal, X } from 'lucide-vue-next';
+import {
+  Check,
+  Copy,
+  LoaderCircle,
+  Paperclip,
+  Pencil,
+  RotateCcw,
+  SquareTerminal,
+  Trash2,
+  X,
+} from 'lucide-vue-next';
 import FoldBlock from './FoldBlock.vue';
 import ToolEventsBlock from './ToolEventsBlock.vue';
 import { useMarkdown } from '../composables/useMarkdown';
@@ -9,10 +19,13 @@ import type { ChatMessage } from '../protocol/types';
 const props = defineProps<{
   labels: Record<string, string>;
   message: ChatMessage;
+  deletingMemory?: boolean;
+  memoryDeleteDisabled?: boolean;
   showDebugInfo?: boolean;
 }>();
 
 const emit = defineEmits<{
+  deleteMemoryMessage: [createId: number];
   resendUserMessage: [messageId: string];
   updateUserMessage: [messageId: string, content: string];
 }>();
@@ -253,7 +266,7 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
 </script>
 
 <template>
-  <article class="message" :class="message.role">
+  <article class="message" :class="[message.role, { 'remote-history': message.isRemoteHistory }]">
     <div v-if="message.role === 'system'" class="system-log">
       <SquareTerminal :size="14" aria-hidden="true" />
       <span class="system-log-text">{{ message.content }}</span>
@@ -338,7 +351,7 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
       <div v-else class="markdown-body plain">{{ message.content }}</div>
     </div>
 
-    <div v-if="message.role === 'user'" class="user-message-actions">
+    <div v-if="message.role === 'user' && !message.isRemoteHistory" class="user-message-actions">
       <button
         v-if="!isEditing"
         type="button"
@@ -368,5 +381,17 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
       </button>
     </div>
     </template>
+    <div v-if="message.memoryCreateId" class="history-message-actions">
+      <button
+        type="button"
+        class="message-action-button history-delete-button"
+        :title="labels.deleteMemoryRecord"
+        :disabled="deletingMemory || memoryDeleteDisabled"
+        @click="emit('deleteMemoryMessage', message.memoryCreateId)"
+      >
+        <LoaderCircle v-if="deletingMemory" class="spin" :size="14" aria-hidden="true" />
+        <Trash2 v-else :size="14" aria-hidden="true" />
+      </button>
+    </div>
   </article>
 </template>

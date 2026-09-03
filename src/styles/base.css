@@ -600,6 +600,49 @@ body:has(.login-window-backdrop) {
   gap: 14px;
 }
 
+.history-load-state {
+  align-self: center;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 8px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.78rem;
+}
+
+.history-load-state.error {
+  width: min(760px, 100%);
+  justify-content: space-between;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--danger) 36%, transparent);
+  border-radius: 8px;
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.history-retry-button {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  color: var(--danger);
+  background: transparent;
+}
+
+.spin {
+  animation: memory-spin 0.9s linear infinite;
+}
+
+@keyframes memory-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .subagent-resizer {
   position: relative;
   z-index: 3;
@@ -1153,6 +1196,22 @@ body:has(.login-window-backdrop) {
   opacity: 1;
 }
 
+.history-message-actions {
+  display: flex;
+  justify-content: flex-start;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+.message.user .history-message-actions {
+  justify-content: flex-end;
+}
+
+.message.remote-history:hover .history-message-actions,
+.message.remote-history:focus-within .history-message-actions {
+  opacity: 1;
+}
+
 .message-action-button {
   width: 26px;
   height: 26px;
@@ -1173,6 +1232,18 @@ body:has(.login-window-backdrop) {
 
 .message-action-button.primary {
   background: var(--success);
+}
+
+.message-action-button.history-delete-button {
+  border-color: var(--line);
+  color: var(--muted);
+  background: var(--surface-soft);
+}
+
+.message-action-button.history-delete-button:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--danger) 44%, transparent);
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .user-edit-form {
@@ -1994,7 +2065,8 @@ body:has(.login-window-backdrop) {
     max-width: 100%;
   }
 
-  .user-message-actions {
+  .user-message-actions,
+  .history-message-actions {
     opacity: 1;
   }
 }
