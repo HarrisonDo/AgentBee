@@ -1468,6 +1468,7 @@ function setNestedValue(source: Record<string, unknown>, path: string[], value: 
         v-if="currentView === 'chat'"
         :labels="t"
         :disabled="!agent.canSend.value"
+        :generating="agent.hasPendingTurns.value"
         :available-models="availableModels"
         :model-name="basicSettings.modelName"
         @select-model="selectComposerModel"

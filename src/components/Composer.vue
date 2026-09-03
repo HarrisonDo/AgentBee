@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { Bot, MemoryStick, Paperclip, SendHorizontal, Square, X } from 'lucide-vue-next';
-import { nextTick, ref } from 'vue';
+import { ArrowUp, MemoryStick, Paperclip, Plus, Square, X } from 'lucide-vue-next';
+import { computed, nextTick, ref } from 'vue';
 import type { ClientAttachment } from '../protocol/types';
+import { shouldIgnoreCompositionEnter } from '../utils/composerKeyboard';
 
 const props = defineProps<{
   availableModels: string[];
   disabled: boolean;
+  generating: boolean;
   labels: Record<string, string>;
   modelName: string;
 }>();
@@ -21,9 +23,18 @@ const attachments = ref<ClientAttachment[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
 const textarea = ref<HTMLTextAreaElement | null>(null);
 const uploadWarnings = ref<string[]>([]);
+const isComposing = ref(false);
 const isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
+const COMPOSITION_ENTER_GUARD_MS = 100;
+let ignoreEnterUntil = 0;
+const canSubmit = computed(() => (
+  !props.disabled &&
+  !isComposing.value &&
+  (Boolean(text.value.trim()) || attachments.value.length > 0)
+));
 
 function submit() {
+  if (!canSubmit.value) return;
   const value = text.value.trim();
   if (!value && !attachments.value.length) return;
   emit('send', value, attachments.value);
@@ -46,6 +57,11 @@ function onModelChange(event: Event) {
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== 'Enter') return;
+  if (shouldIgnoreCompositionEnter(
+    event,
+    isComposing.value,
+    performance.now() < ignoreEnterUntil,
+  )) return;
   const shouldInsertNewline = isMac ? event.metaKey : event.ctrlKey;
   if (shouldInsertNewline) {
     event.preventDefault();
@@ -56,6 +72,17 @@ function onKeydown(event: KeyboardEvent) {
     event.preventDefault();
     submit();
   }
+}
+
+function onCompositionStart() {
+  isComposing.value = true;
+  ignoreEnterUntil = 0;
+}
+
+function onCompositionEnd() {
+  isComposing.value = false;
+  ignoreEnterUntil = performance.now() + COMPOSITION_ENTER_GUARD_MS;
+  nextTick(resize);
 }
 
 function insertNewlineAtCursor() {
@@ -137,30 +164,20 @@ function makeAttachmentId() {
 
 <template>
   <footer class="composer">
-    <div v-if="uploadWarnings.length" class="attachment-warnings" role="status">
-      <span v-for="warning in uploadWarnings" :key="warning">{{ warning }}</span>
-    </div>
-    <div v-if="attachments.length" class="attachment-list" :aria-label="labels.attachedFiles">
-      <span v-for="attachment in attachments" :key="attachment.id" class="attachment-chip">
-        <Paperclip :size="13" aria-hidden="true" />
-        <span class="attachment-name">{{ attachment.name }}</span>
-        <span class="attachment-size">{{ formatSize(attachment.size) }}</span>
-        <button type="button" :title="labels.removeFile" @click="removeAttachment(attachment.id)">
-          <X :size="13" aria-hidden="true" />
-        </button>
-      </span>
-    </div>
-    <button
-      type="button"
-      class="memory-send icon-button"
-      :aria-label="labels.saveMemory"
-      :data-tooltip="labels.saveMemory"
-      :title="labels.saveMemory"
-      @click="saveMemory"
-    >
-      <MemoryStick :size="17" aria-hidden="true" />
-    </button>
-    <div class="composer-input-shell">
+    <div class="composer-panel">
+      <div v-if="uploadWarnings.length" class="attachment-warnings" role="status">
+        <span v-for="warning in uploadWarnings" :key="warning">{{ warning }}</span>
+      </div>
+      <div v-if="attachments.length" class="attachment-list" :aria-label="labels.attachedFiles">
+        <span v-for="attachment in attachments" :key="attachment.id" class="attachment-chip">
+          <Paperclip :size="13" aria-hidden="true" />
+          <span class="attachment-name">{{ attachment.name }}</span>
+          <span class="attachment-size">{{ formatSize(attachment.size) }}</span>
+          <button type="button" :title="labels.removeFile" @click="removeAttachment(attachment.id)">
+            <X :size="13" aria-hidden="true" />
+          </button>
+        </span>
+      </div>
       <textarea
         ref="textarea"
         v-model="text"
@@ -169,68 +186,89 @@ function makeAttachmentId() {
         :disabled="disabled"
         @input="resize"
         @keydown="onKeydown"
+        @compositionstart="onCompositionStart"
+        @compositionend="onCompositionEnd"
       ></textarea>
-      <div class="composer-model-picker" :title="labels.modelName">
-        <Bot :size="14" aria-hidden="true" />
-        <select
-          :aria-label="labels.modelName"
-          :value="modelName"
-          :disabled="disabled || (!availableModels.length && !modelName)"
-          @change="onModelChange"
-        >
-          <option v-if="!availableModels.length" :value="modelName">
-            {{ modelName || labels.noModelsAvailable }}
-          </option>
-          <option
-            v-else-if="modelName && !availableModels.includes(modelName)"
-            :value="modelName"
+
+      <div class="composer-toolbar">
+        <div class="composer-toolbar-group">
+          <input
+            ref="fileInput"
+            class="file-input"
+            type="file"
+            multiple
+            :disabled="disabled"
+            @change="onFileChange"
+          />
+          <button
+            type="button"
+            class="attach-button composer-tool-button"
+            :aria-label="labels.attachFiles"
+            :data-tooltip="labels.attachFiles"
+            :title="labels.attachFiles"
+            :disabled="disabled"
+            @click="openFilePicker"
           >
-            {{ modelName }}
-          </option>
-          <option v-for="model in availableModels" :key="model" :value="model">
-            {{ model }}
-          </option>
-        </select>
+            <Plus :size="19" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="memory-send composer-text-button"
+            :title="labels.saveMemory"
+            :disabled="disabled"
+            @click="saveMemory"
+          >
+            <MemoryStick :size="15" aria-hidden="true" />
+            <span>{{ labels.saveMemory }}</span>
+          </button>
+        </div>
+
+        <div class="composer-toolbar-group composer-toolbar-actions">
+          <div class="composer-model-picker" :title="labels.modelName">
+            <select
+              :aria-label="labels.modelName"
+              :value="modelName"
+              :disabled="disabled || (!availableModels.length && !modelName)"
+              @change="onModelChange"
+            >
+              <option v-if="!availableModels.length" :value="modelName">
+                {{ modelName || labels.noModelsAvailable }}
+              </option>
+              <option
+                v-else-if="modelName && !availableModels.includes(modelName)"
+                :value="modelName"
+              >
+                {{ modelName }}
+              </option>
+              <option v-for="model in availableModels" :key="model" :value="model">
+                {{ model }}
+              </option>
+            </select>
+          </div>
+          <button
+            v-if="generating"
+            type="button"
+            class="stop-send composer-submit-button"
+            :aria-label="labels.stopGeneration"
+            :data-tooltip="labels.stopGeneration"
+            :title="labels.stopGeneration"
+            @click="emit('stop')"
+          >
+            <Square :size="14" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="send composer-submit-button"
+            :aria-label="labels.send"
+            :data-tooltip="labels.send"
+            :title="labels.send"
+            :disabled="!canSubmit"
+            @click="submit"
+          >
+            <ArrowUp :size="18" aria-hidden="true" />
+          </button>
+        </div>
       </div>
     </div>
-    <input
-      ref="fileInput"
-      class="file-input"
-      type="file"
-      multiple
-      :disabled="disabled"
-      @change="onFileChange"
-    />
-    <button
-      type="button"
-      class="attach-button icon-button"
-      :aria-label="labels.attachFiles"
-      :data-tooltip="labels.attachFiles"
-      :title="labels.attachFiles"
-      :disabled="disabled"
-      @click="openFilePicker"
-    >
-      <Paperclip :size="17" aria-hidden="true" />
-    </button>
-    <button
-      type="button"
-      class="stop-send icon-button"
-      :aria-label="labels.stopGeneration"
-      :data-tooltip="labels.stopGeneration"
-      :title="labels.stopGeneration"
-      @click="emit('stop')"
-    >
-      <Square :size="16" aria-hidden="true" />
-    </button>
-    <button
-      type="button"
-      class="send icon-button"
-      :aria-label="labels.send"
-      :data-tooltip="labels.send"
-      :title="labels.send"
-      @click="submit"
-    >
-      <SendHorizontal :size="17" aria-hidden="true" />
-    </button>
   </footer>
 </template>
