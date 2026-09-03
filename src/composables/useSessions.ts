@@ -1,14 +1,17 @@
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import type { ChatMessage, ChatSession, MessageRole } from '../protocol/types';
 
 const STORAGE_KEY = 'agentbee.sessions.v2';
 const DEFAULT_TITLE = 'New conversation';
 const MAX_SAVE_ATTEMPTS = 12;
+const MAX_STORED_MESSAGES_PER_SESSION = 50;
 const MIN_MESSAGES_PER_SESSION = 6;
+const SAVE_DEBOUNCE_MS = 650;
 
 export function useSessions() {
   const sessions = ref<ChatSession[]>([]);
   const activeSessionId = ref<string | null>(null);
+  let saveTimer: number | null = null;
 
   const activeSession = computed(() => (
     sessions.value.find((session) => session.id === activeSessionId.value) || sessions.value[0] || null
@@ -17,7 +20,9 @@ export function useSessions() {
   function loadSessions() {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-      sessions.value = Array.isArray(saved) ? saved : [];
+      sessions.value = Array.isArray(saved)
+        ? saved.map(limitStoredSessionMessages)
+        : [];
     } catch {
       sessions.value = [];
     }
@@ -30,12 +35,21 @@ export function useSessions() {
   }
 
   function saveSessions() {
-    let snapshot = normalizeSessionOrder(sessions.value);
+    if (saveTimer !== null) {
+      window.clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+
+    let snapshot = createStorageSnapshot(sessions.value);
 
     for (let attempt = 0; attempt < MAX_SAVE_ATTEMPTS; attempt += 1) {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-        sessions.value = snapshot;
+        const sessionById = new Map(sessions.value.map((session) => [session.id, session]));
+        sessions.value = snapshot.flatMap((storedSession) => {
+          const session = sessionById.get(storedSession.id);
+          return session ? [session] : [];
+        });
         if (!sessions.value.some((session) => session.id === activeSessionId.value)) {
           activeSessionId.value = sessions.value[0]?.id || null;
         }
@@ -56,6 +70,14 @@ export function useSessions() {
 
     sessions.value = snapshot;
     console.warn('BeeWeb local chat history save reached the pruning retry limit.');
+  }
+
+  function scheduleSaveSessions() {
+    if (saveTimer !== null) return;
+    saveTimer = window.setTimeout(() => {
+      saveTimer = null;
+      saveSessions();
+    }, SAVE_DEBOUNCE_MS);
   }
 
   function createSession(save = true): ChatSession {
@@ -102,6 +124,13 @@ export function useSessions() {
     const compact = text.replace(/\s+/g, ' ').trim();
     session.title = compact.slice(0, 24) || DEFAULT_TITLE;
   }
+
+  onBeforeUnmount(() => {
+    if (saveTimer === null) return;
+    window.clearTimeout(saveTimer);
+    saveTimer = null;
+    saveSessions();
+  });
 
   function updateMessageContent(messageId: string, content: string): ChatMessage | null {
     const session = activeSession.value;
@@ -152,6 +181,7 @@ export function useSessions() {
     deleteSession,
     loadSessions,
     saveSessions,
+    scheduleSaveSessions,
     setActiveSession,
     touchSession,
     updateMessageContent,
@@ -174,6 +204,28 @@ export function nowTime(): string {
 
 function normalizeSessionOrder(items: ChatSession[]): ChatSession[] {
   return [...items].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+}
+
+function createStorageSnapshot(items: ChatSession[]): ChatSession[] {
+  return normalizeSessionOrder(items).map((session) => ({
+    ...session,
+    messages: getStorableMessages(session.messages),
+  }));
+}
+
+function limitStoredSessionMessages(session: ChatSession): ChatSession {
+  const messages = Array.isArray(session.messages) ? session.messages : [];
+  return {
+    ...session,
+    messages: getStorableMessages(messages),
+  };
+}
+
+function getStorableMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages
+    .filter((message) => !message.isRemoteHistory)
+    .slice(-MAX_STORED_MESSAGES_PER_SESSION)
+    .map(({ memoryCreateId: _memoryCreateId, isRemoteHistory: _isRemoteHistory, ...message }) => message);
 }
 
 function pruneOldestHistory(items: ChatSession[], activeId: string | null): ChatSession[] {

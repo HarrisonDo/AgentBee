@@ -76,11 +76,18 @@ python -m http.server 8080
 默认设置：
 
 - WebSocket URL: `ws://192.168.254.10:8686`
+- protocols ws_token，用于鉴权，并获取ws配置及聊天记录
 - 发送模式：JSON
+
+### wstoken注意事项
+更新为需要配置token的版本，后期可以部署云端进行使用，无需在本地多次部署
+可以为空，以后台服务配置为准，web只做鉴定
 
 ### 本地历史记录
 
-当前暂不开发 WebSocket 获取聊天记录功能，聊天记录保存在浏览器 `localStorage` 中。
+本地会话保存在浏览器 `localStorage` 中，每个会话只持久化最新 50 条消息。连接 WebSocket 后，聊天时间线会通过 `memory/read` 对齐服务端记录；最新 50 条服务端记录会单独缓存在 `localStorage`，更早的记录只保留在当前页面内存中。滚动到本地最早一条消息时，每次向前加载 30 条。
+
+为同步不同浏览器中的新消息，页面会在连接、对话完成、删除完成和重新聚焦时同步最新 50 条；页面可见期间每 30 秒只探测最新 1 条，ID 变化时才读取 50 条，并每 5 分钟做一次完整同步。服务端快照没有变化时不会改写浏览器缓存。
 
 当浏览器存储空间不足时，BeeWeb 会自动裁剪旧记录：
 
@@ -108,6 +115,7 @@ python -m http.server 8080
 - JSON 消息发送。
 - 文件上传随消息发送。
 - 基于 `messageId` 的流式响应匹配。
+- 聊天时间线向上分页读取和删除服务端历史记录。
 - 本地会话管理。
 - 浏览器本地历史记录持久化。
 - 浏览器存储满时自动裁剪旧记录。
@@ -233,7 +241,9 @@ Default settings:
 
 ### Local History
 
-WebSocket-based history loading is not enabled for now. Chat history is stored in browser `localStorage`.
+Local conversations are stored in browser `localStorage`, with only the latest 50 messages persisted per conversation. Once WebSocket is connected, the chat timeline aligns with AgentBee history through `memory/read`. The latest 50 server records are cached separately in `localStorage`, while older pages remain in memory for the current page only. Reaching the earliest local message loads 30 earlier records at a time.
+
+To keep different browsers aligned, BeeWeb synchronizes the latest 50 records after connecting, finishing a turn, completing a deletion, or regaining focus. While visible, it probes only the latest record every 30 seconds and fetches 50 records only when the latest ID changes; a full sync also runs every 5 minutes. Unchanged snapshots do not rewrite browser storage.
 
 When browser storage is full, BeeWeb automatically prunes older records:
 
@@ -261,6 +271,7 @@ When browser storage is full, BeeWeb automatically prunes older records:
 - JSON-only message sending.
 - File uploads sent with messages.
 - `messageId` based streaming response matching.
+- Upward pagination and deletion of server history in the chat timeline.
 - Local conversation sessions.
 - Browser-side history persistence through `localStorage`.
 - Automatic local history pruning when browser storage is full.

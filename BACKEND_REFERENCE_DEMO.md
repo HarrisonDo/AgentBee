@@ -8,8 +8,12 @@ The frontend will send:
 
 ```json
 {
-  "type": "getHistory",
-  "sessionId": "session-id-from-browser"
+  "type": "memory",
+  "content": {
+    "act": "read",
+    "length": 50,
+    "create_id": 0
+  }
 }
 ```
 
@@ -17,9 +21,11 @@ Backend may respond with:
 
 ```json
 {
-  "type": "history",
-  "sessionId": "session-id-from-browser",
-  "messages": []
+  "type": "memory",
+  "act": "read",
+  "status": "success",
+  "data": [],
+  "total": 0
 }
 ```
 
@@ -113,11 +119,13 @@ Backend should stream:
 function onMessage(raw, ws) {
   const msg = JSON.parse(raw);
 
-  if (msg.type === "history_request") {
+  if (msg.type === "memory" && msg.content?.act === "read") {
     ws.send(JSON.stringify({
-      type: "history",
-      sessionId: msg.sessionId,
-      messages: loadHistory(msg.sessionId)
+      type: "memory",
+      act: "read",
+      status: "success",
+      data: readMemory(msg.content.length, msg.content.create_id),
+      total: countMemory()
     }));
     return;
   }

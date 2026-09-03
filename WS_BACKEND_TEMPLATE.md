@@ -16,16 +16,30 @@ The backend should include the same `messageId` in all streamed events for that 
 
 ## Client To Server
 
-### Load History After Connection
+### Read Server Memory History
 
-Backend history loading is currently disabled in the Vue frontend. Chat history is stored in browser `localStorage` for now.
-
-The following request shape is kept only for future protocol reference:
+The frontend loads and caches the latest 50 server records after the WebSocket connects to establish the cursor and align different browsers. It repeats this sync after a completed turn, a deletion, focus recovery, and every 5 minutes while visible. Every 30 seconds it requests only the latest record first; a changed latest `create_id` triggers the 50-record sync. Use `create_id: 0` for these latest-record requests. When the user reaches the top of local history, pass the oldest loaded server record ID; the backend returns records whose IDs are lower than that cursor in pages of up to 30.
 
 ```json
 {
-  "type": "history_request",
-  "sessionId": "browser-local-session-id"
+  "type": "memory",
+  "content": {
+    "act": "read",
+    "length": 50,
+    "create_id": 0
+  }
+}
+```
+
+### Delete Server Memory History
+
+```json
+{
+  "type": "memory",
+  "content": {
+    "act": "delete",
+    "create_ids": [1770000000000000, 1770000000000001]
+  }
 }
 ```
 
@@ -122,26 +136,34 @@ Messages can be marked as sub-agent messages by adding the `isSubTalk` field. Su
 
 See `SUB_AGENT_FEATURE.md` for detailed documentation.
 
-### History Response
+### Memory History Response
 
 ```json
 {
-  "type": "history",
-  "sessionId": "browser-local-session-id",
-  "messages": [
+  "type": "memory",
+  "act": "read",
+  "status": "success",
+  "total": 2,
+  "data": [
     {
       "role": "user",
-      "messageId": "question-message-id",
-      "content": "介绍一下这个项目"
+      "level": "misc",
+      "content": "介绍一下这个项目",
+      "create_id": 1770000000000000,
+      "create_time": "2026-02-03 10:00:00"
     },
     {
       "role": "assistant",
-      "messageId": "question-message-id",
-      "content": "这是一个 WebSocket 前端聊天台。"
+      "level": "misc",
+      "content": "这是一个 WebSocket 前端聊天台。",
+      "create_id": 1770000000000001,
+      "create_time": "2026-02-03 10:00:01"
     }
   ]
 }
 ```
+
+Delete responses use the same `type` with `act: "delete"`, `status`, and the number of affected rows in `deleted`.
 
 ### Assistant Content
 

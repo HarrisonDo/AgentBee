@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue';
-import { Check, Copy, Paperclip, Pencil, RotateCcw, SquareTerminal, X } from 'lucide-vue-next';
+import {
+  Check,
+  Copy,
+  LoaderCircle,
+  Paperclip,
+  Pencil,
+  RotateCcw,
+  SquareTerminal,
+  Trash2,
+  X,
+} from 'lucide-vue-next';
 import FoldBlock from './FoldBlock.vue';
 import ToolEventsBlock from './ToolEventsBlock.vue';
 import { useMarkdown } from '../composables/useMarkdown';
@@ -9,10 +19,13 @@ import type { ChatMessage } from '../protocol/types';
 const props = defineProps<{
   labels: Record<string, string>;
   message: ChatMessage;
+  deletingMemory?: boolean;
+  memoryDeleteDisabled?: boolean;
   showDebugInfo?: boolean;
 }>();
 
 const emit = defineEmits<{
+  deleteMemoryMessage: [createId: number];
   resendUserMessage: [messageId: string];
   updateUserMessage: [messageId: string, content: string];
 }>();
@@ -42,7 +55,18 @@ const endedWithoutResponse = computed(() => (
   !hasAssistantOutput.value
 ));
 
-const renderedMarkdown = computed(() => renderMarkdownBlocks(props.message.content || ''));
+const renderedMarkdown = computed(() => {
+  const markdown = props.message.content || '';
+  if (props.message.status !== 'loading') {
+    return { stable: renderMarkdownBlocks(markdown), tail: '' };
+  }
+
+  const split = splitStreamingMarkdown(markdown);
+  return {
+    stable: renderMarkdownBlocks(split.stable),
+    tail: renderMarkdownBlocks(split.tail),
+  };
+});
 
 const senderIdentity = computed(() => {
   const senderName = props.message.senderName?.trim() || '';
@@ -203,10 +227,46 @@ function renderMarkdownBlocks(markdown: string) {
 
   return container.innerHTML;
 }
+
+const UNSAFE_STREAMING_BLOCK = /^(\s|[-*+]\s|\d+[.)]\s|\||\$\$)/;
+
+function splitStreamingMarkdown(markdown: string): { stable: string; tail: string } {
+  if (!markdown) return { stable: '', tail: '' };
+
+  const lineBreak = markdown.includes('\r\n') ? '\r\n' : '\n';
+  const lines = markdown.split(/\r?\n/);
+  let fence: { marker: string; size: number } | null = null;
+  let splitLine = -1;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      const marker = fenceMatch[1][0];
+      const size = fenceMatch[1].length;
+      if (!fence) fence = { marker, size };
+      else if (marker === fence.marker && size >= fence.size) fence = null;
+      continue;
+    }
+    if (fence || line.trim() !== '') continue;
+
+    let next = index + 1;
+    while (next < lines.length && lines[next].trim() === '') next += 1;
+    if (next < lines.length && !UNSAFE_STREAMING_BLOCK.test(lines[next])) {
+      splitLine = next;
+    }
+  }
+
+  if (splitLine <= 0) return { stable: '', tail: markdown };
+  return {
+    stable: lines.slice(0, splitLine).join(lineBreak),
+    tail: lines.slice(splitLine).join(lineBreak),
+  };
+}
 </script>
 
 <template>
-  <article class="message" :class="message.role">
+  <article class="message" :class="[message.role, { 'remote-history': message.isRemoteHistory }]">
     <div v-if="message.role === 'system'" class="system-log">
       <SquareTerminal :size="14" aria-hidden="true" />
       <span class="system-log-text">{{ message.content }}</span>
@@ -266,8 +326,10 @@ function renderMarkdownBlocks(markdown: string) {
         v-else-if="message.role === 'assistant'"
         class="markdown-body"
         @click="copyMarkdownBlock"
-        v-html="renderedMarkdown"
-      ></div>
+      >
+        <div v-if="renderedMarkdown.stable" v-html="renderedMarkdown.stable"></div>
+        <div v-if="renderedMarkdown.tail" v-html="renderedMarkdown.tail"></div>
+      </div>
       <div v-else-if="isEditing" class="user-edit-form">
         <textarea
           ref="editTextarea"
@@ -289,7 +351,7 @@ function renderMarkdownBlocks(markdown: string) {
       <div v-else class="markdown-body plain">{{ message.content }}</div>
     </div>
 
-    <div v-if="message.role === 'user'" class="user-message-actions">
+    <div v-if="message.role === 'user' && !message.isRemoteHistory" class="user-message-actions">
       <button
         v-if="!isEditing"
         type="button"
@@ -319,5 +381,17 @@ function renderMarkdownBlocks(markdown: string) {
       </button>
     </div>
     </template>
+    <div v-if="message.memoryCreateId" class="history-message-actions">
+      <button
+        type="button"
+        class="message-action-button history-delete-button"
+        :title="labels.deleteMemoryRecord"
+        :disabled="deletingMemory || memoryDeleteDisabled"
+        @click="emit('deleteMemoryMessage', message.memoryCreateId)"
+      >
+        <LoaderCircle v-if="deletingMemory" class="spin" :size="14" aria-hidden="true" />
+        <Trash2 v-else :size="14" aria-hidden="true" />
+      </button>
+    </div>
   </article>
 </template>

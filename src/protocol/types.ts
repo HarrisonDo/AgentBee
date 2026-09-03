@@ -2,6 +2,7 @@ export type MessageRole = 'user' | 'assistant' | 'system' | 'error' | 'tool';
 export type AssistantStatus = 'loading' | 'done' | 'error' | 'stopped';
 export type ServerEventType =
   | 'history'
+  | 'memory'
   | 'content'
   | 'assistant'
   | 'message'
@@ -34,6 +35,9 @@ export interface ChatMessage {
   toolEvents?: ToolEvent[];
   status?: AssistantStatus;
   isSubTalk?: number;
+  /** Runtime-only metadata for records loaded through memory/read. */
+  memoryCreateId?: number;
+  isRemoteHistory?: boolean;
 }
 
 export interface ChatAttachment {
@@ -99,6 +103,31 @@ export interface ClientHistoryRequest {
   sessionId: string;
 }
 
+export interface ClientMemoryReadRequest {
+  type: 'memory';
+  content: {
+    act: 'read';
+    length: number;
+    create_id: number;
+  };
+}
+
+export interface ClientMemoryDeleteRequest {
+  type: 'memory';
+  content: {
+    act: 'delete';
+    create_ids: number[];
+  };
+}
+
+export interface MemoryRecord {
+  content: string;
+  create_id: number;
+  create_time: string;
+  level: string;
+  role: MessageRole;
+}
+
 export interface ClientStopRequest {
   type: 'stop';
   sessionId: string | null;
@@ -128,6 +157,8 @@ export interface ClientSystemRequest {
 export type ClientMessage =
   | ClientChatMessage
   | ClientHistoryRequest
+  | ClientMemoryReadRequest
+  | ClientMemoryDeleteRequest
   | ClientStopRequest
   | ClientSettingRequest
   | ClientSystemRequest;
@@ -145,6 +176,9 @@ export interface ServerMessage {
   turnId?: string;
   requestId?: string;
   status?: string;
+  total?: number;
+  deleted?: number;
+  create_id?: number;
   message?: string;
   error?: unknown;
   data?: unknown;

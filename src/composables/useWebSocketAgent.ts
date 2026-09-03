@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import type {
   ChatAttachment,
   ChatMessage,
@@ -24,25 +24,40 @@ const NO_RESPONSE_TIMEOUT_MS = 5 * 60_000;
 const AUTO_CONNECT_WINDOW_MS = 60_000;
 const AUTO_CONNECT_BASE_RETRY_MS = 1000;
 const AUTO_CONNECT_MAX_RETRY_MS = 15_000;
+const STREAM_FLUSH_MS = 80;
+const WS_TOKEN_STORAGE_KEY = 'agentbee.wsToken';
+
+interface PendingStreamUpdate {
+  content: string;
+  think: string;
+  message?: ServerMessage;
+}
 
 interface UseWebSocketAgentOptions {
   activeSession: () => ChatSession | null;
   addMessage: (role: ChatMessage['role'], content: string, extra?: Partial<ChatMessage>) => ChatMessage;
   onSettingMessage?: (act: string, content: unknown, msg: ServerMessage) => void;
   onSystemMessage?: (act: string, content: unknown, msg: ServerMessage) => void;
+  onMemoryMessage?: (act: string, msg: ServerMessage) => void;
+  onTurnFinished?: () => void;
   saveSessions: () => void;
+  scheduleSaveSessions: () => void;
   touchSession: (session: ChatSession) => void;
   updateTitleFromMessage: (session: ChatSession, text: string) => void;
 }
 
 export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   const wsUrl = ref(localStorage.getItem('agentbee.lastUrl') || 'ws://127.0.0.1:8686');
+  const wsToken = ref(localStorage.getItem(WS_TOKEN_STORAGE_KEY) || '');
   const connected = ref(false);
   const connecting = ref(false);
+  const connectionError = ref(false);
   const autoConnectPaused = ref(false);
   const pendingTurns = ref(new Map<string, string | null>());
   const socket = ref<WebSocket | null>(null);
   const noResponseTimers = new Map<string, number>();
+  const pendingStreamUpdates = new Map<string, PendingStreamUpdate>();
+  let streamFlushTimer: number | null = null;
   let autoRetryTimer: number | null = null;
   let manualDisconnect = false;
   let currentConnectIsAuto = false;
@@ -63,7 +78,10 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     }
 
     const url = wsUrl.value.trim();
+    const token = wsToken.value.trim();
+    connectionError.value = false;
     if (!/^wss?:\/\//.test(url)) {
+      connectionError.value = true;
       options.addMessage('error', 'WebSocket URL must start with ws:// or wss://.');
       if (automatic) pauseAutoConnect('Auto connection stopped because the WebSocket URL is invalid. Waiting for manual connection.');
       return;
@@ -79,15 +97,31 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       autoConnectStartedAt = 0;
     }
     options.addMessage('system', `Connecting to ${url}`);
-    socket.value = new WebSocket(url);
+    try {
+      socket.value = token ? new WebSocket(url, [token]) : new WebSocket(url);
+    } catch (error) {
+      connecting.value = false;
+      connectionError.value = true;
+      socket.value = null;
+      const detail = error instanceof Error ? ` ${error.message}` : '';
+      options.addMessage('error', `WebSocket connection could not be initialized.${detail}`);
+      if (automatic) pauseAutoConnect('Auto connection stopped because the WebSocket token is invalid. Waiting for manual connection.');
+      return;
+    }
 
     socket.value.onopen = () => {
       connected.value = true;
       connecting.value = false;
+      connectionError.value = false;
       autoConnectPaused.value = false;
       autoConnectAttempts = 0;
       autoConnectStartedAt = 0;
       localStorage.setItem('agentbee.lastUrl', url);
+      if (token) {
+        localStorage.setItem(WS_TOKEN_STORAGE_KEY, token);
+      } else {
+        localStorage.removeItem(WS_TOKEN_STORAGE_KEY);
+      }
       options.addMessage('system', 'WebSocket connected.');
     };
 
@@ -96,6 +130,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     };
 
     socket.value.onerror = () => {
+      connectionError.value = true;
       if (!currentConnectIsAuto) {
         options.addMessage('error', 'WebSocket connection error. Check the browser console.');
       }
@@ -104,6 +139,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     socket.value.onclose = (event) => {
       connected.value = false;
       connecting.value = false;
+      if (!manualDisconnect && event.code !== 1000) connectionError.value = true;
       const reason = event.reason ? `, reason: ${event.reason}` : '';
       finishAllPendingWithoutResponse();
       const wasAuto = currentConnectIsAuto;
@@ -260,8 +296,39 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     return true;
   }
 
+  function readMemory(length: number, createId = 0) {
+    if (!canSend.value) {
+      options.addMessage('error', 'Not connected, memory history was not loaded.');
+      return false;
+    }
+    sendJson({
+      type: 'memory',
+      content: {
+        act: 'read',
+        length: Math.max(1, Math.floor(length)),
+        create_id: Math.max(0, Math.floor(createId)),
+      },
+    });
+    return true;
+  }
+
+  function deleteMemory(createIds: number[]) {
+    if (!canSend.value) {
+      options.addMessage('error', 'Not connected, memory history was not deleted.');
+      return false;
+    }
+    const ids = Array.from(new Set(createIds.filter((id) => Number.isSafeInteger(id) && id > 0)));
+    if (!ids.length) return false;
+    sendJson({
+      type: 'memory',
+      content: { act: 'delete', create_ids: ids },
+    });
+    return true;
+  }
+
   function clearPendingTurns() {
     clearAllNoResponseTimers();
+    discardPendingStreamUpdates();
     pendingTurns.value.clear();
   }
 
@@ -272,7 +339,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   function handleServerMessage(raw: string) {
     const parsed = parseServerMessage(raw);
     if (typeof parsed === 'string') {
-      appendAssistantContent(null, parsed);
+      queueAssistantContent(null, parsed);
       return;
     }
 
@@ -294,9 +361,16 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       options.onSystemMessage?.(act, content, msg);
       return;
     }
+    if (type === 'memory') {
+      const { act } = unwrapActContent(msg);
+      options.onMemoryMessage?.(act, msg);
+      return;
+    }
     if (type === 'history') return;
-    if (['content', 'assistant', 'message'].includes(type)) return appendAssistantContent(messageId, normalizePayload(msg), msg);
-    if (['think', 'thinking', 'status'].includes(type)) return appendAssistantThink(messageId, normalizePayload(msg), msg);
+    if (['content', 'assistant', 'message'].includes(type)) return queueAssistantContent(messageId, normalizePayload(msg), msg);
+    if (['think', 'thinking', 'status'].includes(type)) return queueAssistantThink(messageId, normalizePayload(msg), msg);
+    // Preserve ordering when a tool/image/terminal event follows buffered text.
+    flushPendingStreamUpdates(messageId);
     if (['tool_calls', 'tool_call', 'tool'].includes(type)) return appendAssistantToolEvent(messageId, 'tool_calls', msg);
     if (type === 'tool_result') return appendAssistantToolEvent(messageId, 'tool_result', msg);
     if (type === 'image') return appendAssistantImage(messageId, msg);
@@ -307,7 +381,68 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     if (['end', 'done', 'finish'].includes(type)) return finishAssistantMessage(messageId, 'done', msg);
     if (type === 'close') return closeAssistantMessage(messageId);
 
-    appendAssistantContent(messageId, JSON.stringify(msg, null, 2), msg);
+    queueAssistantContent(messageId, JSON.stringify(msg, null, 2), msg);
+  }
+
+  function queueAssistantContent(messageId: string | null, text: string, msg?: ServerMessage) {
+    if (!text) return;
+    const pending = getPendingStreamUpdate(messageId);
+    pending.content += text;
+    if (msg) pending.message = msg;
+    scheduleStreamFlush();
+  }
+
+  function queueAssistantThink(messageId: string | null, text: string, msg?: ServerMessage) {
+    if (!text) return;
+    const pending = getPendingStreamUpdate(messageId);
+    pending.think += text;
+    if (msg) pending.message = msg;
+    scheduleStreamFlush();
+  }
+
+  function getPendingStreamUpdate(messageId: string | null): PendingStreamUpdate {
+    const key = messageId || '__latest__';
+    const existing = pendingStreamUpdates.get(key);
+    if (existing) return existing;
+    const pending: PendingStreamUpdate = { content: '', think: '' };
+    pendingStreamUpdates.set(key, pending);
+    return pending;
+  }
+
+  function scheduleStreamFlush() {
+    if (streamFlushTimer !== null) return;
+    streamFlushTimer = window.setTimeout(() => {
+      streamFlushTimer = null;
+      flushPendingStreamUpdates();
+    }, STREAM_FLUSH_MS);
+  }
+
+  function flushPendingStreamUpdates(messageId?: string | null) {
+    const keys = messageId
+      ? [messageId]
+      : Array.from(pendingStreamUpdates.keys());
+
+    keys.forEach((key) => {
+      const pending = pendingStreamUpdates.get(key);
+      if (!pending) return;
+      pendingStreamUpdates.delete(key);
+      const resolvedMessageId = key === '__latest__' ? null : key;
+      if (pending.content) appendAssistantContentNow(resolvedMessageId, pending.content, pending.message);
+      if (pending.think) appendAssistantThinkNow(resolvedMessageId, pending.think, pending.message);
+    });
+
+    if (!pendingStreamUpdates.size && streamFlushTimer !== null) {
+      window.clearTimeout(streamFlushTimer);
+      streamFlushTimer = null;
+    }
+  }
+
+  function discardPendingStreamUpdates() {
+    pendingStreamUpdates.clear();
+    if (streamFlushTimer !== null) {
+      window.clearTimeout(streamFlushTimer);
+      streamFlushTimer = null;
+    }
   }
 
   function ensureAssistantMessage(messageId: string | null, msg?: ServerMessage) {
@@ -341,7 +476,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     return { session, assistant, messageId: resolvedMessageId };
   }
 
-  function appendAssistantContent(messageId: string | null, text: string, msg?: ServerMessage) {
+  function appendAssistantContentNow(messageId: string | null, text: string, msg?: ServerMessage) {
     const turn = ensureAssistantMessage(messageId, msg);
     if (!turn) return;
     clearNoResponseTimer(turn.messageId);
@@ -349,10 +484,10 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.content += text || '';
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.saveSessions();
+    options.scheduleSaveSessions();
   }
 
-  function appendAssistantThink(messageId: string | null, text: string, msg?: ServerMessage) {
+  function appendAssistantThinkNow(messageId: string | null, text: string, msg?: ServerMessage) {
     const turn = ensureAssistantMessage(messageId, msg);
     if (!turn) return;
     clearNoResponseTimer(turn.messageId);
@@ -360,7 +495,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.think = `${turn.assistant.think || ''}${text || ''}`;
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.saveSessions();
+    options.scheduleSaveSessions();
   }
 
   function appendAssistantToolEvent(messageId: string | null, kind: 'tool_calls' | 'tool_result', msg: ServerMessage) {
@@ -372,13 +507,13 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.toolEvents.push(normalizeToolEvent(kind, msg, makeId, nowTime));
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.saveSessions();
+    options.scheduleSaveSessions();
   }
 
   function appendAssistantImage(messageId: string | null, msg: ServerMessage) {
     const image = normalizeImageEvent(msg, makeId, nowTime);
     if (!image) {
-      appendAssistantContent(messageId, '', msg);
+      queueAssistantContent(messageId, '', msg);
       return;
     }
 
@@ -390,7 +525,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.images.push(image);
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.saveSessions();
+    options.scheduleSaveSessions();
   }
 
   function finishAssistantMessage(
@@ -398,6 +533,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     status: 'done' | 'error' | 'stopped',
     msg?: ServerMessage,
   ) {
+    flushPendingStreamUpdates(messageId);
     const resolvedMessageId = messageId || getLatestPendingMessageId();
     if (resolvedMessageId) clearNoResponseTimer(resolvedMessageId);
     const session = options.activeSession();
@@ -412,9 +548,11 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     }
     if (resolvedMessageId) pendingTurns.value.delete(resolvedMessageId);
     options.saveSessions();
+    if (status === 'done') options.onTurnFinished?.();
   }
 
   function finishAllPendingWithoutResponse() {
+    flushPendingStreamUpdates();
     const session = options.activeSession();
     if (!session || !pendingTurns.value.size) return;
 
@@ -432,6 +570,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   }
 
   function closeAssistantMessage(messageId: string | null) {
+    flushPendingStreamUpdates(messageId);
     const resolvedMessageId = messageId || getLatestPendingMessageId();
     if (resolvedMessageId) clearNoResponseTimer(resolvedMessageId);
     const session = options.activeSession();
@@ -547,22 +686,32 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     }
   }
 
+  onBeforeUnmount(() => {
+    discardPendingStreamUpdates();
+    clearAllNoResponseTimers();
+    clearAutoRetryTimer();
+  });
+
   return {
     canSend,
     clearPendingTurns,
     connect,
     connected,
     connecting,
+    connectionError,
     disconnect,
+    deleteMemory,
     autoConnectPaused,
     hasPendingTurns,
     reconnect,
+    readMemory,
     resendEditedText,
     sendSettingAct,
     sendSystemAct,
     sendText,
     startAutoConnect,
     stopCurrent,
+    wsToken,
     wsUrl,
   };
 }
