@@ -85,22 +85,17 @@ python -m http.server 8080
 
 ### 本地历史记录
 
-本地会话保存在浏览器 `localStorage` 中，每个会话只持久化最新 50 条消息。连接 WebSocket 后，聊天时间线会通过 `memory/read` 对齐服务端记录；最新 50 条服务端记录会单独缓存在 `localStorage`，更早的记录只保留在当前页面内存中。滚动到本地最早一条消息时，每次向前加载 30 条。
+当前对话仅在页面打开期间临时保存在浏览器 `localStorage` 中，最多保存最新 50 条本地消息。页面关闭或刷新时会清空本地对话，不会删除服务端 memory。
 
-为同步不同浏览器中的新消息，页面会在连接、对话完成、删除完成和重新聚焦时同步最新 50 条；页面可见期间每 30 秒只探测最新 1 条，ID 变化时才读取 50 条，并每 5 分钟做一次完整同步。服务端快照没有变化时不会改写浏览器缓存。
+每次 WebSocket 连接成功后，页面只读取一次最新 50 条服务端 memory，不执行定时、聚焦或对话完成后的自动同步。滚动到当前最早一条消息时，每次继续向前读取 30 条；这些记录只保留在当前页面内存中。
 
-当浏览器存储空间不足时，BeeWeb 会自动裁剪旧记录：
-
-- 优先裁剪最旧会话里的旧消息。
-- 优先保留当前会话。
-- 优先保留较新的会话和消息。
-- 如果所有会话都已经很短，再删除最旧的非当前会话。
+当浏览器存储空间不足时，BeeWeb 会优先裁剪当前对话中较早的本地消息，并保留较新的消息。
 
 ### 文件结构
 
 - `src/`: Vue 应用源码。
-- `src/components/`: 聊天消息、会话列表、输入框、折叠块、连接面板等组件。
-- `src/composables/`: 会话持久化、WebSocket Agent 流程、Markdown 渲染。
+- `src/components/`: 聊天消息、确认弹窗、输入框、折叠块、连接面板等组件。
+- `src/composables/`: 会话缓存、WebSocket Agent 流程、Markdown 渲染。
 - `src/protocol/`: WebSocket 事件类型和 normalizer。
 - `old/`: 旧版原生 HTML/CSS/JS 前端归档。
 - `WS_BACKEND_TEMPLATE.md`: WebSocket 请求/响应模板。
@@ -116,10 +111,9 @@ python -m http.server 8080
 - 文件上传随消息发送。
 - 基于 `messageId` 的流式响应匹配。
 - 聊天时间线向上分页读取和删除服务端历史记录。
-- 本地会话管理。
-- 浏览器本地历史记录持久化。
+- 单一对话界面。
+- 当前页面打开期间的本地历史缓存。
 - 浏览器存储满时自动裁剪旧记录。
-- 新建、清空、删除、导出会话。
 - 流式 assistant 消息渲染。
 - 用户不在底部时不强制自动滚动。
 - Markdown 渲染和内容清理。
@@ -241,22 +235,17 @@ Default settings:
 
 ### Local History
 
-Local conversations are stored in browser `localStorage`, with only the latest 50 messages persisted per conversation. Once WebSocket is connected, the chat timeline aligns with AgentBee history through `memory/read`. The latest 50 server records are cached separately in `localStorage`, while older pages remain in memory for the current page only. Reaching the earliest local message loads 30 earlier records at a time.
+The current conversation is stored temporarily in browser `localStorage` only while the page is open, with at most the latest 50 local messages retained. Closing or refreshing the page clears it without deleting server memory.
 
-To keep different browsers aligned, BeeWeb synchronizes the latest 50 records after connecting, finishing a turn, completing a deletion, or regaining focus. While visible, it probes only the latest record every 30 seconds and fetches 50 records only when the latest ID changes; a full sync also runs every 5 minutes. Unchanged snapshots do not rewrite browser storage.
+After each successful WebSocket connection, BeeWeb reads the latest 50 server memory records once. It does not run periodic, focus-based, or post-turn synchronization. Reaching the earliest loaded message reads 30 older records at a time; those records stay only in memory for the current page.
 
-When browser storage is full, BeeWeb automatically prunes older records:
-
-- Prune old messages from the oldest conversations first.
-- Prefer keeping the current conversation.
-- Prefer keeping newer conversations and messages.
-- If every conversation is already short, remove the oldest non-current conversation.
+When browser storage is full, BeeWeb prunes older local messages from the current conversation first and retains newer messages.
 
 ### Files
 
 - `src/`: Vue application source.
-- `src/components/`: chat message, session list, composer, fold block, and connection panel components.
-- `src/composables/`: session persistence, WebSocket Agent flow, and Markdown rendering.
+- `src/components/`: chat message, confirmation dialog, composer, fold block, and connection panel components.
+- `src/composables/`: session caching, WebSocket Agent flow, and Markdown rendering.
 - `src/protocol/`: WebSocket event types and normalizers.
 - `old/`: archived native HTML/CSS/JS frontend.
 - `WS_BACKEND_TEMPLATE.md`: WebSocket request/response templates.
@@ -272,10 +261,9 @@ When browser storage is full, BeeWeb automatically prunes older records:
 - File uploads sent with messages.
 - `messageId` based streaming response matching.
 - Upward pagination and deletion of server history in the chat timeline.
-- Local conversation sessions.
-- Browser-side history persistence through `localStorage`.
+- Single-conversation interface.
+- Browser-side history caching while the current page is open.
 - Automatic local history pruning when browser storage is full.
-- New, clear, delete, and export session actions.
 - Streaming assistant rendering.
 - Stream output only auto-scrolls while the user is near the bottom.
 - Markdown rendering with sanitization.

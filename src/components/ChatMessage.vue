@@ -351,7 +351,7 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
       <div v-else class="markdown-body plain">{{ message.content }}</div>
     </div>
 
-    <div v-if="message.role === 'user' && !message.isRemoteHistory" class="user-message-actions">
+    <div v-if="message.role === 'user'" class="user-message-actions">
       <button
         v-if="!isEditing"
         type="button"
@@ -379,9 +379,20 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
       >
         <Pencil :size="14" aria-hidden="true" />
       </button>
+      <button
+        v-if="message.memoryCreateId"
+        type="button"
+        class="message-action-button history-delete-button"
+        :title="labels.deleteMemoryRecord"
+        :disabled="deletingMemory || memoryDeleteDisabled"
+        @click="emit('deleteMemoryMessage', message.memoryCreateId)"
+      >
+        <LoaderCircle v-if="deletingMemory" class="spin" :size="14" aria-hidden="true" />
+        <Trash2 v-else :size="14" aria-hidden="true" />
+      </button>
     </div>
     </template>
-    <div v-if="message.memoryCreateId" class="history-message-actions">
+    <div v-if="message.memoryCreateId && message.role !== 'user'" class="history-message-actions">
       <button
         type="button"
         class="message-action-button history-delete-button"

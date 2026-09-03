@@ -18,7 +18,7 @@ The backend should include the same `messageId` in all streamed events for that 
 
 ### Read Server Memory History
 
-The frontend loads and caches the latest 50 server records after the WebSocket connects to establish the cursor and align different browsers. It repeats this sync after a completed turn, a deletion, focus recovery, and every 5 minutes while visible. Every 30 seconds it requests only the latest record first; a changed latest `create_id` triggers the 50-record sync. Use `create_id: 0` for these latest-record requests. When the user reaches the top of local history, pass the oldest loaded server record ID; the backend returns records whose IDs are lower than that cursor in pages of up to 30.
+The frontend reads the latest 50 server records once after each successful WebSocket connection. Use `create_id: 0` for this initial request. It does not repeat the request on a timer, focus change, completed turn, or deletion. When the user reaches the top of the loaded history, pass the oldest loaded server record ID; the backend returns records whose IDs are lower than that cursor in pages of up to 30. Closing or refreshing the page clears browser-local chat data without deleting server memory.
 
 ```json
 {

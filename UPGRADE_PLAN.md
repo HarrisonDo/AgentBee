@@ -39,8 +39,8 @@ The current app is a WebSocket chat workbench. The hard parts are session state,
 src/
   components/
     ChatMessage.vue
+    ConfirmDialog.vue
     FoldBlock.vue
-    SessionList.vue
     Composer.vue
     ConnectionPanel.vue
   composables/
@@ -84,4 +84,3 @@ src/
 - Fix native frontend scrolling during streamed output.
 - Improve keyboard behavior.
 - Keep protocol docs accurate for backend development.
-

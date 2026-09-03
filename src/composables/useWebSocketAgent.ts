@@ -39,11 +39,9 @@ interface UseWebSocketAgentOptions {
   onSettingMessage?: (act: string, content: unknown, msg: ServerMessage) => void;
   onSystemMessage?: (act: string, content: unknown, msg: ServerMessage) => void;
   onMemoryMessage?: (act: string, msg: ServerMessage) => void;
-  onTurnFinished?: () => void;
   saveSessions: () => void;
   scheduleSaveSessions: () => void;
   touchSession: (session: ChatSession) => void;
-  updateTitleFromMessage: (session: ChatSession, text: string) => void;
 }
 
 export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
@@ -206,7 +204,6 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     if (!session) return;
 
     const messageId = makeId();
-    options.updateTitleFromMessage(session, trimmed || attachments[0]?.name || '');
     options.addMessage('user', trimmed, {
       attachments: toChatAttachments(attachments),
       messageId,
@@ -548,7 +545,6 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     }
     if (resolvedMessageId) pendingTurns.value.delete(resolvedMessageId);
     options.saveSessions();
-    if (status === 'done') options.onTurnFinished?.();
   }
 
   function finishAllPendingWithoutResponse() {

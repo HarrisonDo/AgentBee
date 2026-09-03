@@ -4,18 +4,18 @@ import {
   ArrowDownToLine,
   History,
   LoaderCircle,
+  MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
-  Plus,
   RefreshCw,
   X,
 } from 'lucide-vue-next';
 import ChatMessage from './components/ChatMessage.vue';
 import Composer from './components/Composer.vue';
+import ConfirmDialog from './components/ConfirmDialog.vue';
 import ConnectionPanel from './components/ConnectionPanel.vue';
 import LoginWin from './components/LoginWin.vue';
 import SettingsView from './components/SettingsView.vue';
-import SessionList from './components/SessionList.vue';
 import SystemLogGroup from './components/SystemLogGroup.vue';
 import SubAgentPanel from './components/SubAgentPanel.vue';
 import SubAgentMenu from './components/SubAgentMenu.vue';
@@ -42,7 +42,7 @@ interface BasicSettings {
 }
 
 type SettingStatusTone = 'success' | 'warning' | 'error';
-type MemoryReadMode = 'latest' | 'older' | 'probe';
+type MemoryReadMode = 'latest' | 'older';
 
 type VisibleChatItem =
   | {
@@ -70,6 +70,7 @@ const settingStatusTone = ref<SettingStatusTone>('success');
 const availableModels = ref<string[]>([]);
 const memoryLoading = ref(false);
 const memoryDeleting = ref(false);
+const memoryDeleteCandidateId = ref<number | null>(null);
 const memoryError = ref('');
 const memoryHasMore = ref(true);
 const memoryReadMode = ref<MemoryReadMode | null>(null);
@@ -89,22 +90,14 @@ const SUB_AGENT_DIVIDER_WIDTH = 8;
 const SUB_AGENT_WIDTH_STORAGE_KEY = 'agentbee.subAgentPaneWidth';
 const HISTORY_PAGE_SIZE = 50;
 const MEMORY_PAGE_SIZE = 30;
-const MEMORY_LATEST_CACHE_SIZE = 50;
-const MEMORY_PROBE_INTERVAL_MS = 30_000;
-const MEMORY_FULL_SYNC_INTERVAL_MS = 5 * 60_000;
-const MEMORY_FOCUS_SYNC_GAP_MS = 5_000;
+const MEMORY_LATEST_PAGE_SIZE = 50;
 const MEMORY_RESPONSE_TIMEOUT_MS = 15_000;
-const MEMORY_CACHE_STORAGE_KEY = 'agentbee.memoryCache.v1';
-const cachedMemoryRecords = readCachedMemoryRecords();
-const latestMemoryRecords = ref<MemoryRecord[]>(cachedMemoryRecords);
-const memoryRecords = ref<MemoryRecord[]>([...cachedMemoryRecords]);
+const LEGACY_MEMORY_CACHE_STORAGE_KEY = 'agentbee.memoryCache.v1';
+localStorage.removeItem(LEGACY_MEMORY_CACHE_STORAGE_KEY);
+const memoryRecords = ref<MemoryRecord[]>([]);
 let pendingMemoryDeleteIds: number[] = [];
 let memoryResponseTimer: number | null = null;
-let memoryProbeTimer: number | null = null;
-let memoryFullSyncTimer: number | null = null;
-let memoryTurnSyncTimer: number | null = null;
-let pendingMemoryReadMode: Exclude<MemoryReadMode, 'probe'> | null = null;
-let lastFullMemorySyncAt = 0;
+let pendingMemoryReadMode: MemoryReadMode | null = null;
 let resizeStartX = 0;
 let resizeStartWidth = 0;
 let resizePointerId: number | null = null;
@@ -122,11 +115,9 @@ const agent = useWebSocketAgent({
   onMemoryMessage: handleMemoryMessage,
   onSettingMessage: handleSettingMessage,
   onSystemMessage: handleSystemMessage,
-  onTurnFinished: scheduleMemorySyncAfterTurn,
   saveSessions: sessions.saveSessions,
   scheduleSaveSessions: sessions.scheduleSaveSessions,
   touchSession: sessions.touchSession,
-  updateTitleFromMessage: sessions.updateTitleFromMessage,
 });
 watch(() => agent.canSend.value, (canSend) => {
   if (canSend) {
@@ -136,13 +127,13 @@ watch(() => agent.canSend.value, (canSend) => {
       // Config will be applied in handleSettingMessage
     }
     requestModels(true);
-    startMemorySyncTimers();
-    requestLatestMemorySync(true);
+    resetMemoryHistory();
+    requestMemoryRead('latest');
     return;
   }
-  stopMemorySyncTimers();
   memoryLoading.value = false;
   memoryDeleting.value = false;
+  memoryDeleteCandidateId.value = null;
   memoryReadMode.value = null;
   pendingMemoryDeleteIds = [];
   pendingMemoryReadMode = null;
@@ -251,12 +242,6 @@ watch(subAgents, (agents) => {
   }
 });
 
-watch(() => sessions.activeSessionId.value, () => {
-  visibleMessageCount.value = HISTORY_PAGE_SIZE;
-  historyRestoreHeight = null;
-  restoringHistoryScroll = false;
-});
-
 watch(chatShell, (nextShell, previousShell) => {
   if (previousShell) chatShellResizeObserver?.unobserve(previousShell);
   if (nextShell) chatShellResizeObserver?.observe(nextShell);
@@ -332,23 +317,7 @@ function requestMemoryHistory() {
 }
 
 function retryMemoryHistory() {
-  requestLatestMemorySync(true);
-}
-
-function requestLatestMemorySync(force = false) {
-  if (!agent.canSend.value) return;
-  if (!force && Date.now() - lastFullMemorySyncAt < MEMORY_FOCUS_SYNC_GAP_MS) return;
-  requestMemoryRead('latest');
-}
-
-function requestMemoryProbe() {
-  if (
-    document.visibilityState !== 'visible' ||
-    !agent.canSend.value ||
-    memoryReadMode.value !== null ||
-    memoryDeleting.value
-  ) return;
-  requestMemoryRead('probe');
+  requestMemoryRead(memoryRecords.value.length ? 'older' : 'latest');
 }
 
 function requestMemoryRead(mode: MemoryReadMode) {
@@ -363,13 +332,11 @@ function requestMemoryRead(mode: MemoryReadMode) {
     return false;
   }
 
-  const length = mode === 'latest'
-    ? MEMORY_LATEST_CACHE_SIZE
-    : mode === 'older' ? MEMORY_PAGE_SIZE : 1;
+  const length = mode === 'latest' ? MEMORY_LATEST_PAGE_SIZE : MEMORY_PAGE_SIZE;
   const createId = mode === 'older' ? (memoryRecords.value[0]?.create_id || 0) : 0;
   if (mode === 'older' && createId <= 0) {
     pendingMemoryReadMode = 'older';
-    requestLatestMemorySync(true);
+    requestMemoryRead('latest');
     return false;
   }
   if (!agent.readMemory(length, createId)) return false;
@@ -377,8 +344,7 @@ function requestMemoryRead(mode: MemoryReadMode) {
   memoryReadMode.value = mode;
   if (mode === 'older') preserveHistoryScrollAfterUpdate();
   memoryLoading.value = mode === 'older' || (mode === 'latest' && !memoryRecords.value.length);
-  if (mode !== 'probe') memoryError.value = '';
-  if (mode === 'latest') lastFullMemorySyncAt = Date.now();
+  memoryError.value = '';
   startMemoryResponseTimer('read');
   return true;
 }
@@ -393,8 +359,18 @@ function runPendingMemoryRead() {
 
 function deleteMemoryMessage(createId: number) {
   if (!agent.canSend.value || memoryReadMode.value !== null || memoryDeleting.value) return;
-  if (!window.confirm(t.value.deleteMemoryConfirm.replace('{count}', '1'))) return;
+  memoryDeleteCandidateId.value = createId;
+}
+
+function cancelMemoryDelete() {
+  memoryDeleteCandidateId.value = null;
+}
+
+function confirmMemoryDelete() {
+  const createId = memoryDeleteCandidateId.value;
+  if (createId === null) return;
   if (!agent.deleteMemory([createId])) return;
+  memoryDeleteCandidateId.value = null;
   pendingMemoryDeleteIds = [createId];
   memoryDeleting.value = true;
   memoryError.value = '';
@@ -431,39 +407,27 @@ function clearMemoryResponseTimer() {
   memoryResponseTimer = null;
 }
 
-function deleteSession(sessionId: string) {
-  const deletedActiveSession = sessionId === sessions.activeSessionId.value;
-  sessions.deleteSession(sessionId);
-  if (deletedActiveSession) {
-    agent.clearPendingTurns();
-    scrollToLatestAfterRender();
-  }
-}
-
-function selectSession(sessionId: string) {
-  currentView.value = 'chat';
-  sessions.setActiveSession(sessionId);
-  agent.clearPendingTurns();
-  scrollToLatestAfterRender();
-}
-
-function createSession() {
-  currentView.value = 'chat';
-  sessions.createSession();
-  scrollToLatestAfterRender();
-}
-
 function updateAndResendUserMessage(messageId: string, content: string) {
   const updated = sessions.updateMessageContent(messageId, content);
-  if (!updated) return;
-  agent.resendEditedText(messageId, content);
+  if (updated) {
+    agent.resendEditedText(messageId, content);
+    maybeScrollAfterUpdate();
+    return;
+  }
+
+  const remoteMessage = visibleMainMessages.value.find((item) => (
+    item.id === messageId && item.role === 'user' && item.isRemoteHistory
+  ));
+  if (!remoteMessage) return;
+  agent.sendText(content);
   maybeScrollAfterUpdate();
 }
 
 function resendUserMessage(messageId: string) {
-  const message = sessions.activeSession.value?.messages.find((item) => (
-    item.id === messageId &&
-    item.role === 'user'
+  const message = sessions.activeSession.value.messages.find((item) => (
+    item.id === messageId && item.role === 'user'
+  )) || visibleMainMessages.value.find((item) => (
+    item.id === messageId && item.role === 'user'
   ));
   if (!message || (!message.content.trim() && !message.attachments?.length)) return;
   const attachments: ClientAttachment[] = (message.attachments || []).map((attachment) => ({
@@ -701,14 +665,6 @@ function handleMemoryMessage(act: string, msg: ServerMessage) {
 
     const page = sortUniqueMemoryRecords(parseMemoryRecords(msg.data));
     const responseTotal = toNonNegativeInteger(msg.total);
-    if (mode === 'probe') {
-      const currentLatestId = latestMemoryRecords.value[latestMemoryRecords.value.length - 1]?.create_id || 0;
-      const probedLatestId = page[page.length - 1]?.create_id || 0;
-      if (currentLatestId !== probedLatestId) pendingMemoryReadMode = 'latest';
-      runPendingMemoryRead();
-      return;
-    }
-
     if (mode === 'latest') applyLatestMemorySnapshot(page, responseTotal);
     if (mode === 'older') applyOlderMemoryPage(page, responseTotal);
     memoryError.value = '';
@@ -724,7 +680,6 @@ function handleMemoryMessage(act: string, msg: ServerMessage) {
     if (errorMessage) {
       memoryError.value = errorMessage;
       pendingMemoryDeleteIds = [];
-      requestLatestMemorySync(true);
       return;
     }
 
@@ -735,18 +690,12 @@ function handleMemoryMessage(act: string, msg: ServerMessage) {
 
     if (deleted !== expected) {
       memoryError.value = t.value.memoryDeleteMismatch;
-      requestLatestMemorySync(true);
       return;
     }
 
-    const nextLatestRecords = latestMemoryRecords.value
-      .filter((record) => !deletedIds.has(record.create_id));
-    latestMemoryRecords.value = nextLatestRecords;
-    writeCachedMemoryRecords(nextLatestRecords);
     memoryRecords.value = memoryRecords.value
       .filter((record) => !deletedIds.has(record.create_id));
     memoryError.value = '';
-    requestLatestMemorySync(true);
   }
 }
 
@@ -897,24 +846,7 @@ function parseMemoryRecords(value: unknown): MemoryRecord[] {
 }
 
 function applyLatestMemorySnapshot(page: MemoryRecord[], responseTotal: number | null) {
-  const nextLatestRecords = page.slice(-MEMORY_LATEST_CACHE_SIZE);
-  const oldestLatestId = nextLatestRecords[0]?.create_id || 0;
-  const olderRuntimeRecords = oldestLatestId > 0
-    ? memoryRecords.value.filter((record) => record.create_id < oldestLatestId)
-    : [];
-  const nextMemoryRecords = sortUniqueMemoryRecords([
-    ...olderRuntimeRecords,
-    ...nextLatestRecords,
-  ]);
-  const snapshotChanged = !memoryRecordListsEqual(
-    latestMemoryRecords.value,
-    nextLatestRecords,
-  );
-
-  if (snapshotChanged) {
-    latestMemoryRecords.value = nextLatestRecords;
-    writeCachedMemoryRecords(nextLatestRecords);
-  }
+  const nextMemoryRecords = page.slice(-MEMORY_LATEST_PAGE_SIZE);
   if (!memoryRecordListsEqual(memoryRecords.value, nextMemoryRecords)) {
     memoryRecords.value = nextMemoryRecords;
     maybeScrollAfterUpdate();
@@ -922,7 +854,7 @@ function applyLatestMemorySnapshot(page: MemoryRecord[], responseTotal: number |
 
   memoryHasMore.value = responseTotal !== null
     ? page.length < responseTotal
-    : page.length === MEMORY_LATEST_CACHE_SIZE;
+    : page.length === MEMORY_LATEST_PAGE_SIZE;
 }
 
 function applyOlderMemoryPage(page: MemoryRecord[], responseTotal: number | null) {
@@ -1033,58 +965,31 @@ function toNonNegativeInteger(value: unknown): number | null {
   return Number.isSafeInteger(number) && number >= 0 ? number : null;
 }
 
-function readCachedMemoryRecords(): MemoryRecord[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(MEMORY_CACHE_STORAGE_KEY) || '[]');
-    return sortUniqueMemoryRecords(parseMemoryRecords(parsed))
-      .slice(-MEMORY_LATEST_CACHE_SIZE);
-  } catch {
-    return [];
-  }
+function resetMemoryHistory() {
+  clearMemoryResponseTimer();
+  memoryDeleteCandidateId.value = null;
+  memoryRecords.value = [];
+  memoryHasMore.value = true;
+  memoryLoading.value = false;
+  memoryDeleting.value = false;
+  memoryError.value = '';
+  memoryReadMode.value = null;
+  pendingMemoryDeleteIds = [];
+  pendingMemoryReadMode = null;
 }
 
-function writeCachedMemoryRecords(records: MemoryRecord[]) {
-  try {
-    localStorage.setItem(
-      MEMORY_CACHE_STORAGE_KEY,
-      JSON.stringify(records.slice(-MEMORY_LATEST_CACHE_SIZE)),
-    );
-  } catch (error) {
-    console.warn('BeeWeb could not update the server memory cache.', error);
-  }
+function handlePageHide() {
+  agent.clearPendingTurns();
+  sessions.clearLocalHistory();
+  localStorage.removeItem(LEGACY_MEMORY_CACHE_STORAGE_KEY);
+  resetMemoryHistory();
 }
 
-function startMemorySyncTimers() {
-  stopMemorySyncTimers();
-  memoryProbeTimer = window.setInterval(requestMemoryProbe, MEMORY_PROBE_INTERVAL_MS);
-  memoryFullSyncTimer = window.setInterval(() => {
-    if (document.visibilityState === 'visible') requestLatestMemorySync(true);
-  }, MEMORY_FULL_SYNC_INTERVAL_MS);
-}
-
-function stopMemorySyncTimers() {
-  if (memoryProbeTimer !== null) window.clearInterval(memoryProbeTimer);
-  if (memoryFullSyncTimer !== null) window.clearInterval(memoryFullSyncTimer);
-  if (memoryTurnSyncTimer !== null) window.clearTimeout(memoryTurnSyncTimer);
-  memoryProbeTimer = null;
-  memoryFullSyncTimer = null;
-  memoryTurnSyncTimer = null;
-}
-
-function scheduleMemorySyncAfterTurn() {
-  if (memoryTurnSyncTimer !== null) window.clearTimeout(memoryTurnSyncTimer);
-  memoryTurnSyncTimer = window.setTimeout(() => {
-    memoryTurnSyncTimer = null;
-    requestLatestMemorySync(true);
-  }, 500);
-}
-
-function handleWindowFocus() {
-  if (document.visibilityState === 'visible') requestLatestMemorySync();
-}
-
-function handleVisibilityChange() {
-  if (document.visibilityState === 'visible') requestLatestMemorySync();
+function handlePageShow(event: PageTransitionEvent) {
+  if (!event.persisted) return;
+  sessions.loadSessions();
+  resetMemoryHistory();
+  if (agent.canSend.value) requestMemoryRead('latest');
 }
 
 onMounted(() => {
@@ -1097,16 +1002,15 @@ onMounted(() => {
     }
   });
   if (chatShell.value) chatShellResizeObserver.observe(chatShell.value);
-  window.addEventListener('focus', handleWindowFocus);
-  document.addEventListener('visibilitychange', handleVisibilityChange);
+  window.addEventListener('pagehide', handlePageHide);
+  window.addEventListener('pageshow', handlePageShow);
   scrollToLatestAfterRender();
 });
 
 onBeforeUnmount(() => {
-  stopMemorySyncTimers();
   clearMemoryResponseTimer();
-  window.removeEventListener('focus', handleWindowFocus);
-  document.removeEventListener('visibilitychange', handleVisibilityChange);
+  window.removeEventListener('pagehide', handlePageHide);
+  window.removeEventListener('pageshow', handlePageShow);
   chatShellResizeObserver?.disconnect();
   chatShellResizeObserver = null;
 });
@@ -1285,20 +1189,18 @@ function setNestedValue(source: Record<string, unknown>, path: string[], value: 
       </div>
 
       <div class="sidebar-body">
-        <div class="side-actions">
-          <button type="button" class="icon-text-button" :title="t.newSession" @click="createSession">
-            <Plus :size="16" aria-hidden="true" />
-            <span>{{ t.newSession }}</span>
+        <nav class="sidebar-nav" :aria-label="t.navigation">
+          <button
+            type="button"
+            class="sidebar-nav-item"
+            :class="{ active: currentView === 'chat' }"
+            :title="t.conversation"
+            @click="closeSettings"
+          >
+            <MessageSquare :size="16" aria-hidden="true" />
+            <span>{{ t.conversation }}</span>
           </button>
-        </div>
-
-        <SessionList
-          :labels="t"
-          :sessions="sessions.sessions.value"
-          :active-session-id="sessions.activeSessionId.value"
-          @delete-session="deleteSession"
-          @select="selectSession"
-        />
+        </nav>
 
         <ConnectionPanel
           :labels="t"
@@ -1313,7 +1215,7 @@ function setNestedValue(source: Record<string, unknown>, path: string[], value: 
     <main class="main">
       <header class="topbar">
         <div class="topbar-title">
-          <strong>{{ currentView === 'settings' ? t.settings : (sessions.activeSession.value?.title || t.newConversation) }}</strong>
+          <strong>{{ currentView === 'settings' ? t.settings : t.conversation }}</strong>
           <span>{{ activeMeta }}</span>
         </div>
         <div class="topbar-actions">
@@ -1477,4 +1379,14 @@ function setNestedValue(source: Record<string, unknown>, path: string[], value: 
       />
     </main>
   </div>
+
+  <ConfirmDialog
+    v-if="memoryDeleteCandidateId !== null"
+    :cancel-label="t.cancel"
+    :confirm-label="t.deleteAction"
+    :message="t.deleteMemoryConfirm"
+    :title="t.deleteMemoryConfirmTitle"
+    @cancel="cancelMemoryDelete"
+    @confirm="confirmMemoryDelete"
+  />
 </template>
