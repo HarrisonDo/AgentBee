@@ -23,7 +23,10 @@ import type { SubAgentSummary } from './components/SubAgentMenu.vue';
 import { useI18n } from './composables/useI18n';
 import { useSessions } from './composables/useSessions';
 import { useTheme } from './composables/useTheme';
-import { useWebSocketAgent } from './composables/useWebSocketAgent';
+import {
+  useWebSocketAgent,
+  type ConnectionIssue,
+} from './composables/useWebSocketAgent';
 import { normalizeServerError } from './protocol/normalizers';
 import type {
   ChatMessage as AgentChatMessage,
@@ -59,7 +62,7 @@ type VisibleChatItem =
 const chatContainer = ref<HTMLElement | null>(null);
 const chatShell = ref<HTMLElement | null>(null);
 const shouldAutoScroll = ref(true);
-const sidebarCollapsed = ref(false);
+const sidebarCollapsed = ref(readSidebarCollapsed());
 const currentView = ref<'chat' | 'settings'>('chat');
 const showLoginWindow = ref(true);
 const agentConfig = ref<Record<string, unknown>>(readAgentConfig());
@@ -88,6 +91,7 @@ const SUB_AGENT_MAX_WIDTH = 680;
 const CHAT_PANE_MIN_WIDTH = 360;
 const SUB_AGENT_DIVIDER_WIDTH = 8;
 const SUB_AGENT_WIDTH_STORAGE_KEY = 'agentbee.subAgentPaneWidth';
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'agentbee.sidebarCollapsed';
 const HISTORY_PAGE_SIZE = 50;
 const MEMORY_PAGE_SIZE = 30;
 const MEMORY_LATEST_PAGE_SIZE = 50;
@@ -119,6 +123,7 @@ const agent = useWebSocketAgent({
   scheduleSaveSessions: sessions.scheduleSaveSessions,
   touchSession: sessions.touchSession,
 });
+const connectionErrorText = computed(() => formatConnectionIssue(agent.connectionError.value));
 watch(() => agent.canSend.value, (canSend) => {
   if (canSend) {
     showLoginWindow.value = false;
@@ -528,6 +533,12 @@ function readSubAgentPaneWidth() {
 
 function toggleSidebar() {
   sidebarCollapsed.value = !sidebarCollapsed.value;
+  localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(sidebarCollapsed.value));
+}
+
+function readSidebarCollapsed() {
+  const saved = localStorage.getItem('agentbee.sidebarCollapsed');
+  return saved === null ? true : saved === 'true';
 }
 
 let settingsConfigRequested = false;
@@ -552,10 +563,12 @@ function closeSettings() {
 function updateWsUrl(value: string) {
   agent.wsUrl.value = value;
   localStorage.setItem('agentbee.lastUrl', value);
+  agent.clearConnectionError();
 }
 
 function updateWsToken(value: string) {
   agent.wsToken.value = value;
+  agent.clearConnectionError();
 }
 
 const basicSettings = computed<BasicSettings>(() => ({
@@ -978,7 +991,8 @@ function resetMemoryHistory() {
   pendingMemoryReadMode = null;
 }
 
-function handlePageHide() {
+function handlePageHide(event: PageTransitionEvent) {
+  if (event.persisted) return;
   agent.clearPendingTurns();
   sessions.clearLocalHistory();
   localStorage.removeItem(LEGACY_MEMORY_CACHE_STORAGE_KEY);
@@ -986,10 +1000,12 @@ function handlePageHide() {
 }
 
 function handlePageShow(event: PageTransitionEvent) {
-  if (!event.persisted) return;
-  sessions.loadSessions();
-  resetMemoryHistory();
-  if (agent.canSend.value) requestMemoryRead('latest');
+  agent.resumeConnection();
+  if (event.persisted) {
+    sessions.loadSessions();
+    resetMemoryHistory();
+    if (agent.canSend.value) requestMemoryRead('latest');
+  }
 }
 
 onMounted(() => {
@@ -1153,12 +1169,50 @@ function setNestedValue(source: Record<string, unknown>, path: string[], value: 
   });
   current[path[path.length - 1]] = value;
 }
+
+function formatConnectionIssue(issue: ConnectionIssue | null): string {
+  if (!issue) return '';
+  const labels = t.value;
+  const titleByKind: Record<ConnectionIssue['kind'], string> = {
+    closed: labels.connectionClosed,
+    initialization: labels.connectionInitializationFailed,
+    'invalid-url': labels.connectionInvalidUrl,
+    'mixed-content': labels.connectionMixedContent,
+    network: labels.connectionNetworkError,
+    offline: labels.connectionOffline,
+  };
+  const lines = [titleByKind[issue.kind]];
+  if (issue.url) lines.push(`${labels.connectionUrlLabel}: ${redactConnectionUrl(issue.url)}`);
+  if (issue.code !== undefined) lines.push(`${labels.connectionCloseCode}: ${issue.code}`);
+  if (issue.reason) lines.push(`${labels.connectionCloseReason}: ${issue.reason}`);
+  if (issue.wasClean !== undefined) {
+    lines.push(issue.wasClean ? labels.connectionWasClean : labels.connectionWasNotClean);
+  }
+  if (issue.detail) lines.push(issue.detail);
+  if (issue.kind === 'network' || issue.code === 1006) {
+    lines.push(labels.connectionBrowserLimited);
+  }
+  lines.push(`${labels.connectionTime}: ${new Date(issue.occurredAt).toLocaleString(locale.value === 'zh' ? 'zh-CN' : 'en-US')}`);
+  return lines.join('\n');
+}
+
+function redactConnectionUrl(value: string): string {
+  try {
+    const parsed = new URL(value);
+    if (parsed.username) parsed.username = '***';
+    if (parsed.password) parsed.password = '***';
+    if (parsed.search) parsed.search = '?...';
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+}
 </script>
 
 <template>
   <LoginWin
     v-if="showLoginWindow"
-    :connection-error="agent.connectionError.value"
+    :connection-error="connectionErrorText"
     :connecting="agent.connecting.value"
     :labels="t"
     :ws-token="agent.wsToken.value"
@@ -1207,6 +1261,9 @@ function setNestedValue(source: Record<string, unknown>, path: string[], value: 
           :auto-connect-paused="agent.autoConnectPaused.value"
           :connected="agent.connected.value"
           :connecting="agent.connecting.value"
+          :connection-error="connectionErrorText"
+          :connection-state="agent.connectionState.value"
+          @connect="agent.connect"
           @open-settings="openSettings"
         />
       </div>
@@ -1342,6 +1399,7 @@ function setNestedValue(source: Record<string, unknown>, path: string[], value: 
         :basic-settings="basicSettings"
         :connected="agent.connected.value"
         :connecting="agent.connecting.value"
+        :connection-error="connectionErrorText"
         :config-json="configJson"
         :config-json-error="configJsonError"
         :labels="t"

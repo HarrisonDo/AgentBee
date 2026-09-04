@@ -26,6 +26,8 @@ const uploadWarnings = ref<string[]>([]);
 const isComposing = ref(false);
 const isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
 const COMPOSITION_ENTER_GUARD_MS = 100;
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const MAX_TOTAL_ATTACHMENT_BYTES = 40 * 1024 * 1024;
 let ignoreEnterUntil = 0;
 const canSubmit = computed(() => (
   !props.disabled &&
@@ -109,17 +111,45 @@ function resize() {
   textarea.value.style.height = `${Math.min(150, textarea.value.scrollHeight)}px`;
 }
 
-function openFilePicker() {
-  fileInput.value?.click();
-}
-
 async function onFileChange(event: Event) {
   const input = event.target as HTMLInputElement;
   const files = Array.from(input.files || []);
   if (!files.length) return;
 
   uploadWarnings.value = [];
-  const loaded = await Promise.all(files.map(readAttachment));
+  let nextTotalSize = attachments.value.reduce((sum, attachment) => sum + attachment.size, 0);
+  const acceptedFiles: File[] = [];
+  files.forEach((file) => {
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      uploadWarnings.value.push(formatLabel(
+        props.labels.fileTooLargeDetail,
+        { limit: formatSize(MAX_ATTACHMENT_BYTES), name: file.name },
+      ));
+      return;
+    }
+    if (nextTotalSize + file.size > MAX_TOTAL_ATTACHMENT_BYTES) {
+      uploadWarnings.value.push(formatLabel(
+        props.labels.fileTotalTooLarge,
+        { limit: formatSize(MAX_TOTAL_ATTACHMENT_BYTES) },
+      ));
+      return;
+    }
+    nextTotalSize += file.size;
+    acceptedFiles.push(file);
+  });
+
+  const results = await Promise.allSettled(acceptedFiles.map(readAttachment));
+  const loaded: ClientAttachment[] = [];
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled') {
+      loaded.push(result.value);
+      return;
+    }
+    uploadWarnings.value.push(formatLabel(
+      props.labels.fileReadFailed,
+      { name: acceptedFiles[index].name },
+    ));
+  });
   attachments.value = [...attachments.value, ...loaded];
   input.value = '';
 }
@@ -160,13 +190,20 @@ function makeAttachmentId() {
   if (window.crypto?.randomUUID) return window.crypto.randomUUID();
   return `file-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
+
+function formatLabel(template: string, values: Record<string, string>) {
+  return Object.entries(values).reduce(
+    (result, [key, value]) => result.split(`{${key}}`).join(value),
+    template,
+  );
+}
 </script>
 
 <template>
   <footer class="composer">
     <div class="composer-panel">
-      <div v-if="uploadWarnings.length" class="attachment-warnings" role="status">
-        <span v-for="warning in uploadWarnings" :key="warning">{{ warning }}</span>
+      <div v-if="uploadWarnings.length" class="attachment-warnings" role="alert" aria-live="polite">
+        <span v-for="(warning, index) in uploadWarnings" :key="`${index}-${warning}`">{{ warning }}</span>
       </div>
       <div v-if="attachments.length" class="attachment-list" :aria-label="labels.attachedFiles">
         <span v-for="attachment in attachments" :key="attachment.id" class="attachment-chip">
@@ -183,7 +220,6 @@ function makeAttachmentId() {
         v-model="text"
         rows="1"
         :placeholder="labels.composerPlaceholder"
-        :disabled="disabled"
         @input="resize"
         @keydown="onKeydown"
         @compositionstart="onCompositionStart"
@@ -192,25 +228,22 @@ function makeAttachmentId() {
 
       <div class="composer-toolbar">
         <div class="composer-toolbar-group">
-          <input
-            ref="fileInput"
-            class="file-input"
-            type="file"
-            multiple
-            :disabled="disabled"
-            @change="onFileChange"
-          />
-          <button
-            type="button"
+          <label
             class="attach-button composer-tool-button"
             :aria-label="labels.attachFiles"
             :data-tooltip="labels.attachFiles"
             :title="labels.attachFiles"
-            :disabled="disabled"
-            @click="openFilePicker"
           >
+            <input
+              ref="fileInput"
+              class="file-input"
+              type="file"
+              multiple
+              :aria-label="labels.attachFiles"
+              @change="onFileChange"
+            />
             <Plus :size="19" aria-hidden="true" />
-          </button>
+          </label>
           <button
             type="button"
             class="memory-send composer-text-button"

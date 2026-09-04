@@ -38,6 +38,7 @@ defineProps<{
   basicSettings: BasicSettings;
   connected: boolean;
   connecting: boolean;
+  connectionError: string;
   configJson: string;
   configJsonError: string;
   labels: Record<string, string>;
@@ -214,6 +215,9 @@ const advancedExpanded = ref(false);
           @input="emit('update:wsToken', ($event.target as HTMLInputElement).value)"
         />
       </label>
+      <div v-if="connectionError" class="settings-error connection-settings-error" role="alert">
+        {{ connectionError }}
+      </div>
     </div>
 
     <div class="settings-section">

@@ -10,7 +10,8 @@
     "build": "vue-tsc --noEmit && vite build",
     "build:standalone": "node scripts/bump-version.mjs && npm run build && node scripts/build-standalone.mjs",
     "prepreview": "node scripts/check-node.cjs",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run"
   },
   "engines": {
     "node": ">=20.19.0",
@@ -26,6 +27,7 @@
     "@vitejs/plugin-vue": "^6.0.6",
     "typescript": "^6.0.3",
     "vite": "^8.0.12",
+    "vitest": "^3.2.7",
     "vue-tsc": "^3.2.8"
   }
 }

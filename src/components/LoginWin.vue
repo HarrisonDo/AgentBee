@@ -2,7 +2,7 @@
 import { KeyRound, Link, LogIn } from 'lucide-vue-next';
 
 const props = defineProps<{
-  connectionError: boolean;
+  connectionError: string;
   connecting: boolean;
   labels: Record<string, string>;
   wsToken: string;
@@ -67,7 +67,7 @@ const emit = defineEmits<{
       </label>
 
       <div v-if="connectionError" class="login-window-error" role="alert" aria-live="polite">
-        {{ labels.wsConnectionError }}
+        {{ connectionError }}
       </div>
 
       <button

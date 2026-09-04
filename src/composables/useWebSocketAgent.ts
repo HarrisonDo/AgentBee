@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import type {
   ChatAttachment,
   ChatMessage,
@@ -24,8 +24,35 @@ const NO_RESPONSE_TIMEOUT_MS = 5 * 60_000;
 const AUTO_CONNECT_WINDOW_MS = 60_000;
 const AUTO_CONNECT_BASE_RETRY_MS = 1000;
 const AUTO_CONNECT_MAX_RETRY_MS = 15_000;
+const FOREGROUND_RECONNECT_THRESHOLD_MS = 30_000;
 const STREAM_FLUSH_MS = 80;
 const WS_TOKEN_STORAGE_KEY = 'agentbee.wsToken';
+
+export type ConnectionIssueKind =
+  | 'closed'
+  | 'initialization'
+  | 'invalid-url'
+  | 'mixed-content'
+  | 'network'
+  | 'offline';
+
+export interface ConnectionIssue {
+  code?: number;
+  detail?: string;
+  kind: ConnectionIssueKind;
+  occurredAt: number;
+  reason?: string;
+  url: string;
+  wasClean?: boolean;
+}
+
+export type ConnectionState =
+  | 'connected'
+  | 'connecting'
+  | 'idle'
+  | 'offline'
+  | 'paused'
+  | 'retrying';
 
 interface PendingStreamUpdate {
   content: string;
@@ -49,8 +76,10 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   const wsToken = ref(localStorage.getItem(WS_TOKEN_STORAGE_KEY) || '');
   const connected = ref(false);
   const connecting = ref(false);
-  const connectionError = ref(false);
+  const connectionError = ref<ConnectionIssue | null>(null);
   const autoConnectPaused = ref(false);
+  const retryScheduled = ref(false);
+  const isOnline = ref(navigator.onLine);
   const pendingTurns = ref(new Map<string, string | null>());
   const socket = ref<WebSocket | null>(null);
   const noResponseTimers = new Map<string, number>();
@@ -62,9 +91,19 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   let autoConnectAttempts = 0;
   let autoConnectStartedAt = 0;
   let reconnectAfterClose = false;
+  let connectionRequested = false;
+  let hiddenAt: number | null = null;
 
   const canSend = computed(() => connected.value && socket.value?.readyState === WebSocket.OPEN);
   const hasPendingTurns = computed(() => pendingTurns.value.size > 0);
+  const connectionState = computed<ConnectionState>(() => {
+    if (connected.value) return 'connected';
+    if (!isOnline.value) return 'offline';
+    if (connecting.value) return currentConnectIsAuto ? 'retrying' : 'connecting';
+    if (retryScheduled.value) return 'retrying';
+    if (autoConnectPaused.value) return 'paused';
+    return 'idle';
+  });
 
   function connect(automatic = false) {
     if (
@@ -77,29 +116,44 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
 
     const url = wsUrl.value.trim();
     const token = wsToken.value.trim();
-    connectionError.value = false;
-    if (!/^wss?:\/\//.test(url)) {
-      connectionError.value = true;
-      options.addMessage('error', 'WebSocket URL must start with ws:// or wss://.');
-      if (automatic) pauseAutoConnect('Auto connection stopped because the WebSocket URL is invalid. Waiting for manual connection.');
-      return;
-    }
-
-    clearAutoRetryTimer();
+    connectionRequested = true;
     manualDisconnect = false;
-    currentConnectIsAuto = automatic;
-    connecting.value = true;
+    connectionError.value = null;
     if (!automatic) {
       autoConnectPaused.value = false;
       autoConnectAttempts = 0;
       autoConnectStartedAt = 0;
     }
+    const validationIssue = validateWebSocketUrl(url);
+    if (validationIssue) {
+      connectionError.value = validationIssue;
+      options.addMessage('error', 'WebSocket URL must start with ws:// or wss://.');
+      if (automatic) pauseAutoConnect('Auto connection stopped because the WebSocket URL is invalid. Waiting for manual connection.');
+      return;
+    }
+
+    if (!navigator.onLine) {
+      isOnline.value = false;
+      connecting.value = false;
+      connectionError.value = makeConnectionIssue('offline', url);
+      return;
+    }
+
+    clearAutoRetryTimer();
+    currentConnectIsAuto = automatic;
+    connecting.value = true;
     options.addMessage('system', `Connecting to ${url}`);
+    let nextSocket: WebSocket;
     try {
-      socket.value = token ? new WebSocket(url, [token]) : new WebSocket(url);
+      nextSocket = createWebSocketConnection(url, token);
+      socket.value = nextSocket;
     } catch (error) {
       connecting.value = false;
-      connectionError.value = true;
+      connectionError.value = makeConnectionIssue(
+        'initialization',
+        url,
+        error instanceof Error ? error.message : String(error),
+      );
       socket.value = null;
       const detail = error instanceof Error ? ` ${error.message}` : '';
       options.addMessage('error', `WebSocket connection could not be initialized.${detail}`);
@@ -107,11 +161,13 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       return;
     }
 
-    socket.value.onopen = () => {
+    nextSocket.onopen = () => {
+      if (socket.value !== nextSocket) return;
       connected.value = true;
       connecting.value = false;
-      connectionError.value = false;
+      connectionError.value = null;
       autoConnectPaused.value = false;
+      retryScheduled.value = false;
       autoConnectAttempts = 0;
       autoConnectStartedAt = 0;
       localStorage.setItem('agentbee.lastUrl', url);
@@ -123,41 +179,55 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       options.addMessage('system', 'WebSocket connected.');
     };
 
-    socket.value.onmessage = (event) => {
+    nextSocket.onmessage = (event) => {
+      if (socket.value !== nextSocket) return;
       if (typeof event.data === 'string') handleServerMessage(event.data);
     };
 
-    socket.value.onerror = () => {
-      connectionError.value = true;
+    nextSocket.onerror = () => {
+      if (socket.value !== nextSocket) return;
+      connectionError.value = makeConnectionIssue('network', url);
       if (!currentConnectIsAuto) {
-        options.addMessage('error', 'WebSocket connection error. Check the browser console.');
+        options.addMessage('error', 'WebSocket connection error. Waiting for close details.');
       }
     };
 
-    socket.value.onclose = (event) => {
+    nextSocket.onclose = (event) => {
+      if (socket.value !== nextSocket) return;
       connected.value = false;
       connecting.value = false;
-      if (!manualDisconnect && event.code !== 1000) connectionError.value = true;
+      retryScheduled.value = false;
       const reason = event.reason ? `, reason: ${event.reason}` : '';
       finishAllPendingWithoutResponse();
-      const wasAuto = currentConnectIsAuto;
-      if (!wasAuto || manualDisconnect) {
+      const shouldReconnect = !manualDisconnect;
+      if (shouldReconnect) {
+        connectionError.value = {
+          ...makeConnectionIssue('closed', url),
+          code: event.code,
+          reason: event.reason || undefined,
+          wasClean: event.wasClean,
+        };
+      } else {
+        connectionError.value = null;
+      }
+      if (!currentConnectIsAuto || manualDisconnect) {
         options.addMessage('system', `Connection closed. code=${event.code}${reason}`);
       }
       socket.value = null;
-      if (wasAuto && !manualDisconnect) {
-        scheduleAutoReconnect();
-        return;
-      }
       if (reconnectAfterClose) {
         reconnectAfterClose = false;
         window.setTimeout(() => connect(false), 100);
+        return;
+      }
+      if (shouldReconnect) {
+        startAutoConnect(false);
       }
     };
   }
 
   function disconnect() {
     manualDisconnect = true;
+    connectionRequested = false;
     autoConnectPaused.value = true;
     reconnectAfterClose = false;
     clearAutoRetryTimer();
@@ -166,11 +236,17 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     } else {
       connected.value = false;
       connecting.value = false;
+      connectionError.value = null;
     }
+  }
+
+  function clearConnectionError() {
+    if (!connecting.value) connectionError.value = null;
   }
 
   function reconnect() {
     clearAutoRetryTimer();
+    connectionRequested = true;
     autoConnectPaused.value = false;
     manualDisconnect = false;
     currentConnectIsAuto = false;
@@ -184,8 +260,26 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     window.setTimeout(() => connect(false), 0);
   }
 
-  function startAutoConnect() {
+  function startAutoConnect(resetWindow = true) {
     if (autoConnectPaused.value || connected.value || connecting.value) return;
+    if (document.visibilityState === 'hidden') return;
+    const startsNewWindow = resetWindow || !autoConnectStartedAt;
+    if (startsNewWindow) {
+      autoConnectStartedAt = Date.now();
+      autoConnectAttempts = 0;
+    }
+    scheduleAutoReconnect(startsNewWindow ? 0 : getAutoReconnectDelay());
+  }
+
+  function resumeConnection() {
+    if (!connectionRequested || manualDisconnect) return;
+    isOnline.value = navigator.onLine;
+    if (!isOnline.value) {
+      connectionError.value = makeConnectionIssue('offline', wsUrl.value.trim());
+      return;
+    }
+    if (canSend.value || connecting.value) return;
+    autoConnectPaused.value = false;
     autoConnectStartedAt = Date.now();
     autoConnectAttempts = 0;
     scheduleAutoReconnect(0);
@@ -622,6 +716,12 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   function scheduleAutoReconnect(delay = getAutoReconnectDelay()) {
     clearAutoRetryTimer();
     if (manualDisconnect || autoConnectPaused.value) return;
+    if (document.visibilityState === 'hidden') return;
+    if (!navigator.onLine) {
+      isOnline.value = false;
+      connectionError.value = makeConnectionIssue('offline', wsUrl.value.trim());
+      return;
+    }
 
     const now = Date.now();
     if (!autoConnectStartedAt) autoConnectStartedAt = now;
@@ -632,8 +732,10 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     }
 
     const nextDelay = Math.max(0, Math.min(delay, remainingMs));
+    retryScheduled.value = true;
     autoRetryTimer = window.setTimeout(() => {
       autoRetryTimer = null;
+      retryScheduled.value = false;
       if (Date.now() - autoConnectStartedAt > AUTO_CONNECT_WINDOW_MS) {
         pauseAutoConnect('Auto connection stopped after 1 minute of retries. Waiting for manual connection.');
         return;
@@ -644,6 +746,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   }
 
   function clearAutoRetryTimer() {
+    retryScheduled.value = false;
     if (autoRetryTimer === null) return;
     window.clearTimeout(autoRetryTimer);
     autoRetryTimer = null;
@@ -659,6 +762,40 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     autoConnectStartedAt = 0;
     clearAutoRetryTimer();
     options.addMessage('system', message);
+  }
+
+  function handleOffline() {
+    isOnline.value = false;
+    clearAutoRetryTimer();
+    if (connectionRequested && !manualDisconnect) {
+      connectionError.value = makeConnectionIssue('offline', wsUrl.value.trim());
+    }
+  }
+
+  function handleOnline() {
+    isOnline.value = true;
+    resumeConnection();
+  }
+
+  function handleVisibilityChange() {
+    if (document.visibilityState === 'hidden') {
+      hiddenAt = Date.now();
+      clearAutoRetryTimer();
+      return;
+    }
+
+    const hiddenDuration = hiddenAt === null ? 0 : Date.now() - hiddenAt;
+    hiddenAt = null;
+    if (!connectionRequested || manualDisconnect) return;
+    if (
+      canSend.value &&
+      hiddenDuration >= FOREGROUND_RECONNECT_THRESHOLD_MS &&
+      !hasPendingTurns.value
+    ) {
+      reconnect();
+      return;
+    }
+    resumeConnection();
   }
 
   function getLatestPendingMessageId(): string | null {
@@ -682,24 +819,41 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     }
   }
 
+  onMounted(() => {
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+  });
+
   onBeforeUnmount(() => {
+    window.removeEventListener('online', handleOnline);
+    window.removeEventListener('offline', handleOffline);
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
     discardPendingStreamUpdates();
     clearAllNoResponseTimers();
     clearAutoRetryTimer();
+    const activeSocket = socket.value;
+    socket.value = null;
+    if (activeSocket && activeSocket.readyState !== WebSocket.CLOSED) {
+      activeSocket.close(1000, 'Page unmounted');
+    }
   });
 
   return {
     canSend,
     clearPendingTurns,
+    clearConnectionError,
     connect,
     connected,
     connecting,
     connectionError,
+    connectionState,
     disconnect,
     deleteMemory,
     autoConnectPaused,
     hasPendingTurns,
     reconnect,
+    resumeConnection,
     readMemory,
     resendEditedText,
     sendSettingAct,
@@ -709,6 +863,51 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     stopCurrent,
     wsToken,
     wsUrl,
+  };
+}
+
+export function validateWebSocketUrl(
+  rawUrl: string,
+  pageProtocol = window.location.protocol,
+): ConnectionIssue | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return makeConnectionIssue('invalid-url', rawUrl);
+  }
+
+  if (!['ws:', 'wss:'].includes(parsed.protocol) || !parsed.hostname) {
+    return makeConnectionIssue('invalid-url', rawUrl);
+  }
+  if (pageProtocol === 'https:' && parsed.protocol === 'ws:') {
+    return makeConnectionIssue('mixed-content', rawUrl);
+  }
+  return null;
+}
+
+export function createWebSocketConnection(
+  url: string,
+  token: string,
+  WebSocketConstructor: typeof WebSocket = WebSocket,
+): WebSocket {
+  const normalizedToken = token.trim();
+  // An empty token is valid: omit the subprotocol list entirely in that case.
+  return normalizedToken
+    ? new WebSocketConstructor(url, [normalizedToken])
+    : new WebSocketConstructor(url);
+}
+
+function makeConnectionIssue(
+  kind: ConnectionIssueKind,
+  url: string,
+  detail?: string,
+): ConnectionIssue {
+  return {
+    detail: detail || undefined,
+    kind,
+    occurredAt: Date.now(),
+    url,
   };
 }
 

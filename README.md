@@ -107,8 +107,10 @@ python -m http.server 8080
 
 - 可编辑 WebSocket URL。
 - 连接和断开控制。
+- 异常断线自动重连，并在移动设备恢复前台时检查连接。
 - JSON 消息发送。
 - 文件上传随消息发送。
+- 附件限制为单文件 20 MB、单条消息合计 40 MB。
 - 基于 `messageId` 的流式响应匹配。
 - 聊天时间线向上分页读取和删除服务端历史记录。
 - 单一对话界面。
@@ -257,8 +259,10 @@ When browser storage is full, BeeWeb prunes older local messages from the curren
 
 - Editable WebSocket URL.
 - Connect and disconnect controls.
+- Automatic recovery after unexpected disconnects and mobile foreground resume.
 - JSON-only message sending.
 - File uploads sent with messages.
+- Attachments are limited to 20 MB per file and 40 MB per message.
 - `messageId` based streaming response matching.
 - Upward pagination and deletion of server history in the chat timeline.
 - Single-conversation interface.
