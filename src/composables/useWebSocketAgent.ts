@@ -60,6 +60,12 @@ interface PendingStreamUpdate {
   message?: ServerMessage;
 }
 
+interface QueuedTextSend {
+  attachments: ClientAttachment[];
+  onDispatched?: (dispatched: boolean) => void;
+  text: string;
+}
+
 interface UseWebSocketAgentOptions {
   activeSession: () => ChatSession | null;
   addMessage: (role: ChatMessage['role'], content: string, extra?: Partial<ChatMessage>) => ChatMessage;
@@ -93,6 +99,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   let reconnectAfterClose = false;
   let connectionRequested = false;
   let hiddenAt: number | null = null;
+  let queuedTextSend: QueuedTextSend | null = null;
 
   const canSend = computed(() => connected.value && socket.value?.readyState === WebSocket.OPEN);
   const hasPendingTurns = computed(() => pendingTurns.value.size > 0);
@@ -105,13 +112,13 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     return 'idle';
   });
 
-  function connect(automatic = false) {
+  function connect(automatic = false): boolean {
     if (
       socket.value &&
       (socket.value.readyState === WebSocket.OPEN || socket.value.readyState === WebSocket.CONNECTING)
     ) {
       if (!automatic) options.addMessage('system', 'A connection is already active.');
-      return;
+      return true;
     }
 
     const url = wsUrl.value.trim();
@@ -129,14 +136,14 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       connectionError.value = validationIssue;
       options.addMessage('error', 'WebSocket URL must start with ws:// or wss://.');
       if (automatic) pauseAutoConnect('Auto connection stopped because the WebSocket URL is invalid. Waiting for manual connection.');
-      return;
+      return false;
     }
 
     if (!navigator.onLine) {
       isOnline.value = false;
       connecting.value = false;
       connectionError.value = makeConnectionIssue('offline', url);
-      return;
+      return true;
     }
 
     clearAutoRetryTimer();
@@ -158,7 +165,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       const detail = error instanceof Error ? ` ${error.message}` : '';
       options.addMessage('error', `WebSocket connection could not be initialized.${detail}`);
       if (automatic) pauseAutoConnect('Auto connection stopped because the WebSocket token is invalid. Waiting for manual connection.');
-      return;
+      return false;
     }
 
     nextSocket.onopen = () => {
@@ -177,6 +184,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
         localStorage.removeItem(WS_TOKEN_STORAGE_KEY);
       }
       options.addMessage('system', 'WebSocket connected.');
+      flushQueuedTextSend();
     };
 
     nextSocket.onmessage = (event) => {
@@ -223,9 +231,11 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
         startAutoConnect(false);
       }
     };
+    return true;
   }
 
   function disconnect() {
+    rejectQueuedTextSend('The waiting message was not sent because the connection was disconnected.');
     manualDisconnect = true;
     connectionRequested = false;
     autoConnectPaused.value = true;
@@ -285,20 +295,56 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     scheduleAutoReconnect(0);
   }
 
-  function sendText(text: string, attachments: ClientAttachment[] = []) {
-    if (!canSend.value) {
-      options.addMessage('error', 'Not connected, message was not sent.');
-      return;
+  function sendText(
+    text: string,
+    attachments: ClientAttachment[] = [],
+    onDispatched?: (dispatched: boolean) => void,
+  ): boolean {
+    const trimmed = text.trim();
+    if (!trimmed && !attachments.length) {
+      onDispatched?.(false);
+      return false;
     }
 
-    const trimmed = text.trim();
-    if (!trimmed && !attachments.length) return;
+    if (canSend.value) {
+      const dispatched = dispatchText(trimmed, attachments);
+      onDispatched?.(dispatched);
+      return dispatched;
+    }
+
+    if (queuedTextSend) {
+      options.addMessage('error', 'Another message is already waiting for the connection.');
+      onDispatched?.(false);
+      return false;
+    }
+
+    queuedTextSend = {
+      attachments: attachments.map((attachment) => ({ ...attachment })),
+      onDispatched,
+      text: trimmed,
+    };
+    options.addMessage('system', 'Connection unavailable. Connecting before sending.');
+
+    if (
+      socket.value &&
+      (socket.value.readyState === WebSocket.CONNECTING || connecting.value)
+    ) {
+      return true;
+    }
+
+    if (connect(false)) return true;
+    rejectQueuedTextSend();
+    return false;
+  }
+
+  function dispatchText(text: string, attachments: ClientAttachment[]): boolean {
+    if (!canSend.value) return false;
 
     const session = options.activeSession();
-    if (!session) return;
+    if (!session) return false;
 
     const messageId = makeId();
-    options.addMessage('user', trimmed, {
+    options.addMessage('user', text, {
       attachments: toChatAttachments(attachments),
       messageId,
     });
@@ -310,8 +356,25 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       sessionId: session.id,
       messageId,
       createdAt: new Date().toISOString(),
-      ...createClientContentPayload(trimmed, attachments),
+      ...createClientContentPayload(text, attachments),
     });
+    return true;
+  }
+
+  function flushQueuedTextSend() {
+    const queued = queuedTextSend;
+    if (!queued) return;
+    queuedTextSend = null;
+    const dispatched = dispatchText(queued.text, queued.attachments);
+    queued.onDispatched?.(dispatched);
+  }
+
+  function rejectQueuedTextSend(message?: string) {
+    const queued = queuedTextSend;
+    if (!queued) return;
+    queuedTextSend = null;
+    queued.onDispatched?.(false);
+    if (message) options.addMessage('error', message);
   }
 
   function resendEditedText(userMessageId: string, text: string) {
@@ -762,6 +825,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     autoConnectStartedAt = 0;
     clearAutoRetryTimer();
     options.addMessage('system', message);
+    rejectQueuedTextSend('The waiting message was not sent because connection retries stopped.');
   }
 
   function handleOffline() {
@@ -832,6 +896,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     discardPendingStreamUpdates();
     clearAllNoResponseTimers();
     clearAutoRetryTimer();
+    rejectQueuedTextSend();
     const activeSocket = socket.value;
     socket.value = null;
     if (activeSocket && activeSocket.readyState !== WebSocket.CLOSED) {

@@ -252,10 +252,16 @@ watch(chatShell, (nextShell, previousShell) => {
   if (nextShell) chatShellResizeObserver?.observe(nextShell);
 });
 
-function onSend(text: string, attachments: ClientAttachment[]) {
+function onSend(
+  text: string,
+  attachments: ClientAttachment[],
+  onDispatched: (dispatched: boolean) => void,
+) {
   currentView.value = 'chat';
-  agent.sendText(text, attachments);
-  maybeScrollAfterUpdate();
+  agent.sendText(text, attachments, (dispatched) => {
+    onDispatched(dispatched);
+    if (dispatched) maybeScrollAfterUpdate();
+  });
 }
 
 function maybeScrollAfterUpdate() {

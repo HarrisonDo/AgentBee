@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowUp, MemoryStick, Paperclip, Plus, Square, X } from 'lucide-vue-next';
+import { ArrowUp, LoaderCircle, MemoryStick, Paperclip, Plus, Square, X } from 'lucide-vue-next';
 import { computed, nextTick, ref } from 'vue';
 import type { ClientAttachment } from '../protocol/types';
 import { shouldIgnoreCompositionEnter } from '../utils/composerKeyboard';
@@ -14,7 +14,11 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   selectModel: [modelName: string];
-  send: [text: string, attachments: ClientAttachment[]];
+  send: [
+    text: string,
+    attachments: ClientAttachment[],
+    onDispatched: (dispatched: boolean) => void,
+  ];
   stop: [];
 }>();
 
@@ -24,31 +28,41 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const textarea = ref<HTMLTextAreaElement | null>(null);
 const uploadWarnings = ref<string[]>([]);
 const isComposing = ref(false);
+const submissionPending = ref(false);
 const isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
 const COMPOSITION_ENTER_GUARD_MS = 100;
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 40 * 1024 * 1024;
 let ignoreEnterUntil = 0;
 const canSubmit = computed(() => (
-  !props.disabled &&
+  !submissionPending.value &&
   !isComposing.value &&
   (Boolean(text.value.trim()) || attachments.value.length > 0)
 ));
 
 function submit() {
   if (!canSubmit.value) return;
-  const value = text.value.trim();
+  const submittedText = text.value;
+  const value = submittedText.trim();
   if (!value && !attachments.value.length) return;
-  emit('send', value, attachments.value);
-  text.value = '';
-  attachments.value = [];
-  uploadWarnings.value = [];
-  if (fileInput.value) fileInput.value.value = '';
-  nextTick(resize);
+  const submittedAttachmentIds = new Set(attachments.value.map((attachment) => attachment.id));
+  const submittedAttachments = attachments.value.map((attachment) => ({ ...attachment }));
+  submissionPending.value = true;
+  emit('send', value, submittedAttachments, (dispatched) => {
+    submissionPending.value = false;
+    if (!dispatched) return;
+    if (text.value === submittedText) text.value = '';
+    attachments.value = attachments.value.filter(
+      (attachment) => !submittedAttachmentIds.has(attachment.id),
+    );
+    uploadWarnings.value = [];
+    if (fileInput.value) fileInput.value.value = '';
+    nextTick(resize);
+  });
 }
 
 function saveMemory() {
-  emit('send', props.labels.saveMemoryMessage, []);
+  emit('send', props.labels.saveMemoryMessage, [], () => undefined);
 }
 
 function onModelChange(event: Event) {
@@ -293,12 +307,13 @@ function formatLabel(template: string, values: Record<string, string>) {
             type="button"
             class="send composer-submit-button"
             :aria-label="labels.send"
-            :data-tooltip="labels.send"
-            :title="labels.send"
+            :data-tooltip="submissionPending ? labels.connectingToSend : labels.send"
+            :title="submissionPending ? labels.connectingToSend : labels.send"
             :disabled="!canSubmit"
             @click="submit"
           >
-            <ArrowUp :size="18" aria-hidden="true" />
+            <LoaderCircle v-if="submissionPending" class="spin" :size="17" aria-hidden="true" />
+            <ArrowUp v-else :size="18" aria-hidden="true" />
           </button>
         </div>
       </div>
