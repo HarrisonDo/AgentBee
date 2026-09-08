@@ -20,6 +20,7 @@ import SystemLogGroup from './components/SystemLogGroup.vue';
 import SubAgentPanel from './components/SubAgentPanel.vue';
 import SubAgentMenu from './components/SubAgentMenu.vue';
 import type { SubAgentSummary } from './components/SubAgentMenu.vue';
+import { useAppViewport } from './composables/useAppViewport';
 import { useI18n } from './composables/useI18n';
 import { useSessions } from './composables/useSessions';
 import { useTheme } from './composables/useTheme';
@@ -109,6 +110,7 @@ let chatShellResizeObserver: ResizeObserver | null = null;
 
 const { locale, setLocale, t } = useI18n();
 const { setTheme, theme } = useTheme();
+useAppViewport();
 
 const sessions = useSessions();
 sessions.loadSessions();
@@ -1434,7 +1436,6 @@ function redactConnectionUrl(value: string): string {
         v-if="currentView === 'chat'"
         :labels="t"
         :disabled="!agent.canSend.value"
-        :generating="agent.hasPendingTurns.value"
         :available-models="availableModels"
         :model-name="basicSettings.modelName"
         @select-model="selectComposerModel"

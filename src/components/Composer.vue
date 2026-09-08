@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ArrowUp, LoaderCircle, MemoryStick, Paperclip, Plus, Square, X } from 'lucide-vue-next';
-import { computed, nextTick, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import ModelPicker from './ModelPicker.vue';
 import type { ClientAttachment } from '../protocol/types';
 import { shouldIgnoreCompositionEnter } from '../utils/composerKeyboard';
 
 const props = defineProps<{
   availableModels: string[];
   disabled: boolean;
-  generating: boolean;
   labels: Record<string, string>;
   modelName: string;
 }>();
@@ -26,6 +26,7 @@ const text = ref('');
 const attachments = ref<ClientAttachment[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
 const textarea = ref<HTMLTextAreaElement | null>(null);
+const sizeProbe = ref<HTMLTextAreaElement | null>(null);
 const uploadWarnings = ref<string[]>([]);
 const isComposing = ref(false);
 const submissionPending = ref(false);
@@ -34,6 +35,8 @@ const COMPOSITION_ENTER_GUARD_MS = 100;
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 40 * 1024 * 1024;
 let ignoreEnterUntil = 0;
+let textareaResizeObserver: ResizeObserver | null = null;
+let textareaWidth = 0;
 const canSubmit = computed(() => (
   !submissionPending.value &&
   !isComposing.value &&
@@ -63,12 +66,6 @@ function submit() {
 
 function saveMemory() {
   emit('send', props.labels.saveMemoryMessage, [], () => undefined);
-}
-
-function onModelChange(event: Event) {
-  const modelName = (event.target as HTMLSelectElement).value;
-  if (!modelName || modelName === props.modelName) return;
-  emit('selectModel', modelName);
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -120,10 +117,27 @@ function insertNewlineAtCursor() {
 }
 
 function resize() {
-  if (!textarea.value) return;
-  textarea.value.style.height = 'auto';
-  textarea.value.style.height = `${Math.min(150, textarea.value.scrollHeight)}px`;
+  const input = textarea.value;
+  const probe = sizeProbe.value;
+  if (!input || !probe) return;
+  // Measure outside the layout so the focused input never collapses between keystrokes.
+  probe.value = input.value;
+  input.style.height = `${Math.min(150, probe.scrollHeight)}px`;
 }
+
+onMounted(() => {
+  resize();
+  textareaResizeObserver = new ResizeObserver(([entry]) => {
+    if (!entry || entry.contentRect.width === textareaWidth) return;
+    textareaWidth = entry.contentRect.width;
+    resize();
+  });
+  if (textarea.value) textareaResizeObserver.observe(textarea.value);
+});
+
+onBeforeUnmount(() => {
+  textareaResizeObserver?.disconnect();
+});
 
 async function onFileChange(event: Event) {
   const input = event.target as HTMLInputElement;
@@ -229,16 +243,27 @@ function formatLabel(template: string, values: Record<string, string>) {
           </button>
         </span>
       </div>
-      <textarea
-        ref="textarea"
-        v-model="text"
-        rows="1"
-        :placeholder="labels.composerPlaceholder"
-        @input="resize"
-        @keydown="onKeydown"
-        @compositionstart="onCompositionStart"
-        @compositionend="onCompositionEnd"
-      ></textarea>
+      <div class="composer-input">
+        <textarea
+          ref="textarea"
+          v-model="text"
+          rows="1"
+          :aria-label="labels.composerPlaceholder"
+          :placeholder="labels.composerPlaceholder"
+          @input="resize"
+          @keydown="onKeydown"
+          @compositionstart="onCompositionStart"
+          @compositionend="onCompositionEnd"
+        ></textarea>
+        <textarea
+          ref="sizeProbe"
+          class="composer-size-probe"
+          rows="1"
+          tabindex="-1"
+          aria-hidden="true"
+          disabled
+        ></textarea>
+      </div>
 
       <div class="composer-toolbar">
         <div class="composer-toolbar-group">
@@ -271,34 +296,20 @@ function formatLabel(template: string, values: Record<string, string>) {
         </div>
 
         <div class="composer-toolbar-group composer-toolbar-actions">
-          <div class="composer-model-picker" :title="labels.modelName">
-            <select
-              :aria-label="labels.modelName"
-              :value="modelName"
-              :disabled="disabled || (!availableModels.length && !modelName)"
-              @change="onModelChange"
-            >
-              <option v-if="!availableModels.length" :value="modelName">
-                {{ modelName || labels.noModelsAvailable }}
-              </option>
-              <option
-                v-else-if="modelName && !availableModels.includes(modelName)"
-                :value="modelName"
-              >
-                {{ modelName }}
-              </option>
-              <option v-for="model in availableModels" :key="model" :value="model">
-                {{ model }}
-              </option>
-            </select>
-          </div>
+          <ModelPicker
+            :available-models="availableModels"
+            :disabled="disabled"
+            :labels="labels"
+            :model-name="modelName"
+            @select="emit('selectModel', $event)"
+          />
           <button
-            v-if="generating"
             type="button"
             class="stop-send composer-submit-button"
             :aria-label="labels.stopGeneration"
             :data-tooltip="labels.stopGeneration"
             :title="labels.stopGeneration"
+            :disabled="disabled"
             @click="emit('stop')"
           >
             <Square :size="14" aria-hidden="true" />
