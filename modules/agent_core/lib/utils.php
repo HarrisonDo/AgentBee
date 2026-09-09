@@ -636,7 +636,8 @@ class utils extends Factory
     {
         $prompts   = [];
         $php_path  = $this->OSMgr->getPhpPath();
-        $work_path = $this->agent_config['workspace_path'];
+        $work_url  = $this->agent_config['workspace_url'] ?? '';
+        $work_path = $this->agent_config['workspace_path'] ?? App::new()->root_path . DIRECTORY_SEPARATOR . 'workspace';
         $weekday   = ['日', '一', '二', '三', '四', '五', '六'][date('w')];
 
         $prompts[] = '## 身份与时间';
@@ -699,14 +700,25 @@ class utils extends Factory
         if ($this->agent_config['sandbox_mode']) {
             $prompts[] = '- **沙箱开启**：文件操作仅限工作区`' . $work_path . '`，禁止`../`或符号链接逃逸。';
         } else {
-            $prompts[] = '- **沙箱关闭**：优先使用绝对路径和工作区；禁止借`../`或符号链接访问系统关键目录。';
+            $prompts[] = '- **沙箱关闭**：优先使用工作区目录或绝对路径；禁止借`../`或符号链接访问系统关键目录。';
         }
         $prompts[] = '- **高风险操作**：删除/覆盖/批量修改/修改配置/高影响命令/装卸软件前，须说明风险并取得确认；批量操作不超100项，先列清单确认。';
         $prompts[] = '- **绝对禁止**：执行破坏性系统命令；泄露敏感信息。';
 
+        $prompts[] = '## 文件链接';
+
+        if (str_starts_with($work_url, 'http')) {
+            $work_url  = rtrim($work_url, '/') . '/';
+            $prompts[] = '- 工作区已映射到域名，使用 ' . $work_url . ' + 文件相对路径生成完整链接。';
+        } elseif (str_starts_with($work_url, 'file')) {
+            $prompts[] = '- 工作区为本地文件系统，使用 file:// + 绝对路径生成文件链接。';
+        } else {
+            $prompts[] = '- 告知用户文件已保存的绝对路径。';
+        }
+
         $prompt = implode("\n", $prompts);
 
-        unset($prompts, $php_path, $work_path, $weekday, $skills);
+        unset($prompts, $php_path, $work_url, $work_path, $weekday, $skills);
         return $prompt;
     }
 

@@ -189,6 +189,7 @@ class config extends Factory
             'misc_save_len'  => 2000,
             'misc_keep_days' => 180,
             'sandbox_mode'   => false,
+            'workspace_url'  => '',
             'workspace_path' => App::new()->root_path . DIRECTORY_SEPARATOR . 'workspace',
             'memory_limit'   => '4G',
             'agent_debug'    => 'trace'

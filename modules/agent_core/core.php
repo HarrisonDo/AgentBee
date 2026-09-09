@@ -65,11 +65,9 @@ final class core extends Factory
 
         $this->utils->agent_config = $this->utils->config->get(true, $reload);
 
-        if ('' === $this->utils->agent_config['workspace_path'] || !is_dir($this->utils->agent_config['workspace_path'])) {
+        if (!isset($this->utils->agent_config['workspace_path']) || '' === $this->utils->agent_config['workspace_path']) {
             $this->utils->agent_config['workspace_path'] = $this->app->root_path . DIRECTORY_SEPARATOR . 'workspace';
         }
-
-        $this->utils->agent_config['workspace_path'] ??= $this->app->root_path . DIRECTORY_SEPARATOR . 'workspace';
     }
 
     /**
