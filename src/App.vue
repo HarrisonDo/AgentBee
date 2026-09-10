@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-vue-next';
 import ChatMessage from './components/ChatMessage.vue';
+import FilePreviewPanel from './components/FilePreviewPanel.vue';
 import Composer from './components/Composer.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
 import ConnectionPanel from './components/ConnectionPanel.vue';
@@ -31,6 +32,7 @@ import {
 import { normalizeServerError } from './protocol/normalizers';
 import type {
   ChatMessage as AgentChatMessage,
+  ChatFile,
   ClientAttachment,
   ClientSettingAct,
   MemoryRecord,
@@ -43,6 +45,7 @@ interface BasicSettings {
   inSandbox: boolean;
   modelName: string;
   workspacePath: string;
+  workspaceUrl: string;
 }
 
 type SettingStatusTone = 'success' | 'warning' | 'error';
@@ -80,6 +83,7 @@ const memoryHasMore = ref(true);
 const memoryReadMode = ref<MemoryReadMode | null>(null);
 const showDebugInfo = ref(false);
 const selectedSubAgentName = ref<string | null>(null);
+const previewFile = ref<ChatFile | null>(null);
 const subAgentPaneWidth = ref(readSubAgentPaneWidth());
 const isSubAgentResizing = ref(false);
 const visibleMessageCount = ref(50);
@@ -461,6 +465,7 @@ function deleteSubAgent(agentName: string) {
 }
 
 function selectSubAgent(agentName: string) {
+  previewFile.value = null;
   selectedSubAgentName.value = agentName;
   nextTick(() => {
     subAgentPaneWidth.value = clampSubAgentPaneWidth(subAgentPaneWidth.value);
@@ -472,7 +477,7 @@ function closeSubAgentPanel() {
 }
 
 function startSubAgentResize(event: PointerEvent) {
-  if (event.button !== 0 || !selectedSubAgent.value) return;
+  if (event.button !== 0 || (!selectedSubAgent.value && !previewFile.value)) return;
   const target = event.currentTarget as HTMLElement;
   resizePointerId = event.pointerId;
   resizeStartX = event.clientX;
@@ -555,6 +560,7 @@ let reconnectAfterSave = false;
 let requestModelsAfterNextConnect = false;
 
 function openSettings() {
+  previewFile.value = null;
   refreshConfigJson();
   configJsonError.value = '';
   clearSettingStatus();
@@ -579,12 +585,22 @@ function updateWsToken(value: string) {
   agent.clearConnectionError();
 }
 
+function openFilePreview(file: ChatFile) {
+  selectedSubAgentName.value = null;
+  previewFile.value = file;
+}
+
+function closeFilePreview() {
+  previewFile.value = null;
+}
+
 const basicSettings = computed<BasicSettings>(() => ({
   apiKey: readString(agentConfig.value, ['agent_llm', 'api_key']),
   apiUrl: readString(agentConfig.value, ['agent_llm', 'api_url']),
   inSandbox: readBoolean(agentConfig.value, ['sandbox_mode'], true),
   modelName: readString(agentConfig.value, ['agent_llm', 'model']),
   workspacePath: readString(agentConfig.value, ['workspace_path']),
+  workspaceUrl: readString(agentConfig.value, ['workspace_url']),
 }));
 
 function updateBasicSetting(field: keyof BasicSettings, value: boolean | string) {
@@ -594,6 +610,7 @@ function updateBasicSetting(field: keyof BasicSettings, value: boolean | string)
   if (field === 'inSandbox') setNestedValue(nextConfig, ['sandbox_mode'], Boolean(value));
   if (field === 'modelName') setNestedValue(nextConfig, ['agent_llm', 'model'], String(value));
   if (field === 'workspacePath') setNestedValue(nextConfig, ['workspace_path'], String(value));
+  if (field === 'workspaceUrl') setNestedValue(nextConfig, ['workspace_url'], String(value));
   applyAgentConfig(nextConfig, { syncJson: true });
   configJsonError.value = '';
 }
@@ -1109,6 +1126,7 @@ function createDefaultAgentConfig(): Record<string, unknown> {
     memory_limit: '4G',
     sandbox_mode: false,
     workspace_path: '',
+    workspace_url: '',
     agent_debug: 'trace',
     socket_debug: false,
   };
@@ -1118,9 +1136,14 @@ function normalizeAgentConfig(config: Record<string, unknown>): Record<string, u
   const nextConfig = clonePlainRecord(config);
   const toolsConfig = isRecord(nextConfig.agent_tools) ? nextConfig.agent_tools : null;
   const llmConfig = isRecord(nextConfig.agent_llm) ? nextConfig.agent_llm : null;
+  const serverConfig = isRecord(nextConfig.agent_server) ? nextConfig.agent_server : null;
 
   if (!('workspace_path' in nextConfig) && toolsConfig && typeof toolsConfig.workspace_path === 'string') {
     nextConfig.workspace_path = toolsConfig.workspace_path;
+  }
+  if (!('workspace_url' in nextConfig)) {
+    if (toolsConfig && typeof toolsConfig.workspace_url === 'string') nextConfig.workspace_url = toolsConfig.workspace_url;
+    else if (serverConfig && typeof serverConfig.workspace_url === 'string') nextConfig.workspace_url = serverConfig.workspace_url;
   }
   if (!('sandbox_mode' in nextConfig) && toolsConfig && typeof toolsConfig.in_sandbox === 'boolean') {
     nextConfig.sandbox_mode = toolsConfig.in_sandbox;
@@ -1310,6 +1333,7 @@ function redactConnectionUrl(value: string): string {
         class="chat-shell"
         :class="{
           'has-subagent': selectedSubAgent,
+          'has-preview': previewFile,
           'is-resizing': isSubAgentResizing,
         }"
         :style="{ '--subagent-pane-width': `${subAgentPaneWidth}px` }"
@@ -1358,6 +1382,7 @@ function redactConnectionUrl(value: string): string {
                 @delete-memory-message="deleteMemoryMessage"
                 @resend-user-message="resendUserMessage"
                 @update-user-message="updateAndResendUserMessage"
+                @preview-file="openFilePreview"
               />
             </template>
           </section>
@@ -1373,12 +1398,12 @@ function redactConnectionUrl(value: string): string {
         </div>
 
         <div
-          v-if="selectedSubAgent"
+          v-if="selectedSubAgent || previewFile"
           class="subagent-resizer"
           role="separator"
           tabindex="0"
           aria-orientation="vertical"
-          :aria-label="t.resizeSubAgentPanel"
+          :aria-label="previewFile ? t.resizePreviewPanel : t.resizeSubAgentPanel"
           :aria-valuemin="SUB_AGENT_MIN_WIDTH"
           :aria-valuemax="SUB_AGENT_MAX_WIDTH"
           :aria-valuenow="subAgentPaneWidth"
@@ -1398,6 +1423,16 @@ function redactConnectionUrl(value: string): string {
           @close="closeSubAgentPanel"
           @resend-user-message="resendUserMessage"
           @update-user-message="updateAndResendUserMessage"
+          @preview-file="openFilePreview"
+        />
+
+        <FilePreviewPanel
+          v-if="previewFile"
+          :file="previewFile"
+          :labels="t"
+          :workspace-path="basicSettings.workspacePath"
+          :workspace-url="basicSettings.workspaceUrl"
+          @close="closeFilePreview"
         />
       </div>
 
@@ -1418,6 +1453,8 @@ function redactConnectionUrl(value: string): string {
         :theme="theme"
         :ws-token="agent.wsToken.value"
         :ws-url="agent.wsUrl.value"
+        :workspace-path="basicSettings.workspacePath"
+        :workspace-url="basicSettings.workspaceUrl"
         @connect="agent.connect"
         @disconnect="agent.disconnect"
         @get-config="requestServerConfig"

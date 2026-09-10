@@ -14,6 +14,9 @@ export type ServerEventType =
   | 'tool'
   | 'tool_result'
   | 'image'
+  | 'file'
+  | 'html'
+  | 'document'
   | 'error'
   | 'end'
   | 'done'
@@ -32,6 +35,7 @@ export interface ChatMessage {
   WindowName?: string;
   think?: string;
   images?: ChatImage[];
+  files?: ChatFile[];
   toolEvents?: ToolEvent[];
   status?: AssistantStatus;
   isSubTalk?: number;
@@ -53,6 +57,25 @@ export interface ChatImage {
   /** Data URL ready for an img src, built from the server base64 payload. */
   src: string;
   prompt: string;
+  time: string;
+}
+
+export type ChatFileSource = 'content' | 'url' | 'path';
+
+export interface ChatFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: number;
+  /** Raw text, base64, or a data URL supplied by the server. */
+  content?: string;
+  /** Whether content is base64 encoded. Data URLs do not need this flag. */
+  encoding?: 'text' | 'base64';
+  /** Remote URL or a generated workspace URL. */
+  url?: string;
+  /** Original local/workspace path when the server did not return bytes. */
+  path?: string;
+  source: ChatFileSource;
   time: string;
 }
 
@@ -194,4 +217,10 @@ export interface ServerMessage {
   isSubTalk?: number;
   prompt?: string;
   mimeType?: string;
+  filename?: string;
+  file?: unknown;
+  path?: string;
+  url?: string;
+  href?: string;
+  encoding?: string;
 }

@@ -15,6 +15,7 @@ import {
   normalizePayload,
   normalizeServerError,
   normalizeImageEvent,
+  normalizeFileEvent,
   normalizeToolEvent,
   parseServerMessage,
 } from '../protocol/normalizers';
@@ -528,6 +529,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     if (['tool_calls', 'tool_call', 'tool'].includes(type)) return appendAssistantToolEvent(messageId, 'tool_calls', msg);
     if (type === 'tool_result') return appendAssistantToolEvent(messageId, 'tool_result', msg);
     if (type === 'image') return appendAssistantImage(messageId, msg);
+    if (['file', 'html', 'document'].includes(type)) return appendAssistantFile(messageId, msg);
     if (type === 'error') {
       options.addMessage('error', normalizeServerError(msg) || normalizePayload(msg) || 'Server returned an error.');
       return finishAssistantMessage(messageId, 'error', msg);
@@ -826,6 +828,24 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     clearAutoRetryTimer();
     options.addMessage('system', message);
     rejectQueuedTextSend('The waiting message was not sent because connection retries stopped.');
+  }
+
+  function appendAssistantFile(messageId: string | null, msg: ServerMessage) {
+    const file = normalizeFileEvent(msg, makeId, nowTime);
+    if (!file) {
+      queueAssistantContent(messageId, normalizePayload(msg), msg);
+      return;
+    }
+
+    const turn = ensureAssistantMessage(messageId, msg);
+    if (!turn) return;
+    clearNoResponseTimer(turn.messageId);
+    applySenderMeta(turn.assistant, msg);
+    turn.assistant.files ||= [];
+    turn.assistant.files.push(file);
+    turn.assistant.status = 'loading';
+    options.touchSession(turn.session);
+    options.scheduleSaveSessions();
   }
 
   function handleOffline() {

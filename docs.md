@@ -19,6 +19,39 @@
 - WS 获取聊天历史暂不启用，聊天记录保存在浏览器 `localStorage`。
 - 浏览器存储不足时，前端会裁剪旧记录并优先保留较新的会话内容。
 - assistant 回复支持轻量 Markdown 渲染。
+- 后端返回 `file`、`html` 或 `document` 事件时，前端会按文件类型显示桌面预览侧栏；文本、Markdown、HTML、图片和 PDF 分别采用对应预览方式。
+- 文件事件可提供 `content`、`url` 或 `path`。工作区内路径可通过配置中的 `workspace_url` 映射为浏览器可访问的 HTTP(S) 地址；无法映射的后端本地路径只显示路径提示，不会假装浏览器能够读取它。
+
+文件事件示例：
+
+```json
+{
+  "type": "file",
+  "messageId": "question-message-id",
+  "data": {
+    "filename": "report.html",
+    "mimeType": "text/html",
+    "content": "<html><body><h1>Hello</h1></body></html>",
+    "encoding": "text"
+  }
+}
+```
+
+仅返回工作区路径时：
+
+```json
+{
+  "type": "file",
+  "messageId": "question-message-id",
+  "data": {
+    "filename": "reports/demo.html",
+    "mimeType": "text/html",
+    "path": "D:/AgentBee/workspace/reports/demo.html"
+  }
+}
+```
+
+`workspace_url` 必须实际提供对应文件，例如 `https://example.test/workspace/`；它只是路径映射配置。`file://` 地址指向打开浏览器的电脑，普通网页不能读取后端电脑的本地文件。
 
 ## 关键字段
 

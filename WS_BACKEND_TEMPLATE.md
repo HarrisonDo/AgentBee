@@ -280,6 +280,25 @@ Also supported:
 
 Multiple `image` events with the same `messageId` stack in order inside the same assistant reply, and can be mixed with `content`, `think` and tool events. The frontend scales images down to fit the bubble, so any resolution is safe to send.
 
+### File / HTML / Document
+
+`file`, `html`, and `document` events render as a desktop preview card. The payload may contain file bytes, a browser URL, or a workspace path:
+
+```json
+{
+  "type": "file",
+  "messageId": "question-message-id",
+  "data": {
+    "filename": "report.html",
+    "mimeType": "text/html",
+    "content": "<html><body><h1>Hello</h1></body></html>",
+    "encoding": "text"
+  }
+}
+```
+
+Supported fields are `filename` / `name`, `mimeType` / `mime_type`, `content` / `body` / `text`, `encoding` (`text` or `base64`), `url` / `href`, and `path`. For binary content, use base64 and set `encoding` to `base64`. A path below the configured `workspace_path` is mapped through `workspace_url`; other local paths are shown as `file://` references with a browser limitation notice. `workspace_url` must be backed by an HTTP(S) file server.
+
 ### Error
 
 ```json

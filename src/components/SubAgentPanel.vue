@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Bot, X } from 'lucide-vue-next';
 import { computed, nextTick, ref, watch } from 'vue';
-import type { ChatMessage as AgentChatMessage } from '../protocol/types';
+import type { ChatFile, ChatMessage as AgentChatMessage } from '../protocol/types';
 import type { SubAgentSummary } from './SubAgentMenu.vue';
 import ChatMessage from './ChatMessage.vue';
 
@@ -16,6 +16,7 @@ const emit = defineEmits<{
   close: [];
   resendUserMessage: [messageId: string];
   updateUserMessage: [messageId: string, content: string];
+  previewFile: [file: ChatFile];
 }>();
 
 const PAGE_SIZE = 50;
@@ -58,6 +59,10 @@ function onResendUserMessage(messageId: string) {
 
 function onUpdateUserMessage(messageId: string, content: string) {
   emit('updateUserMessage', messageId, content);
+}
+
+function onPreviewFile(file: ChatFile) {
+  emit('previewFile', file);
 }
 
 function getAgentInitial(agentName: string) {
@@ -105,6 +110,7 @@ function getAgentStatusLabel(status: string) {
         :show-debug-info="showDebugInfo"
         @resend-user-message="onResendUserMessage"
         @update-user-message="onUpdateUserMessage"
+        @preview-file="onPreviewFile"
       />
     </div>
   </aside>

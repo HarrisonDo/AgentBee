@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue';
+import { computed, nextTick, onBeforeUpdate, onUpdated, ref } from 'vue';
 import {
   Check,
   Copy,
+  Eye,
+  FileText,
   LoaderCircle,
   Paperclip,
   Pencil,
@@ -14,7 +16,7 @@ import {
 import FoldBlock from './FoldBlock.vue';
 import ToolEventsBlock from './ToolEventsBlock.vue';
 import { useMarkdown } from '../composables/useMarkdown';
-import type { ChatMessage } from '../protocol/types';
+import type { ChatFile, ChatMessage } from '../protocol/types';
 
 const props = defineProps<{
   labels: Record<string, string>;
@@ -28,6 +30,7 @@ const emit = defineEmits<{
   deleteMemoryMessage: [createId: number];
   resendUserMessage: [messageId: string];
   updateUserMessage: [messageId: string, content: string];
+  previewFile: [file: ChatFile];
 }>();
 
 const { renderMarkdown } = useMarkdown();
@@ -35,11 +38,30 @@ const editTextarea = ref<HTMLTextAreaElement | null>(null);
 const draft = ref('');
 const isEditing = ref(false);
 const copied = ref(false);
+const markdownBody = ref<HTMLElement | null>(null);
+const SCROLLABLE_MARKDOWN = '.markdown-table-scroll, .markdown-code-block > pre';
+let horizontalScrollPositions: number[] = [];
+
+onBeforeUpdate(() => {
+  horizontalScrollPositions = Array.from(
+    markdownBody.value?.querySelectorAll<HTMLElement>(SCROLLABLE_MARKDOWN) || [],
+    (element) => element.scrollLeft,
+  );
+});
+
+onUpdated(() => {
+  // v-html replaces streaming blocks; retain the reader's column/line position.
+  markdownBody.value?.querySelectorAll<HTMLElement>(SCROLLABLE_MARKDOWN).forEach((element, index) => {
+    const scrollLeft = horizontalScrollPositions[index];
+    if (scrollLeft > 0) element.scrollLeft = scrollLeft;
+  });
+});
 
 const hasAssistantOutput = computed(() => (
   Boolean(props.message.content?.trim()) ||
   Boolean(props.message.think?.trim()) ||
   Boolean(props.message.images?.length) ||
+  Boolean(props.message.files?.length) ||
   Boolean(props.message.toolEvents?.length)
 ));
 
@@ -66,6 +88,11 @@ const renderedMarkdown = computed(() => {
     stable: renderMarkdownBlocks(split.stable),
     tail: renderMarkdownBlocks(split.tail),
   };
+});
+
+const fullHtmlDocument = computed(() => {
+  const content = props.message.content?.trim() || '';
+  return /^(?:<!doctype\s+html\b[^>]*>\s*)?<html\b[\s\S]*<\/html>\s*$/i.test(content) ? content : '';
 });
 
 const senderIdentity = computed(() => {
@@ -178,6 +205,19 @@ function formatSize(size: number) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function previewHtmlDocument() {
+  if (!fullHtmlDocument.value) return;
+  emit('previewFile', {
+    id: `${props.message.id}-html`,
+    name: 'response.html',
+    mimeType: 'text/html',
+    content: fullHtmlDocument.value,
+    encoding: 'text',
+    source: 'content',
+    time: props.message.time,
+  });
+}
+
 async function copyText(text: string) {
   if (navigator.clipboard?.writeText) {
     try {
@@ -201,7 +241,7 @@ async function copyText(text: string) {
 
 function renderMarkdownBlocks(markdown: string) {
   const html = renderMarkdown(markdown);
-  if (!html.includes('<pre')) return html;
+  if (!/<(?:pre|table)\b/i.test(html)) return html;
 
   const container = document.createElement('div');
   container.innerHTML = html;
@@ -223,6 +263,31 @@ function renderMarkdownBlocks(markdown: string) {
     pre.replaceWith(wrapper);
     wrapper.appendChild(button);
     wrapper.appendChild(pre);
+    pre.tabIndex = 0;
+    pre.setAttribute('role', 'region');
+    pre.setAttribute('aria-label', props.labels.scrollableCode);
+  });
+
+  container.querySelectorAll('table').forEach((table) => {
+    if (table.parentElement?.classList.contains('markdown-table-scroll')) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'markdown-table-scroll';
+    wrapper.tabIndex = 0;
+    wrapper.setAttribute('role', 'region');
+    wrapper.setAttribute('aria-label', props.labels.scrollableTable);
+    table.replaceWith(wrapper);
+    wrapper.appendChild(table);
+
+    // Bound prose within each column without squeezing the table to the viewport.
+    Array.from(table.rows).forEach((row) => {
+      Array.from(row.cells).forEach((cell) => {
+        const content = document.createElement('div');
+        content.className = 'markdown-table-cell';
+        while (cell.firstChild) content.appendChild(cell.firstChild);
+        cell.appendChild(content);
+      });
+    });
   });
 
   return container.innerHTML;
@@ -309,6 +374,24 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
         </span>
       </div>
 
+      <div v-if="message.files?.length" class="message-files">
+        <article v-for="file in message.files" :key="file.id" class="message-file-card">
+          <FileText :size="16" aria-hidden="true" />
+          <span class="message-file-copy">
+            <strong>{{ file.name }}</strong>
+            <small>{{ file.mimeType }}</small>
+          </span>
+          <button type="button" class="icon-button" :title="labels.preview" @click="emit('previewFile', file)">
+            <Eye :size="15" aria-hidden="true" />
+          </button>
+        </article>
+      </div>
+
+      <button v-if="fullHtmlDocument" type="button" class="html-preview-entry" @click="previewHtmlDocument">
+        <Eye :size="15" aria-hidden="true" />
+        <span>{{ labels.previewHtml }}</span>
+      </button>
+
       <div v-if="isWaitingForResponse" class="message-loading" aria-live="polite">
         <span>{{ labels.waitingForResponse }}</span>
         <span class="typing-dots" aria-hidden="true">
@@ -324,6 +407,7 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
 
       <div
         v-else-if="message.role === 'assistant'"
+        ref="markdownBody"
         class="markdown-body"
         @click="copyMarkdownBlock"
       >

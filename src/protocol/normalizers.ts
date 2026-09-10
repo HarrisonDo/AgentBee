@@ -1,6 +1,7 @@
-import type { ChatImage, ServerMessage, ToolEvent } from './types';
+import type { ChatFile, ChatImage, ServerMessage, ToolEvent } from './types';
 
 const DEFAULT_IMAGE_MIME = 'image/png';
+const DEFAULT_FILE_MIME = 'application/octet-stream';
 
 export function normalizePayload(msg: ServerMessage): string {
   const data = msg.data ?? msg.text ?? msg.content ?? msg.delta ?? '';
@@ -115,9 +116,72 @@ export function normalizeImageEvent(
   };
 }
 
+export function normalizeFileEvent(
+  msg: ServerMessage,
+  makeId: () => string,
+  nowTime: () => string,
+): ChatFile | null {
+  const payload = msg.file ?? msg.data ?? msg.content ?? msg.result ?? msg;
+  const record = asRecord(payload);
+  const nested = asRecord(record.file);
+  const sourceRecord = Object.keys(nested).length ? { ...record, ...nested } : record;
+  const rawContent = sourceRecord.content ?? sourceRecord.text ?? sourceRecord.body ??
+    (typeof payload === 'string' ? payload : undefined);
+  const url = asString(sourceRecord.url) || asString(sourceRecord.href) ||
+    asString(msg.url) || asString(msg.href);
+  const path = asString(sourceRecord.path) || asString(sourceRecord.filepath) ||
+    asString(sourceRecord.filename) || asString(msg.path);
+  const name = asString(sourceRecord.filename) || asString(sourceRecord.name) ||
+    asString(msg.filename) || basename(path) || 'untitled';
+  const mimeType = asString(sourceRecord.mimeType) || asString(sourceRecord.mime_type) ||
+    asString(msg.mimeType) || inferMimeType(name, getServerType(msg));
+  const encoding = asString(sourceRecord.encoding).toLowerCase() === 'base64'
+    ? 'base64'
+    : rawContent !== undefined && !isTextMime(mimeType) ? 'base64' : 'text';
+  if (rawContent === undefined && !url && !path) return null;
+
+  return {
+    id: asString(sourceRecord.id) || msg.messageId || makeId(),
+    name,
+    mimeType,
+    size: toOptionalNumber(sourceRecord.size),
+    content: rawContent === undefined ? undefined : String(rawContent),
+    encoding,
+    url: url || undefined,
+    path: path || undefined,
+    source: rawContent !== undefined ? 'content' : url ? 'url' : 'path',
+    time: nowTime(),
+  };
+}
+
 function toImageDataUrl(value: string, mimeType: string): string {
   if (/^(data:|https?:\/\/)/i.test(value)) return value;
   return `data:${mimeType};base64,${value}`;
+}
+
+function basename(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() || '';
+}
+
+function isTextMime(mimeType: string): boolean {
+  return mimeType.startsWith('text/') || /(?:json|javascript|xml|svg|css|yaml|toml|markdown)/i.test(mimeType);
+}
+
+function inferMimeType(name: string, eventType: string): string {
+  if (eventType === 'html') return 'text/html';
+  const extension = name.toLowerCase().split('.').pop() || '';
+  return ({
+    html: 'text/html', htm: 'text/html', md: 'text/markdown', markdown: 'text/markdown',
+    txt: 'text/plain', json: 'application/json', csv: 'text/csv', css: 'text/css',
+    js: 'text/javascript', ts: 'text/typescript', svg: 'image/svg+xml',
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+    pdf: 'application/pdf',
+  } as Record<string, string>)[extension] || DEFAULT_FILE_MIME;
+}
+
+function toOptionalNumber(value: unknown): number | undefined {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : undefined;
 }
 
 function formatToolCall(call: unknown): string {

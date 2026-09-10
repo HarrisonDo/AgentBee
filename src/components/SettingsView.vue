@@ -31,6 +31,7 @@ interface BasicSettings {
   inSandbox: boolean;
   modelName: string;
   workspacePath: string;
+  workspaceUrl: string;
 }
 
 defineProps<{
@@ -262,6 +263,20 @@ const advancedExpanded = ref(false);
             placeholder="D:\\Projects\\AgentBee"
             @input="emit('update:basicSetting', 'workspacePath', ($event.target as HTMLInputElement).value)"
           />
+        </label>
+        <label class="settings-field" for="agentWorkspaceUrl">
+          <span>
+            <Link :size="14" aria-hidden="true" />
+            {{ labels.workspaceUrl }}
+          </span>
+          <input
+            id="agentWorkspaceUrl"
+            :value="basicSettings.workspaceUrl"
+            type="url"
+            placeholder="https://example.test/workspace/"
+            @input="emit('update:basicSetting', 'workspaceUrl', ($event.target as HTMLInputElement).value)"
+          />
+          <small class="settings-field-hint">{{ labels.workspaceUrlHint }}</small>
         </label>
         <label class="settings-field settings-switch-field" for="agentSandboxMode">
           <span>
