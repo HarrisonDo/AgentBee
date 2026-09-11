@@ -71,7 +71,7 @@ class handler extends Factory
         $data_url = $agent_core->utils->resizeImage($binary_data);
 
         $agent_core->core->context->addUserMessage($payload_data['process_name'], [
-            ['type' => 'text', 'content' => $filename],
+            ['type' => 'text', 'content' => '图片「' . pathinfo($filename, PATHINFO_FILENAME) . '」非文件，已随消息附带，可直接查看。'],
             ['type' => 'image', 'content' => $data_url]
         ]);
 

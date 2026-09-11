@@ -282,7 +282,7 @@ class message extends Factory
 
                     try {
                         $data_url  = $this->utils->resizeImage($binary);
-                        $content[] = ['type' => 'text', 'content' => '图片"' . $data['file']['filename'] . '"，base64 内嵌，直接读取。'];
+                        $content[] = ['type' => 'text', 'content' => '图片「' . pathinfo($data['file']['filename'], PATHINFO_FILENAME) . '」非文件，已随消息附带，可直接查看。'];
                         $content[] = ['type' => 'image', 'content' => $data_url];
                     } catch (\Throwable $throwable) {
                         $errors[] = $data['file']['filename'] . '：' . $throwable->getMessage();
