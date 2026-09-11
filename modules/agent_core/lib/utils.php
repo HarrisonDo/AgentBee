@@ -710,7 +710,7 @@ class utils extends Factory
 
         if (str_starts_with($work_url, 'http')) {
             $work_url  = rtrim($work_url, '/') . '/';
-            $prompts[] = '- 工作区已映射到域名，使用 ' . $work_url . ' + 文件相对路径生成完整链接。';
+            $prompts[] = '- 工作区根目录已映射到域名，使用 ' . $work_url . ' + 文件相对路径生成完整链接。';
         } elseif (str_starts_with($work_url, 'file')) {
             $prompts[] = '- 工作区为本地文件系统，使用 file:// + 绝对路径生成文件链接。';
         } else {
