@@ -5,6 +5,7 @@ import {
   extractContentArtifacts,
   extractMessageArtifacts,
   isAutoOpenCandidate,
+  pickInlinePreviewArtifact,
   pickPrimaryArtifact,
 } from './artifacts';
 
@@ -127,6 +128,61 @@ describe('pickPrimaryArtifact', () => {
     });
     expect(artifacts.map((file) => file.name)).toContain('data.csv');
     expect(pickPrimaryArtifact(artifacts)).toBeNull();
+  });
+});
+
+describe('pickInlinePreviewArtifact', () => {
+  it('offers a preview for a full HTML document in a history record', () => {
+    const artifact = pickInlinePreviewArtifact({ content: FULL_HTML, toolEvents: [] });
+    expect(artifact?.name).toBe('response.html');
+  });
+
+  it('offers a preview for fenced html and markdown blocks', () => {
+    const fencedHtml = ['说明：', '', '```html', '<div>ok</div>', '```'].join('\n');
+    expect(pickInlinePreviewArtifact({ content: fencedHtml, toolEvents: [] })?.mimeType).toBe('text/html');
+
+    const fencedMarkdown = ['说明：', '', '```md', '# 周报', '', '正文', '```'].join('\n');
+    expect(pickInlinePreviewArtifact({ content: fencedMarkdown, toolEvents: [] })?.mimeType).toBe('text/markdown');
+  });
+
+  it('offers a preview for a long structured markdown reply', () => {
+    const content = [
+      '## 背景',
+      '这里是背景说明，'.repeat(20),
+      '## 方案',
+      '这里是方案说明，'.repeat(20),
+      '## 结论',
+      '这里是结论，'.repeat(20),
+    ].join('\n\n');
+    expect(pickInlinePreviewArtifact({ content, toolEvents: [] })?.name).toBe('response.md');
+  });
+
+  it('withholds the button for plain chat and path-only mentions', () => {
+    expect(pickInlinePreviewArtifact({
+      content: '好的，我已经把文件保存到 workspace/reports/demo.html 了。',
+      toolEvents: [],
+    })).toBeNull();
+    expect(pickInlinePreviewArtifact({ content: '收到，我这就去处理。', toolEvents: [] })).toBeNull();
+    expect(pickInlinePreviewArtifact({ content: '', toolEvents: [] })).toBeNull();
+  });
+
+  it('ignores tool_result paths because they carry no bytes', () => {
+    const data = JSON.stringify({ file_path: 'workspace/a.html' });
+    expect(pickInlinePreviewArtifact({ content: '', toolEvents: [toolResult(data)] })).toBeNull();
+  });
+
+  it('prefers HTML content over markdown when both are present', () => {
+    const content = [
+      '## 一',
+      '内容，'.repeat(120),
+      '## 二',
+      '内容，'.repeat(120),
+      '',
+      '```html',
+      '<div>ok</div>',
+      '```',
+    ].join('\n\n');
+    expect(pickInlinePreviewArtifact({ content, toolEvents: [] })?.mimeType).toBe('text/html');
   });
 });
 

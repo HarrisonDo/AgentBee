@@ -120,6 +120,22 @@ export function extractMessageArtifacts(
   return sortByRank(dedupe(found));
 }
 
+/**
+ * 聊天记录（服务端记忆）里「完整、可直接预览」的内容块。
+ *
+ * 只认正文自带、能脱离后端独立渲染的产物：HTML 文档、```html / ```md 围栏块、
+ * 长 Markdown 文档。纯文件路径不算——历史记录里的文件未必还在原工作区，
+ * 点了只会得到一个读不到内容的空面板。
+ */
+export function pickInlinePreviewArtifact(
+  message: Pick<ChatMessage, 'content' | 'toolEvents'>,
+): ChatFile | null {
+  const inline = extractContentArtifacts(message).filter(
+    (file) => typeof file.content === 'string' && file.content.trim().length > 0,
+  );
+  return pickByRank(inline);
+}
+
 function collectContentArtifacts(content: string, found: ChatFile[]) {
   const trimmed = content.trim();
   if (!trimmed) return;

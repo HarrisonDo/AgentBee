@@ -522,7 +522,15 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       return;
     }
     if (type === 'history') return;
-    if (['content', 'assistant', 'message'].includes(type)) return queueAssistantContent(messageId, normalizePayload(msg), msg);
+    if (['content', 'assistant', 'message'].includes(type)) {
+      queueAssistantContent(messageId, normalizePayload(msg), msg);
+      // `/reset` 由后端以 need_llm=false 的 message 事件答复，后面不会再有 end，
+      // 这里主动收尾，否则该轮会一直停在加载态。
+      if (type === 'message' && unwrapActContent(msg).act === 'reset') {
+        return finishAssistantMessage(messageId, 'done', msg);
+      }
+      return;
+    }
     if (['think', 'thinking', 'status'].includes(type)) return queueAssistantThink(messageId, normalizePayload(msg), msg);
     // Preserve ordering when a tool/image/terminal event follows buffered text.
     flushPendingStreamUpdates(messageId);

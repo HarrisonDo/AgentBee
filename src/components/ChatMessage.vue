@@ -16,7 +16,7 @@ import {
 import FoldBlock from './FoldBlock.vue';
 import ToolEventsBlock from './ToolEventsBlock.vue';
 import { useMarkdown } from '../composables/useMarkdown';
-import { extractContentArtifacts } from '../utils/artifacts';
+import { extractContentArtifacts, pickInlinePreviewArtifact } from '../utils/artifacts';
 import type { ChatFile, ChatImage, ChatMessage } from '../protocol/types';
 
 const props = defineProps<{
@@ -108,6 +108,18 @@ const previewEntries = computed<ChatFile[]>(() => {
   const entries = contentArtifacts.value
     .filter((file) => !serverKeys.has(file.path || file.name));
   return entries.slice(0, MAX_PREVIEW_ENTRIES);
+});
+
+/**
+ * 服务端历史记录里「自带正文、点开即可渲染」的完整内容块。
+ * 有它时，删除按钮旁边会多出一个预览按钮。
+ */
+const historyPreviewArtifact = computed<ChatFile | null>(() => {
+  if (!props.message.memoryCreateId) return null;
+  return pickInlinePreviewArtifact({
+    content: props.message.content || '',
+    toolEvents: props.message.toolEvents,
+  });
 });
 
 const senderIdentity = computed(() => {
@@ -229,6 +241,16 @@ function artifactEntryLabel(file: ChatFile): string {
   if (mime.includes('html') || /\.(?:html?|xhtml)$/i.test(file.name)) return props.labels.previewHtml;
   if (mime.includes('markdown') || /\.(?:md|markdown)$/i.test(file.name)) return props.labels.previewMarkdown;
   return props.labels.previewFile;
+}
+
+function previewHistoryArtifact() {
+  const artifact = historyPreviewArtifact.value;
+  if (artifact) previewArtifact(artifact);
+}
+
+function historyPreviewLabel(): string {
+  const artifact = historyPreviewArtifact.value;
+  return artifact ? artifactEntryLabel(artifact) : props.labels.previewFile;
 }
 
 function previewImage(image: ChatImage) {
@@ -507,6 +529,15 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
         <Pencil :size="14" aria-hidden="true" />
       </button>
       <button
+        v-if="historyPreviewArtifact"
+        type="button"
+        class="message-action-button history-preview-button"
+        :title="historyPreviewLabel()"
+        @click="previewHistoryArtifact"
+      >
+        <Eye :size="14" aria-hidden="true" />
+      </button>
+      <button
         v-if="message.memoryCreateId"
         type="button"
         class="message-action-button history-delete-button"
@@ -520,6 +551,15 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
     </div>
     </template>
     <div v-if="message.memoryCreateId && message.role !== 'user'" class="history-message-actions">
+      <button
+        v-if="historyPreviewArtifact"
+        type="button"
+        class="message-action-button history-preview-button"
+        :title="historyPreviewLabel()"
+        @click="previewHistoryArtifact"
+      >
+        <Eye :size="14" aria-hidden="true" />
+      </button>
       <button
         type="button"
         class="message-action-button history-delete-button"

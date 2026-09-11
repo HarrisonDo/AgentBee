@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowUp, LoaderCircle, MemoryStick, Paperclip, Plus, Square, X } from 'lucide-vue-next';
+import { ArrowUp, LoaderCircle, Paperclip, Plus, RotateCcw, Square, X } from 'lucide-vue-next';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import ModelPicker from './ModelPicker.vue';
 import type { ClientAttachment } from '../protocol/types';
@@ -30,13 +30,16 @@ const sizeProbe = ref<HTMLTextAreaElement | null>(null);
 const uploadWarnings = ref<string[]>([]);
 const isComposing = ref(false);
 const submissionPending = ref(false);
+const isDraggingFile = ref(false);
 const isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
 const COMPOSITION_ENTER_GUARD_MS = 100;
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 40 * 1024 * 1024;
+const RESET_COMMAND = '/reset';
 let ignoreEnterUntil = 0;
 let textareaResizeObserver: ResizeObserver | null = null;
 let textareaWidth = 0;
+let dragDepth = 0;
 const canSubmit = computed(() => (
   !submissionPending.value &&
   !isComposing.value &&
@@ -64,8 +67,8 @@ function submit() {
   });
 }
 
-function saveMemory() {
-  emit('send', props.labels.saveMemoryMessage, [], () => undefined);
+function resetSession() {
+  emit('send', RESET_COMMAND, [], () => undefined);
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -141,7 +144,12 @@ onBeforeUnmount(() => {
 
 async function onFileChange(event: Event) {
   const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files || []);
+  await addFiles(Array.from(input.files || []));
+  input.value = '';
+}
+
+/** 收单入口：文件选择器和拖拽放入共用同一套体积校验与读取逻辑。 */
+async function addFiles(files: File[]) {
   if (!files.length) return;
 
   uploadWarnings.value = [];
@@ -179,7 +187,42 @@ async function onFileChange(event: Event) {
     ));
   });
   attachments.value = [...attachments.value, ...loaded];
-  input.value = '';
+}
+
+function isFileDrag(event: DragEvent): boolean {
+  const types = event.dataTransfer?.types;
+  return Boolean(types && Array.from(types).includes('Files'));
+}
+
+function onDragEnter(event: DragEvent) {
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+  dragDepth += 1;
+  isDraggingFile.value = true;
+}
+
+function onDragOver(event: DragEvent) {
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = props.disabled ? 'none' : 'copy';
+}
+
+function onDragLeave(_event: DragEvent) {
+  // dragleave 事件里的 dataTransfer.types 未必还带着 'Files'，所以这里不做类型判断，
+  // 只按进出计数收敛，避免高亮层卡住不消失。
+  if (!isDraggingFile.value) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) isDraggingFile.value = false;
+}
+
+async function onDrop(event: DragEvent) {
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+  dragDepth = 0;
+  isDraggingFile.value = false;
+  if (props.disabled) return;
+  const dropped = Array.from(event.dataTransfer?.files || []);
+  if (dropped.length) await addFiles(dropped);
 }
 
 function removeAttachment(id: string) {
@@ -229,7 +272,18 @@ function formatLabel(template: string, values: Record<string, string>) {
 
 <template>
   <footer class="composer">
-    <div class="composer-panel">
+    <div
+      class="composer-panel"
+      :class="{ 'is-dragging': isDraggingFile }"
+      @dragenter="onDragEnter"
+      @dragover="onDragOver"
+      @dragleave="onDragLeave"
+      @drop="onDrop"
+    >
+      <div v-if="isDraggingFile" class="composer-drop-hint" aria-hidden="true">
+        <Paperclip :size="16" aria-hidden="true" />
+        <span>{{ labels.dropFilesHint }}</span>
+      </div>
       <div v-if="uploadWarnings.length" class="attachment-warnings" role="alert" aria-live="polite">
         <span v-for="(warning, index) in uploadWarnings" :key="`${index}-${warning}`">{{ warning }}</span>
       </div>
@@ -285,13 +339,13 @@ function formatLabel(template: string, values: Record<string, string>) {
           </label>
           <button
             type="button"
-            class="memory-send composer-text-button"
-            :title="labels.saveMemory"
+            class="reset-send composer-text-button"
+            :title="labels.resetSession"
             :disabled="disabled"
-            @click="saveMemory"
+            @click="resetSession"
           >
-            <MemoryStick :size="15" aria-hidden="true" />
-            <span>{{ labels.saveMemory }}</span>
+            <RotateCcw :size="15" aria-hidden="true" />
+            <span>{{ labels.resetSession }}</span>
           </button>
         </div>
 
