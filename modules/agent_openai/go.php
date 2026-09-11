@@ -118,7 +118,11 @@ class go extends Factory
      */
     public function getModels(): array
     {
-        return $this->libOpenAI->listModels();
+        if ([] === $this->utils->model_list) {
+            $this->utils->model_list = $this->libOpenAI->listModels();
+        }
+
+        return $this->utils->model_list;
     }
 
     /**

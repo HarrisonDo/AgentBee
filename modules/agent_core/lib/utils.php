@@ -47,6 +47,7 @@ class utils extends Factory
 
     public string $memory_buffer = '';
 
+    public array $model_list      = [];
     public array $program_list    = [];
     public array $child_workers   = [];
     public array $socket_session  = [];
