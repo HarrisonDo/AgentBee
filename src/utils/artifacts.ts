@@ -22,6 +22,7 @@ const HTML_MAX_LEN = 400_000;
 const MARKDOWN_DOC_MIN_LEN = 400;
 const MARKDOWN_DOC_MIN_HEADINGS = 2;
 const MAX_PATH_ARTIFACTS = 8;
+const MAX_URL_ARTIFACTS = 6;
 const MAX_TOOL_DEPTH = 6;
 const MAX_TOOL_ARTIFACTS = 20;
 
@@ -45,6 +46,10 @@ const PATH_SCAN_PATTERN = new RegExp(
   'gi',
 );
 
+const URL_SCAN_PATTERN = /https?:\/\/[^\s<>"'`[\](){}，。；、：！？、“”‘’《》【】]+/gi;
+/** URL 末尾的句子标点，属于正文而非地址本身。 */
+const URL_TRAILING_JUNK = /[.,;:!?、。，；：！？'"”’)\]}]+$/;
+
 const TOOL_PATH_KEYS = new Set([
   'file_path', 'filepath', 'path', 'save_path', 'output_path', 'full_path',
   'saved_files', 'files', 'file', 'filename', 'file_name',
@@ -58,7 +63,9 @@ export function artifactRank(file: ChatFile): number {
   if (mime.includes('html') || /\.(?:html?|xhtml)$/.test(name)) base = 100;
   else if (mime.includes('markdown') || /\.(?:md|markdown)$/.test(name)) base = 60;
   else if (mime.startsWith('image/') || mime === 'application/pdf') base = 40;
-  if (file.content !== undefined || file.url) base += 8;
+  // 同样类型下，自带内容（可离线渲染）优先于远端链接。
+  if (file.content !== undefined) base += 12;
+  else if (file.url) base += 8;
   return base;
 }
 
@@ -69,15 +76,20 @@ export function artifactRank(file: ChatFile): number {
  *  - HTML 文档 / 代码块：明确是「网页产物」→ 打开
  *  - ```md 围栏块：agent 主动写了一份文档 → 打开
  *  - 聊天正文里的普通 Markdown：只给按钮，不自动打开
- *  - 图片：气泡里已经内联显示 → 不重复打开
+ *  - 图片：气泡里已经内联显示 → 不重复打开（远端图片链接除外）
+ *  - 远端链接里的 csv / zip / docx 等：浏览器打不开，只给按钮
  */
 export function isAutoOpenCandidate(file: ChatFile): boolean {
   const mime = (file.mimeType || '').toLowerCase();
   const name = (file.name || '').toLowerCase();
+  const isRemote = file.source === 'url';
   if (mime.includes('html') || /\.(?:html?|xhtml)$/.test(name)) return true;
-  if (mime.includes('markdown') || /\.(?:md|markdown)$/.test(name)) return file.id.includes(':snippet:');
-  if (mime.startsWith('image/')) return false;
   if (mime === 'application/pdf') return true;
+  if (mime.includes('markdown') || /\.(?:md|markdown)$/.test(name)) {
+    return isRemote || file.id.includes(':snippet:');
+  }
+  if (mime.startsWith('image/')) return isRemote;
+  if (isRemote) return false;
   return file.content !== undefined || Boolean(file.url);
 }
 
@@ -124,14 +136,15 @@ export function extractMessageArtifacts(
  * 聊天记录（服务端记忆）里「完整、可直接预览」的内容块。
  *
  * 只认正文自带、能脱离后端独立渲染的产物：HTML 文档、```html / ```md 围栏块、
- * 长 Markdown 文档。纯文件路径不算——历史记录里的文件未必还在原工作区，
- * 点了只会得到一个读不到内容的空面板。
+ * 长 Markdown 文档，以及正文里的 http(s) 文件链接（如 workspace_url 拼出的地址）。
+ * 纯文件路径不算——历史记录里的文件未必还在原工作区，点了只会得到一个读不到内容的空面板。
  */
 export function pickInlinePreviewArtifact(
   message: Pick<ChatMessage, 'content' | 'toolEvents'>,
 ): ChatFile | null {
   const inline = extractContentArtifacts(message).filter(
-    (file) => typeof file.content === 'string' && file.content.trim().length > 0,
+    (file) => (typeof file.content === 'string' && file.content.trim().length > 0)
+      || Boolean(file.url),
   );
   return pickByRank(inline);
 }
@@ -179,7 +192,9 @@ function collectContentArtifacts(content: string, found: ChatFile[]) {
     found.push(buildTextArtifact('response.md', 'text/markdown', trimmed, 'markdown:document'));
   }
 
-  collectPathArtifacts(remainder.join(''), found);
+  const rest = remainder.join('');
+  collectUrlArtifacts(rest, found);
+  collectPathArtifacts(rest, found);
 }
 
 function looksLikeMarkdownDocument(content: string): boolean {
@@ -208,6 +223,50 @@ function collectPathArtifacts(text: string, found: ChatFile[]) {
     seen.add(key);
     added += 1;
     found.push(buildPathArtifact(value));
+  }
+}
+
+/**
+ * 正文里的 http(s) 文件链接。
+ *
+ * 只收「文件名带可预览扩展名」的链接，避免把正文里的普通网页引用都变成预览按钮；
+ * 链接本身就是可离线渲染的产物（预置 workspace_url 拼出的地址走这条）。
+ */
+function collectUrlArtifacts(text: string, found: ChatFile[]) {
+  if (!text.trim()) return;
+  const pattern = new RegExp(URL_SCAN_PATTERN.source, 'gi');
+  const seen = new Set<string>();
+  let added = 0;
+
+  for (const match of text.matchAll(pattern)) {
+    if (added >= MAX_URL_ARTIFACTS) break;
+    const url = match[0].replace(URL_TRAILING_JUNK, '');
+    if (!url) continue;
+
+    const name = fileNameFromUrl(url);
+    if (!name || !PATH_EXPRESSION.test(name)) continue;
+
+    const key = url.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    added += 1;
+    found.push(buildUrlArtifact(url, name));
+  }
+}
+
+/** 从链接里取文件名；解析失败时退化为字符串切分。 */
+function fileNameFromUrl(url: string): string {
+  let last = '';
+  try {
+    const parsed = new URL(url);
+    last = parsed.pathname.split('/').filter(Boolean).pop() || '';
+  } catch {
+    last = url.split(/[?#]/)[0].split('/').filter(Boolean).pop() || '';
+  }
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
   }
 }
 
@@ -270,6 +329,17 @@ function buildTextArtifact(name: string, mimeType: string, content: string, idSu
     content,
     encoding: 'text',
     source: 'content',
+    time: '',
+  };
+}
+
+function buildUrlArtifact(url: string, name: string): ChatFile {
+  return {
+    id: `artifact:url:${url.toLowerCase()}`,
+    name,
+    mimeType: inferMimeType(name),
+    url,
+    source: 'url',
     time: '',
   };
 }

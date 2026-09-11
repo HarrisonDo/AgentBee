@@ -60,11 +60,27 @@
 - 正文里的**完整 HTML 文档**（`<html>…</html>`，可带 doctype）
 - 正文里的 **```html 围栏块**（嵌在说明文字里也能识别；无语言围栏但内容是完整 HTML 也识别）
 - 正文里的 **```md 围栏块**，以及 ≥400 字且含 2 个以上标题的**长 Markdown 回复**
-- 正文里出现的**文件路径**（相对路径 / 绝对路径 / Windows 盘符；带协议头的 URL 会被跳过）
+- 正文里出现的**文件路径**（相对路径 / 绝对路径 / Windows 盘符）
+- 正文里的 **http(s) 文件链接**（如 `workspace_url` 拼出的 `https://…/pelican_bike.html`）
 - `tool_result` 里的 `saved_files` / `file_path` / `path` 等字段
 
 实现位置：`src/utils/artifacts.ts`（识别与排序）、`src/utils/fileUrl.ts`（路径 → URL 解析）。
+预览入口只属于 **assistant 消息**的产物：用户自己贴的链接/路径不给按钮。
 服务端记忆里的历史回复不派生大块预览入口（避免整屏按钮），改为在删除按钮旁给一个小小的预览按钮，见下节。
+
+### 远端链接产物
+
+正文里的 `http(s)` 链接，只要**文件名带可预览扩展名**（html / md / pdf / 图片 / 代码…），
+就会被收成 `source: 'url'` 的产物，直接在侧栏按 URL 渲染（iframe / img / fetch 文本），
+不需要后端配合，也不依赖 `workspace_url` 是否配置。
+
+- 无扩展名的普通网页链接（`https://site/about`、`https://site/docs/guide`）会被忽略，避免整屏按钮。
+- markdown 链接语法 `[文字](url)`、裸链接、末尾标点（`。`、`）`）都能正确切分；查询串 `?v=2#top` 按文件名判定。
+- 自动打开只对**浏览器能渲染**的远端类型生效（html / md / pdf / 图片）；远端 csv、zip、docx 等只给按钮，
+  避免点开后是一个无法渲染的空面板。
+- 同一类型下，**自带字节的内联内容优先于远端链接**（`artifactRank` 里 content +12、url +8），
+  本地能离线渲染的那份总会被选中。
+- 远端 Markdown 的 `fetch` 常被 CORS 拦，此时退回 iframe 让浏览器自己渲染（通常是纯文本）。
 
 ### 侧边栏自动打开
 
@@ -77,8 +93,9 @@
 ### 历史记录的一键预览
 
 服务端记忆里的历史消息本来只带一个「删除」按钮。现在如果这条记录的正文里含**完整可预览内容块**
-（HTML 文档 / ```html```md 围栏块 / 长 Markdown 文档），删除按钮左侧会多出一个预览按钮，
+（HTML 文档 / ```html```md 围栏块 / 长 Markdown 文档 / `http(s)` 文件链接），删除按钮左侧会多出一个预览按钮，
 点击直接在侧栏打开；纯路径不算，因为历史里的文件未必还在原工作区。
+用户那条记录不给预览按钮（删除按钮仍在）。
 
 实现：`artifacts.ts` 的 `pickInlinePreviewArtifact()` 只挑「自带字节、能脱离后端渲染」的产物，
 `ChatMessage.vue` 据此渲染 `history-preview-button`。
@@ -99,6 +116,9 @@ message 事件时主动收尾该轮次——后端对这种 `need_llm = false` �
 `file://` 无法在浏览器里加载（开发态页面是 http 源，生产态是 file:// 源，Chrome 都拦），
 `workspace_url` 目前也没有对应的 HTTP 文件服务。因此**纯路径产物只能看到路径提示**，
 要真正预览后端文件，仍需后端提供 HTTP 文件服务，或改为通过 WS 回传文件字节。
+
+不过只要 agent **把 `http(s)` 链接写进正文**，前端就能直接预览——这条路径不依赖后端改动，
+也是目前唯一能真正看到后端工作区文件的通道。
 
 
 ## 关键字段

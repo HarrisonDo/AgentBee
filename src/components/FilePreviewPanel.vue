@@ -117,6 +117,8 @@ onBeforeUnmount(() => requestController?.abort());
     <div v-else-if="sourceVisible" class="file-preview-content source"><pre>{{ previewText }}</pre></div>
     <div v-else-if="isHtml && (textContent || resolvedUrl)" class="file-preview-content html"><iframe :src="textContent ? undefined : resolvedUrl" :srcdoc="textContent || undefined" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads" :title="file.name"></iframe></div>
     <div v-else-if="isMarkdown && previewText" class="file-preview-content markdown" v-html="renderMarkdown(previewText)"></div>
+    <!-- 远端 Markdown 常被 CORS 拦住 fetch，退回 iframe 让浏览器自己渲染（通常是纯文本）。 -->
+    <div v-else-if="isMarkdown && resolvedUrl && !isLocalFile" class="file-preview-content html"><iframe :src="resolvedUrl" :title="file.name"></iframe></div>
     <div v-else-if="isImage && imageSrc" class="file-preview-content image"><img :src="imageSrc" :alt="file.name" /></div>
     <div v-else-if="isPdf && resolvedUrl" class="file-preview-content pdf"><iframe :src="resolvedUrl" :title="file.name"></iframe></div>
     <div v-else-if="isText && previewText" class="file-preview-content source"><pre>{{ previewText }}</pre></div>

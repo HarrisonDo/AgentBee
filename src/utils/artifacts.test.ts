@@ -68,18 +68,17 @@ describe('extractContentArtifacts', () => {
     expect(isAutoOpenCandidate(markdown!)).toBe(false);
   });
 
-  it('extracts workspace and absolute file paths, skipping URLs', () => {
+  it('extracts workspace and absolute file paths without folding them into URLs', () => {
     const content = [
       '产物：workspace/reports/demo.html',
       '绝对路径：D:/AgentBee/workspace/秦始皇骑北极熊.png',
-      '外部链接：https://example.test/other.html',
     ].join('\n');
     const artifacts = extractContentArtifacts({ content, toolEvents: [] });
     const names = artifacts.map((file) => file.name);
 
     expect(names).toContain('demo.html');
     expect(names).toContain('秦始皇骑北极熊.png');
-    expect(names).not.toContain('other.html');
+    expect(artifacts.every((file) => file.source === 'path')).toBe(true);
     expect(artifacts.find((file) => file.name === '秦始皇骑北极熊.png')?.mimeType).toBe('image/png');
   });
 
@@ -105,6 +104,67 @@ describe('extractContentArtifacts', () => {
     expect(image).toBeTruthy();
     expect(image?.mimeType).toBe('image/png');
   });
+});
+
+describe('extractContentArtifacts — remote links', () => {
+  const WORKSPACE_PAGE = 'https://agentbee.example.com/dd/workspace/pelican_bike.html';
+
+  it('turns a workspace URL into a previewable artifact', () => {
+    const artifacts = extractContentArtifacts({ content: `做好了：${WORKSPACE_PAGE}`, toolEvents: [] });
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]).toMatchObject({
+      name: 'pelican_bike.html',
+      mimeType: 'text/html',
+      url: WORKSPACE_PAGE,
+      source: 'url',
+    });
+    expect(artifacts[0].content).toBeUndefined();
+    expect(artifacts[0].path).toBeUndefined();
+    expect(isAutoOpenCandidate(artifacts[0])).toBe(true);
+  });
+
+  it('picks up markdown links and strips trailing punctuation', () => {
+    const fromSyntax = extractContentArtifacts({
+      content: '报告在这里：[周报](https://example.test/out/weekly.md)。',
+      toolEvents: [],
+    });
+    expect(fromSyntax.map((file) => file.url)).toEqual(['https://example.test/out/weekly.md']);
+
+    const withJunk = extractContentArtifacts({
+      content: '完成。见 (https://example.test/a/b.html)。',
+      toolEvents: [],
+    });
+    expect(withJunk.map((file) => file.url)).toEqual(['https://example.test/a/b.html']);
+  });
+
+  it('ignores links without a previewable file extension', () => {
+    const artifacts = extractContentArtifacts({
+      content: '参考 https://example.test/about 和 https://example.test/docs/guide',
+      toolEvents: [],
+    });
+    expect(artifacts).toHaveLength(0);
+  });
+
+  it('does not auto-open remote types the browser cannot render', () => {
+    const artifacts = extractContentArtifacts({ content: '数据 https://example.test/data.csv', toolEvents: [] });
+    expect(artifacts).toHaveLength(1);
+    expect(isAutoOpenCandidate(artifacts[0])).toBe(false);
+    expect(pickPrimaryArtifact(artifacts)).toBeNull();
+  });
+
+  it('prefers inline bytes over a remote link of the same type', () => {
+    const content = [
+      '```html',
+      '<html><body><h1>page</h1></body></html>',
+      '```',
+      '',
+      `预览地址：${WORKSPACE_PAGE}`,
+    ].join('\n');
+    const artifacts = extractContentArtifacts({ content, toolEvents: [] });
+    expect(artifacts.filter((file) => file.mimeType === 'text/html')).toHaveLength(2);
+    expect(pickPrimaryArtifact(artifacts)?.content).toContain('<h1>page</h1>');
+  });
+
 });
 
 describe('pickPrimaryArtifact', () => {
@@ -155,6 +215,15 @@ describe('pickInlinePreviewArtifact', () => {
       '这里是结论，'.repeat(20),
     ].join('\n\n');
     expect(pickInlinePreviewArtifact({ content, toolEvents: [] })?.name).toBe('response.md');
+  });
+
+  it('offers a preview for a workspace URL in a history record', () => {
+    const picked = pickInlinePreviewArtifact({
+      content: '页面已生成：https://agentbee.example.com/dd/workspace/pelican_bike.html',
+      toolEvents: [],
+    });
+    expect(picked?.name).toBe('pelican_bike.html');
+    expect(picked?.url).toBe('https://agentbee.example.com/dd/workspace/pelican_bike.html');
   });
 
   it('withholds the button for plain chat and path-only mentions', () => {

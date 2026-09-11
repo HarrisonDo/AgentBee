@@ -93,6 +93,8 @@ const renderedMarkdown = computed(() => {
 });
 
 const contentArtifacts = computed<ChatFile[]>(() => {
+  // 预览入口只属于 agent 的产物：用户消息里贴的链接/路径不算。
+  if (props.message.role !== 'assistant') return [];
   // 服务端记忆里的历史回复不再派生预览入口，避免整屏都是按钮。
   if (props.message.isRemoteHistory) return [];
   return extractContentArtifacts({
@@ -116,6 +118,8 @@ const previewEntries = computed<ChatFile[]>(() => {
  */
 const historyPreviewArtifact = computed<ChatFile | null>(() => {
   if (!props.message.memoryCreateId) return null;
+  // 用户那条记忆记录里贴的链接不算产物，不给预览按钮（删除按钮仍保留）。
+  if (props.message.role === 'user') return null;
   return pickInlinePreviewArtifact({
     content: props.message.content || '',
     toolEvents: props.message.toolEvents,
@@ -527,15 +531,6 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
         @click="startEdit"
       >
         <Pencil :size="14" aria-hidden="true" />
-      </button>
-      <button
-        v-if="historyPreviewArtifact"
-        type="button"
-        class="message-action-button history-preview-button"
-        :title="historyPreviewLabel()"
-        @click="previewHistoryArtifact"
-      >
-        <Eye :size="14" aria-hidden="true" />
       </button>
       <button
         v-if="message.memoryCreateId"
