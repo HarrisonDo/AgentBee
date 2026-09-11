@@ -16,7 +16,8 @@ import {
 import FoldBlock from './FoldBlock.vue';
 import ToolEventsBlock from './ToolEventsBlock.vue';
 import { useMarkdown } from '../composables/useMarkdown';
-import type { ChatFile, ChatMessage } from '../protocol/types';
+import { extractContentArtifacts } from '../utils/artifacts';
+import type { ChatFile, ChatImage, ChatMessage } from '../protocol/types';
 
 const props = defineProps<{
   labels: Record<string, string>;
@@ -40,6 +41,7 @@ const isEditing = ref(false);
 const copied = ref(false);
 const markdownBody = ref<HTMLElement | null>(null);
 const SCROLLABLE_MARKDOWN = '.markdown-table-scroll, .markdown-code-block > pre';
+const MAX_PREVIEW_ENTRIES = 4;
 let horizontalScrollPositions: number[] = [];
 
 onBeforeUpdate(() => {
@@ -90,9 +92,22 @@ const renderedMarkdown = computed(() => {
   };
 });
 
-const fullHtmlDocument = computed(() => {
-  const content = props.message.content?.trim() || '';
-  return /^(?:<!doctype\s+html\b[^>]*>\s*)?<html\b[\s\S]*<\/html>\s*$/i.test(content) ? content : '';
+const contentArtifacts = computed<ChatFile[]>(() => {
+  // 服务端记忆里的历史回复不再派生预览入口，避免整屏都是按钮。
+  if (props.message.isRemoteHistory) return [];
+  return extractContentArtifacts({
+    content: props.message.content || '',
+    toolEvents: props.message.toolEvents,
+  });
+});
+
+const previewEntries = computed<ChatFile[]>(() => {
+  const serverKeys = new Set(
+    (props.message.files || []).map((file) => file.path || file.name),
+  );
+  const entries = contentArtifacts.value
+    .filter((file) => !serverKeys.has(file.path || file.name));
+  return entries.slice(0, MAX_PREVIEW_ENTRIES);
 });
 
 const senderIdentity = computed(() => {
@@ -205,17 +220,33 @@ function formatSize(size: number) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function previewHtmlDocument() {
-  if (!fullHtmlDocument.value) return;
+function previewArtifact(file: ChatFile) {
+  emit('previewFile', { ...file, time: file.time || props.message.time });
+}
+
+function artifactEntryLabel(file: ChatFile): string {
+  const mime = (file.mimeType || '').toLowerCase();
+  if (mime.includes('html') || /\.(?:html?|xhtml)$/i.test(file.name)) return props.labels.previewHtml;
+  if (mime.includes('markdown') || /\.(?:md|markdown)$/i.test(file.name)) return props.labels.previewMarkdown;
+  return props.labels.previewFile;
+}
+
+function previewImage(image: ChatImage) {
+  const mimeType = image.src.slice(5, image.src.indexOf(';')) || 'image/png';
   emit('previewFile', {
-    id: `${props.message.id}-html`,
-    name: 'response.html',
-    mimeType: 'text/html',
-    content: fullHtmlDocument.value,
+    id: image.id,
+    name: `image-${image.id}.${extensionForMime(mimeType)}`,
+    mimeType,
+    content: image.src,
     encoding: 'text',
     source: 'content',
     time: props.message.time,
   });
+}
+
+function extensionForMime(mimeType: string): string {
+  const subtype = mimeType.split('/').pop() || 'png';
+  return subtype === 'jpeg' ? 'jpg' : subtype.replace(/[^a-z0-9]/gi, '') || 'png';
 }
 
 async function copyText(text: string) {
@@ -361,7 +392,9 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
 
       <div v-if="message.images?.length" class="message-images">
         <figure v-for="image in message.images" :key="image.id" class="message-image">
-          <img :src="image.src" :alt="image.prompt || labels.imageAlt" loading="lazy" />
+          <button type="button" class="message-image-open" :title="labels.preview" @click="previewImage(image)">
+            <img :src="image.src" :alt="image.prompt || labels.imageAlt" loading="lazy" />
+          </button>
           <figcaption v-if="image.prompt">{{ image.prompt }}</figcaption>
         </figure>
       </div>
@@ -387,10 +420,20 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
         </article>
       </div>
 
-      <button v-if="fullHtmlDocument" type="button" class="html-preview-entry" @click="previewHtmlDocument">
-        <Eye :size="15" aria-hidden="true" />
-        <span>{{ labels.previewHtml }}</span>
-      </button>
+      <div v-if="previewEntries.length" class="message-artifacts">
+        <button
+          v-for="file in previewEntries"
+          :key="file.id"
+          type="button"
+          class="html-preview-entry"
+          :title="file.name"
+          @click="previewArtifact(file)"
+        >
+          <Eye :size="15" aria-hidden="true" />
+          <span>{{ artifactEntryLabel(file) }}</span>
+          <span class="artifact-name">{{ file.name }}</span>
+        </button>
+      </div>
 
       <div v-if="isWaitingForResponse" class="message-loading" aria-live="polite">
         <span>{{ labels.waitingForResponse }}</span>

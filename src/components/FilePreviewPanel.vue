@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { Check, Copy, Download, ExternalLink, FileText, X } from 'lucide-vue-next';
 import { useMarkdown } from '../composables/useMarkdown';
+import { isLocalFileUrl, resolveFileUrl } from '../utils/fileUrl';
 import type { ChatFile } from '../protocol/types';
 
 const props = defineProps<{
@@ -27,13 +28,20 @@ const isMarkdown = computed(() => mimeType.value.includes('markdown') || /\.(?:m
 const isImage = computed(() => mimeType.value.startsWith('image/'));
 const isPdf = computed(() => mimeType.value === 'application/pdf' || /\.pdf$/i.test(props.file.name));
 const isText = computed(() => isMarkdown.value || isHtml.value || mimeType.value.startsWith('text/') || /(?:json|javascript|typescript|xml|css|yaml|toml)/i.test(mimeType.value));
-const resolvedUrl = computed(() => resolveFileUrl(props.file, props.workspacePath, props.workspaceUrl));
-const isLocalFile = computed(() => /^file:/i.test(resolvedUrl.value));
+const resolvedUrl = computed(() => resolveFileUrl(props.file, {
+  workspacePath: props.workspacePath,
+  workspaceUrl: props.workspaceUrl,
+}));
+const isLocalFile = computed(() => isLocalFileUrl(resolvedUrl.value));
 const imageSrc = computed(() => {
   if (resolvedUrl.value && !isLocalFile.value) return resolvedUrl.value;
-  if (props.file.content && /^data:/i.test(props.file.content)) return props.file.content;
-  if (!props.file.content || props.file.encoding !== 'base64') return '';
-  return /^data:/i.test(props.file.content) ? props.file.content : `data:${props.file.mimeType};base64,${props.file.content}`;
+  const content = props.file.content;
+  if (!content) return '';
+  if (/^data:/i.test(content)) return content;
+  if (props.file.encoding === 'base64') return `data:${props.file.mimeType};base64,${content}`;
+  // 文本型图片（如 SVG 源码）走 URL 编码的 data URL。
+  if (isImage.value) return `data:${props.file.mimeType};charset=utf-8,${encodeURIComponent(content)}`;
+  return '';
 });
 
 async function copySource() {
@@ -53,33 +61,6 @@ function downloadFile() {
   anchor.download = props.file.name;
   anchor.click();
   URL.revokeObjectURL(url);
-}
-
-function resolveFileUrl(file: ChatFile, workspacePath: string, workspaceUrl: string): string {
-  if (file.url?.trim()) return file.url.trim();
-  const path = file.path?.trim() || '';
-  if (!path) return '';
-  if (/^(?:https?:|data:|blob:|file:)/i.test(path)) return path;
-  const root = workspacePath.trim().replace(/[\\/]+$/, '').replace(/\\/g, '/');
-  const normalizedPath = path.replace(/\\/g, '/');
-  const isAbsolutePath = /^(?:[A-Za-z]:\/|\/|\\\\)/.test(normalizedPath);
-  if (workspaceUrl.trim() && ((!isAbsolutePath) || (root && normalizedPath.toLowerCase().startsWith(`${root.toLowerCase()}/`)))) {
-    const relative = root ? normalizedPath.slice(root.length).replace(/^\/+/, '') : normalizedPath;
-    try {
-      const base = workspaceUrl.endsWith('/') ? workspaceUrl : `${workspaceUrl}/`;
-      return new URL(relative.split('/').map(encodeURIComponent).join('/'), base).toString();
-    } catch { /* fall through to local URL */ }
-  }
-  return toFileUrl(path);
-}
-
-function toFileUrl(value: string) {
-  const normalizedValue = value.replace(/\\/g, '/');
-  if (normalizedValue.startsWith('//')) {
-    return `file://${normalizedValue.slice(2).split('/').map(encodeURIComponent).join('/')}`;
-  }
-  const normalized = normalizedValue.replace(/^\/+/, '');
-  return `file:///${normalized.split('/').map((part, index) => index === 0 && /^[A-Za-z]:$/.test(part) ? part : encodeURIComponent(part)).join('/')}`;
 }
 
 function decodeContent(file: ChatFile) {
@@ -134,7 +115,7 @@ onBeforeUnmount(() => requestController?.abort());
     </div>
     <div v-if="isLocalFile && !previewText && !imageSrc" class="file-preview-notice" role="status">{{ labels.localFileUnavailable }}<code>{{ resolvedUrl }}</code></div>
     <div v-else-if="sourceVisible" class="file-preview-content source"><pre>{{ previewText }}</pre></div>
-    <div v-else-if="isHtml && (textContent || resolvedUrl)" class="file-preview-content html"><iframe :src="textContent ? undefined : resolvedUrl" :srcdoc="textContent || undefined" sandbox="allow-scripts" :title="file.name"></iframe></div>
+    <div v-else-if="isHtml && (textContent || resolvedUrl)" class="file-preview-content html"><iframe :src="textContent ? undefined : resolvedUrl" :srcdoc="textContent || undefined" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads" :title="file.name"></iframe></div>
     <div v-else-if="isMarkdown && previewText" class="file-preview-content markdown" v-html="renderMarkdown(previewText)"></div>
     <div v-else-if="isImage && imageSrc" class="file-preview-content image"><img :src="imageSrc" :alt="file.name" /></div>
     <div v-else-if="isPdf && resolvedUrl" class="file-preview-content pdf"><iframe :src="resolvedUrl" :title="file.name"></iframe></div>

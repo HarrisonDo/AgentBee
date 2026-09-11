@@ -167,15 +167,24 @@ function isTextMime(mimeType: string): boolean {
   return mimeType.startsWith('text/') || /(?:json|javascript|xml|svg|css|yaml|toml|markdown)/i.test(mimeType);
 }
 
-function inferMimeType(name: string, eventType: string): string {
+export function inferMimeType(name: string, eventType = ''): string {
   if (eventType === 'html') return 'text/html';
   const extension = name.toLowerCase().split('.').pop() || '';
   return ({
-    html: 'text/html', htm: 'text/html', md: 'text/markdown', markdown: 'text/markdown',
-    txt: 'text/plain', json: 'application/json', csv: 'text/csv', css: 'text/css',
-    js: 'text/javascript', ts: 'text/typescript', svg: 'image/svg+xml',
-    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+    html: 'text/html', htm: 'text/html', xhtml: 'text/html',
+    md: 'text/markdown', markdown: 'text/markdown',
+    txt: 'text/plain', json: 'application/json', csv: 'text/csv', tsv: 'text/tab-separated-values',
+    css: 'text/css', log: 'text/plain',
+    js: 'text/javascript', mjs: 'text/javascript', ts: 'text/typescript',
+    py: 'text/x-python', php: 'text/x-php', sh: 'text/x-shellscript',
+    xml: 'application/xml', yaml: 'application/yaml', yml: 'application/yaml',
+    svg: 'image/svg+xml',
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+    webp: 'image/webp', bmp: 'image/bmp', ico: 'image/x-icon', avif: 'image/avif',
     pdf: 'application/pdf',
+    mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg',
+    mp4: 'video/mp4', webm: 'video/webm',
+    zip: 'application/zip', gz: 'application/gzip',
   } as Record<string, string>)[extension] || DEFAULT_FILE_MIME;
 }
 

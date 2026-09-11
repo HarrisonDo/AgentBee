@@ -1882,6 +1882,35 @@ body:has(.login-window-backdrop) {
   border-color: var(--line);
 }
 
+.message-artifacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.message-artifacts .html-preview-entry {
+  max-width: 100%;
+}
+
+.artifact-name {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+}
+
+.message-image-open {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
 .file-preview-panel {
   min-width: 0;
   min-height: 0;

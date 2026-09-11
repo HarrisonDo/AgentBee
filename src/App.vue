@@ -30,6 +30,8 @@ import {
   type ConnectionIssue,
 } from './composables/useWebSocketAgent';
 import { normalizeServerError } from './protocol/normalizers';
+import { extractMessageArtifacts, isAutoOpenCandidate } from './utils/artifacts';
+import { isBrowserLoadableUrl, resolveFileUrl } from './utils/fileUrl';
 import type {
   ChatMessage as AgentChatMessage,
   ChatFile,
@@ -593,6 +595,77 @@ function openFilePreview(file: ChatFile) {
 function closeFilePreview() {
   previewFile.value = null;
 }
+
+/**
+ * 产物能否真正被浏览器渲染。
+ * 只有内联内容，或能解析出 http(s)/data/blob 的地址才算数；
+ * 落到 file:// 的路径（浏览器读不到后端本地文件）只保留手动预览入口，不自动打开。
+ */
+function canAutoPreview(file: ChatFile): boolean {
+  if (file.content !== undefined) return true;
+  const url = resolveFileUrl(file, {
+    workspacePath: basicSettings.value.workspacePath,
+    workspaceUrl: basicSettings.value.workspaceUrl,
+  });
+  return isBrowserLoadableUrl(url);
+}
+
+/**
+ * 侧边栏自动打开：只针对「最新一轮」assistant 回复，且每个 messageId 只自动打开一次。
+ * 优先级由 artifacts.ts 的 artifactRank 决定（HTML > Markdown 文档 > PDF/其它）。
+ * 用轻量签名触发识别，避免思考流 / 状态变更反复跑正则。
+ */
+const autoPreviewOpenedIds = new Set<string>();
+let pendingAutoPreview: ChatFile | null = null;
+
+const latestAssistantMessage = computed<AgentChatMessage | null>(() => {
+  const messages = localMainMessages.value;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== 'assistant' || message.isSubTalk === 1) continue;
+    return message.isRemoteHistory ? null : message;
+  }
+  return null;
+});
+
+watch(
+  () => {
+    const message = latestAssistantMessage.value;
+    if (!message) return '';
+    return [
+      message.id,
+      message.status || '',
+      message.content?.length ?? 0,
+      message.toolEvents?.length ?? 0,
+      message.files?.length ?? 0,
+    ].join('|');
+  },
+  () => {
+    const message = latestAssistantMessage.value;
+    if (!message || autoPreviewOpenedIds.has(message.id)) return;
+    const target = extractMessageArtifacts(message)
+      .filter((file) => isAutoOpenCandidate(file) && canAutoPreview(file))[0];
+    if (!target) return;
+
+    autoPreviewOpenedIds.add(message.id);
+    // 子 agent 面板占着右侧时先挂着，等它关闭再打开，避免互相抢位置。
+    if (selectedSubAgentName.value) {
+      pendingAutoPreview = target;
+      return;
+    }
+    previewFile.value = target;
+  },
+);
+
+watch(selectedSubAgentName, (name) => {
+  if (name || !pendingAutoPreview) return;
+  if (previewFile.value) {
+    pendingAutoPreview = null;
+    return;
+  }
+  previewFile.value = pendingAutoPreview;
+  pendingAutoPreview = null;
+});
 
 const basicSettings = computed<BasicSettings>(() => ({
   apiKey: readString(agentConfig.value, ['agent_llm', 'api_key']),
