@@ -40,6 +40,7 @@ class go extends Factory
     public openai $openai;
 
     public int $wait_until  = 0;
+    public int $keep_pairs  = 2;
     public int $wait_status = self::STATUS_IDLE;
 
     public bool $ctx_warning = false;
@@ -514,32 +515,39 @@ class go extends Factory
                     }
 
                     $new_messages = $this->core->context->refreshHistory($payload['workerName']);
+                    $llm_params   = $this->utils->getChildWorker($payload['sender'], $payload['workerName'], 'llm_params');
 
-                    $llm_params    = $this->utils->getChildWorker($payload['sender'], $payload['workerName'], 'llm_params');
-                    $remain_tokens = $this->core->getMaxTokens($payload['sender'], $payload['workerName'], $llm_params);
+                    for ($i = 0; $i < 3; ++$i) {
+                        $remain_tokens = $this->core->getMaxTokens($payload['sender'], $payload['workerName'], $llm_params);
+                        $this->utils->debug('System: API Token remains ' . $remain_tokens . '.', 'trace');
 
-                    $this->utils->debug('System: API Token remains ' . $remain_tokens . '.', 'trace');
+                        if (256 < $remain_tokens) {
+                            $this->keep_pairs = 2;
+                            break;
+                        }
 
-                    if (0 >= $remain_tokens) {
-                        $remain_tokens = 12288;
-                        $this->core->context->cleanHistory($payload['workerName'], 10, 2);
+                        $this->core->context->cleanHistory($payload['workerName'], 10, $this->keep_pairs);
                         $this->utils->debug('System: Context truncated due to token overflow.', 'trace');
 
-                        $this->core->sendMessage(
-                            $payload['socket_id'],
-                            [
-                                'type'    => 'error',
-                                'message' => '抱歉，因上下文内容过长（当前模型设置: ' . ($this->utils->agent_config['agent_llm']['model_ctx'] ?? 131072) . '），系统已自动截断。咱两继续，别担心，我会跟上的。'
-                            ]
-                        );
+                        if (2 === $this->keep_pairs) {
+                            $this->core->sendMessage(
+                                $payload['socket_id'],
+                                [
+                                    'type'    => 'error',
+                                    'message' => '抱歉，因上下文内容过长（当前模型设置: ' . ($this->utils->agent_config['agent_llm']['model_ctx'] ?? 131072) . '），系统已自动截断。咱两继续，别担心，我会跟上的。'
+                                ]
+                            );
+                        }
 
                         $this->core->context->addMessageQueue(
                             $payload['workerName'],
                             [
                                 'type'    => 'text',
-                                'content' => '[系统提醒] 上下文因超限被截断，仅保留了最近几轮消息。如有必要，请自行从记忆中恢复之前的内容，无需告知用户。'
+                                'content' => '[系统提醒] 上下文因超限被截断，仅保留最近几轮消息。忽略用户请求，停止调用工具（可能导致超限），并向用户说明。如有必要，请自行从记忆中恢复之前的内容，无需告知用户。'
                             ]
                         );
+
+                        --$this->keep_pairs;
                     }
 
                     $llm_params['max_tokens'] = max(100, $remain_tokens);
@@ -692,7 +700,7 @@ class go extends Factory
                             break;
                     }
 
-                    unset($new_messages, $llm_params, $remain_tokens);
+                    unset($new_messages, $llm_params, $i, $remain_tokens);
                     break;
             }
         }

@@ -292,8 +292,8 @@ class context extends Factory
     {
         $history = $this->history[$worker_name] ?? [];
 
-        $keep_normal    = max(6, $keep_normal);
-        $max_tool_pairs = max(2, $max_tool_pairs);
+        $keep_normal    = max(4, $keep_normal);
+        $max_tool_pairs = max(0, $max_tool_pairs);
 
         $messages     = [];
         $total_normal = 0;
@@ -393,7 +393,9 @@ class context extends Factory
             ARRAY_FILTER_USE_KEY
         );
 
-        $selected_groups = array_slice($selected_groups, -$max_tool_pairs, null, true);
+        $selected_groups = 0 < $max_tool_pairs
+            ? array_slice($selected_groups, -$max_tool_pairs, null, true)
+            : [];
 
         $selected_results = [];
         foreach ($selected_groups as $group_results) {
