@@ -31,7 +31,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'saveSession',
-                'description' => '新建会话。返回：{status, session_id}或{status, error}。',
+                'description' => '按需新建会话，仅当用户明确要求"新建会话"时才调用。返回：{status, session_id}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
