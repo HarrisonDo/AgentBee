@@ -222,7 +222,6 @@ class go extends Factory
         $this->libSQLite->table('agent_session')
             ->update($session_data)
             ->where(['session_id', $session_id])
-            ->limit(1)
             ->execute();
 
         $result = ['status' => 'success', 'affected_rows' => $this->libSQLite->getAffectedRows()];
