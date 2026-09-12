@@ -148,16 +148,24 @@ class go extends Factory
             unset($main_pid);
         }
 
-        $this->utils->procMgr->writeProc(
-            $proc_idx,
-            json_encode([
-                'cmd'        => $cmd,
-                'system'     => $system,
-                'history'    => $this->core->context->getHistory($receiver),
-                'metadata'   => $metadata,
-                'llm_params' => $this->utils->getChildWorker($type, $receiver, 'llm_params')
-            ], JSON_FORMAT)
-        );
+        try {
+            $this->utils->procMgr->writeProc(
+                $proc_idx,
+                json_encode([
+                    'cmd'        => $cmd,
+                    'system'     => $system,
+                    'history'    => $this->core->context->getHistory($receiver),
+                    'metadata'   => $metadata,
+                    'llm_params' => $this->utils->getChildWorker($type, $receiver, 'llm_params')
+                ], JSON_FORMAT)
+            );
+
+            $this->core->context->message_retry = false;
+        } catch (\Throwable $throwable) {
+            $this->core->context->message_retry = true;
+            $this->utils->debug('System: process #' . $proc_idx . ' busy: ' . $throwable->getMessage(), 'trace');
+            unset($throwable);
+        }
 
         unset($type, $system, $receiver, $proc_idx, $cmd, $metadata);
     }

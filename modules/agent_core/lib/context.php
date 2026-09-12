@@ -36,6 +36,8 @@ class context extends Factory
 
     public array $message_queue = [];
 
+    public bool $message_retry = false;
+
     /**
      * @throws \ReflectionException
      */
@@ -273,6 +275,10 @@ class context extends Factory
 
         if ($count_messages > 0) {
             $this->addUserMessage($worker_name, $messages);
+        }
+
+        if ($this->message_retry) {
+            $count_messages = 1;
         }
 
         unset($worker_name, $messages, $message);
