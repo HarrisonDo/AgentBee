@@ -279,7 +279,7 @@ class go extends Factory
         }
 
         if ('' !== $session_id) {
-            $this->saveSession($session_id, mb_substr($content, 0, 8, 'UTF-8'));
+            $this->saveSession($session_id, mb_substr($content, 0, 16, 'UTF-8'));
         }
 
         $this->libSQLite->table('agent_memory')

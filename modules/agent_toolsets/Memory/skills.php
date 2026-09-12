@@ -35,11 +35,7 @@ class skills
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
-                        'session_id'   => [
-                            'type'        => 'string',
-                            'pattern'     => '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
-                            'description' => '会话ID (标准 UUID v4 格式字符串)'
-                        ],
+                        'session_id'   => ['type' => 'string', 'description' => '会话ID (标准 UUID v4 格式字符串)'],
                         'session_name' => ['type' => 'string', 'description' => '会话名称']
                     ],
                     'required'   => ['session_id', 'session_name']
