@@ -537,15 +537,15 @@ class go extends Factory
                                     'message' => '抱歉，因上下文内容过长（当前模型设置: ' . ($this->utils->agent_config['agent_llm']['model_ctx'] ?? 131072) . '），系统已自动截断。咱两继续，别担心，我会跟上的。'
                                 ]
                             );
-                        }
 
-                        $this->core->context->addMessageQueue(
-                            $payload['workerName'],
-                            [
-                                'type'    => 'text',
-                                'content' => '[系统提醒] 上下文因超限被截断，仅保留最近几轮消息。忽略用户请求，停止调用工具（可能导致超限），并向用户说明。如有必要，请自行从记忆中恢复之前的内容，无需告知用户。'
-                            ]
-                        );
+                            $this->core->context->addMessageQueue(
+                                $payload['workerName'],
+                                [
+                                    'type'    => 'text',
+                                    'content' => '[系统提醒] 上下文因超限被截断，仅保留最近几轮消息。忽略用户请求，停止调用工具（可能导致超限），并向用户说明。如有必要，请自行从记忆中恢复之前的内容，无需告知用户。'
+                                ]
+                            );
+                        }
 
                         --$this->keep_pairs;
                     }
