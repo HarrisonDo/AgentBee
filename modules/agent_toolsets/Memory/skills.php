@@ -35,7 +35,7 @@ class skills
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
-                        'session_id'   => ['type' => 'string', 'description' => '会话ID'],
+                        'session_id'   => ['type' => 'string', 'description' => '会话ID (UUID)'],
                         'session_name' => ['type' => 'string', 'description' => '会话名称']
                     ],
                     'required'   => ['session_id', 'session_name']
@@ -60,7 +60,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'updateSession',
-                'description' => '按session_id更新会话名称与状态。返回：{status, affected_rows}。',
+                'description' => '按会话ID更新会话名称与状态。返回：{status, affected_rows}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
