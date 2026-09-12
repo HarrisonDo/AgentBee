@@ -121,6 +121,8 @@ class go extends Factory
 
         $this->initDatabase();
         $this->purgeExpired();
+
+        $this->readSession(0);
     }
 
     // =========================================================================
@@ -153,30 +155,40 @@ class go extends Factory
             ? ['status' => 'success', 'session_id' => $session_id]
             : ['status' => 'error', 'error' => '会话[#' . $session_id . ']保存失败'];
 
+        $this->session_list[] = $session_id;
+
         unset($session_id, $session_name);
         return $result;
     }
 
     /**
-     * @param int $session_status
+     * @param int $session_status 0：全部；1：启用；2：禁用
      *
      * @return array
      * @throws \ReflectionException
      */
     public function readSession(int $session_status = 1): array
     {
-        if (1 !== $session_status) {
+        if (!in_array($session_status, [0, 1, 2], true)) {
             $session_status = 0;
         }
 
-        $sessions = $this->libSQLite->table('agent_session')
-            ->select('session_id', 'session_name', 'create_time')
-            ->where(['session_status', $session_status])
-            ->order(['create_time' => 'DESC'])
-            ->fetchAll();
+        $query = $this->libSQLite
+            ->table('agent_session')
+            ->select('session_id', 'session_name', 'session_status', 'create_time');
+
+        if (0 !== $session_status) {
+            $query->where(['session_status', $session_status]);
+        }
+
+        $sessions = $query->order(['create_time' => 'DESC'])->fetchAll();
 
         foreach ($sessions as $id => $session) {
-            $sessions[$id]['create_time'] = date('Y-m-d H:i:s', $session['create_time']);
+            $sessions[$id]['create_time']    = date('Y-m-d H:i:s', $session['create_time']);
+            $sessions[$id]['session_status'] = match ($session['session_status']) {
+                1 => '启用',
+                default => '已删除'
+            };
         }
 
         $this->session_list = array_column($sessions, 'session_id');
@@ -195,24 +207,27 @@ class go extends Factory
      * @return string[]
      * @throws \ReflectionException
      */
-    public function updateSession(string $session_id, string $session_name, int $session_status = 1): array
+    public function updateSession(string $session_id, string $session_name = '', int $session_status = 1): array
     {
         if (1 !== $session_status) {
-            $session_status = 0;
+            $session_status = 2;
+        }
+
+        $session_data = ['session_status' => $session_status];
+
+        if ('' !== $session_name) {
+            $session_data['session_name'] = $session_name;
         }
 
         $this->libSQLite->table('agent_session')
-            ->update([
-                'session_name'   => $session_name,
-                'session_status' => $session_status
-            ])
+            ->update($session_data)
             ->where(['session_id', $session_id])
             ->limit(1)
             ->execute();
 
         $result = ['status' => 'success', 'affected_rows' => $this->libSQLite->getAffectedRows()];
 
-        unset($session_id, $session_name, $session_status);
+        unset($session_id, $session_name, $session_status, $session_data);
         return $result;
     }
 
@@ -260,6 +275,8 @@ class go extends Factory
 
         if (in_array($level, ['important', 'system'], true)) {
             $session_id = '';
+        } elseif ('' === $session_id) {
+            return ['status' => 'error', 'error' => '缺少会话ID'];
         }
 
         if ('' !== $session_id) {

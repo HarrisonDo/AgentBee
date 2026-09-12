@@ -236,6 +236,11 @@ class go extends Factory
             $system_default .= "\n" . implode("\n", $memory);
         }
 
+        $system_default .= "\n\n" . '---' . "\n\n";
+        $system_default .= '' === $this->utils->session_id
+            ? '【会话ID】未分配，本次禁止存取 daily/misc 记忆。'
+            : '【会话ID】`' . $this->utils->session_id . '`，操作存取记忆时必传。';
+
         unset($system_memory, $memory, $content);
         return $system_default;
     }
@@ -405,7 +410,7 @@ class go extends Factory
 
                             case 'save':
                                 $this->utils->memory_buffer .= $payload['data'];
-                                $this->memory->save('misc', 'assistant', $this->utils->memory_buffer);
+                                $this->memory->save('misc', 'assistant', $this->utils->memory_buffer, 0, $this->utils->session_id);
                                 $this->utils->memory_buffer = '';
                                 break;
                         }
@@ -855,6 +860,8 @@ class go extends Factory
                 $data['content']['memory'] = $this->memory;
             }
 
+            $this->utils->session_id = $data['sessionId'] ?? '';
+
             $result = $this->message->$type_method($socket_id, $data['content']);
 
             if (!$result['need_llm']) {
@@ -884,7 +891,7 @@ class go extends Factory
             }
 
             if (isset($result['saves']) && [] !== $result['saves']) {
-                $this->memory->save('misc', 'user', implode(' ', $result['saves']));
+                $this->memory->save('misc', 'user', implode(' ', $result['saves']), 0, $this->utils->session_id);
             }
 
             if (isset($result['errors']) && [] !== $result['errors']) {

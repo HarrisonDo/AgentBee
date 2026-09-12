@@ -65,10 +65,10 @@ class skills
                     'type'       => 'object',
                     'properties' => [
                         'session_id'     => ['type' => 'string', 'description' => '会话ID'],
-                        'session_name'   => ['type' => 'string', 'description' => '新会话名称'],
-                        'session_status' => ['type' => 'integer', 'default' => 1, 'description' => '会话状态：1=启用(默认)；0=禁用']
+                        'session_name'   => ['type' => 'string', 'default' => '', 'description' => '新会话名称(可选，为空表示不修改)'],
+                        'session_status' => ['type' => 'integer', 'default' => 1, 'description' => '会话状态：1=启用(默认)；2=禁用']
                     ],
-                    'required'   => ['session_id', 'session_name']
+                    'required'   => ['session_id']
                 ],
             ],
         ],

@@ -154,13 +154,31 @@ class message extends Factory
 
         switch ($act) {
             case 'read':
-                $content        = $data_content['memory']->read('misc', 0, 0, $data_content['length'], $data_content['create_id'] ?? 0);
+                $content = $data_content['memory']->read('misc', 0, 0, $data_content['length'], $this->utils->session_id, $data_content['create_id'] ?? 0);
+
                 $content['act'] = $act;
                 break;
+
             case 'delete':
                 $content = [] !== $data_content['create_ids']
                     ? $data_content['memory']->delete('misc', $data_content['create_ids'])
                     : ['status' => 'error', 'error' => '缺少目标记忆ID'];
+
+                $content['act'] = $act;
+                break;
+
+            case 'readSession':
+                $content = $data_content['memory']->readSession(1);
+
+                $content['act'] = $act;
+                break;
+
+            case 'deleteSession':
+                if (isset($data_content['sessionId']) && '' !== $data_content['sessionId']) {
+                    $content = $data_content['memory']->updateSession($data_content['sessionId'], '', 2);
+                } else {
+                    $content = ['status' => 'error', 'error' => '缺少会话ID'];
+                }
 
                 $content['act'] = $act;
                 break;

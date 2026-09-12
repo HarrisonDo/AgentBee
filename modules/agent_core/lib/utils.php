@@ -40,9 +40,9 @@ class utils extends Factory
     public int $proc_idx   = 10;
     public int $worker_idx = 1000;
 
-    public array $agent_config;
-
     public string $session_id;
+
+    public array  $agent_config;
     public string $pid_file_path;
 
     public string $memory_buffer = '';
@@ -66,7 +66,6 @@ class utils extends Factory
         $this->config    = config::new();
 
         $this->agent_config  = $this->config->get();
-        $this->session_id    = hash('md5', uniqid('', true));
         $this->pid_file_path = $this->config->config_dir . DIRECTORY_SEPARATOR . 'proc' . DIRECTORY_SEPARATOR;
 
         if (!is_dir($this->pid_file_path)) {
@@ -675,21 +674,36 @@ class utils extends Factory
 
         $prompts[] = '## 记忆';
         $prompts[] = '- **层级（level）**：';
-        $prompts[] = '  - `system`：仅系统配置/人设/身份/规则/权限/边界/约束，禁止写入用户请求/偏好/助手推断。';
-        $prompts[] = '  - `important`：关键事实/用户偏好/学习内容/重要结果/长期规划/经确认知识。';
-        $prompts[] = '  - `daily`：短期有价值的决策/结论/进展/待办/对话/工具结果。';
-        $prompts[] = '  - `misc`：系统自动记录，禁手写。';
+        $prompts[] = '  - `system`：系统配置/人设/身份/规则/权限/边界/约束/特别重要内容。全局共享，系统级加载。';
+        $prompts[] = '  - `important`：关键事实/用户偏好/学习内容/重要结果/长期规划/经确认知识。全局共享，不关联会话。';
+        $prompts[] = '  - `daily`：有价值的决策/结论/进展/待办/对话/工具结果。**会话隔离**，必传会话ID。';
+        $prompts[] = '  - `misc`：系统自动记录，禁手写。**会话隔离**，读取必传会话ID。';
 
         $prompts[] = '- **来源（role）**：';
         $prompts[] = '  - `user`：用户陈述/要求/确认/提供的事实。';
         $prompts[] = '  - `assistant`：助手推导/建议/结论/进展。';
         $prompts[] = '  - `system`：系统配置/规则/环境/人设。';
         $prompts[] = '  - `tool`：工具直接结果，未经助手加工。';
-        $prompts[] = '  用户事实即使由助手归纳，role仍为`user`；内容属系统配置/规则时用`system`。';
+        $prompts[] = '  用户事实即使由助手归纳，role仍为`user`；系统配置/规则用`system`。';
 
-        $prompts[] = '- **写入**：关键节点主动保存，按层级分类写入，内容详细事实化；已有记忆优先更新，避免重复新建。闲聊/浅显内容/工具调用过程不存。';
-        $prompts[] = '- **读取**：新会话先读10条misc建立上下文；不足时按offset每次追加5条（上限3次）；需某天完整对话流时按date读misc（原文）或daily（总结），当日为空则向前回溯1-2天。同参数禁止重复调用。';
-        $prompts[] = '- **搜索**：上下文未覆盖用户问题时搜索全部层级，关键词取1-5个最具辨识度的词（避免泛化词）。多词同时命中用and、任一命中用or；搜完即止，换词重试3次仍无记录则告知"记忆中无相关记录"。命中后如需补全完整上下文，按命中记录的日期读取当日misc/daily。同参数禁止重复调用。';
+        $prompts[] = '- **会话ID**：由系统提示词提供。`daily`/`misc`读写必传原值；`system`/`important`不要传。';
+
+        $prompts[] = '- **写入**：关键节点主动保存，按层级分类，内容详细事实化；已有记忆优先更新，避免重复新建。闲聊/浅显/工具调用过程不存。写`daily`/`misc`必传会话ID。';
+
+        $prompts[] = '- **读取**：';
+        $prompts[] = '  1. 新会话先读`misc`（传会话ID）10条建上下文；不足按offset每次+5，最多3次；无记录则跳过。';
+        $prompts[] = '  2. 仍不足转入"搜索"。';
+        $prompts[] = '  - 需某天完整对话流时，按date读`misc`（原文）/`daily`（总结），当日为空向前回溯1-2天。';
+        $prompts[] = '  - 同参数禁止重复调用。';
+
+        $prompts[] = '- **搜索**：上下文不足时用。逐层递进，命中即止（不跳级、不并行）。';
+        $prompts[] = '  1. 搜`misc`（传会话ID）。';
+        $prompts[] = '  2. 搜`daily`（传会话ID）。';
+        $prompts[] = '  3. 仍无，搜`important`（不传）。';
+        $prompts[] = '  4. 兜底搜`all`（传会话ID，全层级合并）。';
+        $prompts[] = '  5. 关键词1-5个最具辨识度（避泛化）；多词全中and/任一命中or；整链最多换词3次，仍无则回"记忆中无相关记录"。';
+        $prompts[] = '  6. 命中后需补全上下文，按命中日期读当日`misc`/`daily`（同读取-补充），不足再继续搜。';
+        $prompts[] = '  7. 同参数禁止重复调用。';
 
         $skills = $this->fetchSkills('skills');
         if ('' !== $skills) {
