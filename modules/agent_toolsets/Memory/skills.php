@@ -3,8 +3,9 @@
 /**
  * Memory module for AgentBee - Tools Meta Definition
  *
- * This module provides memory management tools (save/read/search/update/delete)
- * and task scheduling (add/remove/list/run tasks) for Agents.
+ * This module provides memory management tools (save/read/search/update/delete),
+ * session management (save/read/update session) and task scheduling
+ * (add/remove/list/run tasks) for Agents.
  *
  * Copyright 2026 AgentBee self developed
  *
@@ -29,14 +30,61 @@ class skills
         [
             'type'     => 'function',
             'function' => [
+                'name'        => 'saveSession',
+                'description' => '新建会话。返回：{status, session_id}或{status, error}。',
+                'parameters'  => [
+                    'type'       => 'object',
+                    'properties' => [
+                        'session_id'   => ['type' => 'string', 'description' => '会话ID'],
+                        'session_name' => ['type' => 'string', 'description' => '会话名称']
+                    ],
+                    'required'   => ['session_id', 'session_name']
+                ],
+            ],
+        ],
+        [
+            'type'     => 'function',
+            'function' => [
+                'name'        => 'readSession',
+                'description' => '读取会话列表。返回：{status, sessions: [{session_id, session_name, create_time}]}。',
+                'parameters'  => [
+                    'type'       => 'object',
+                    'properties' => [
+                        'session_status' => ['type' => 'integer', 'default' => 1, 'description' => '会话状态：1=启用(默认)；0=禁用']
+                    ],
+                    'required'   => []
+                ],
+            ],
+        ],
+        [
+            'type'     => 'function',
+            'function' => [
+                'name'        => 'updateSession',
+                'description' => '按session_id更新会话名称与状态。返回：{status, affected_rows}。',
+                'parameters'  => [
+                    'type'       => 'object',
+                    'properties' => [
+                        'session_id'     => ['type' => 'string', 'description' => '会话ID'],
+                        'session_name'   => ['type' => 'string', 'description' => '新会话名称'],
+                        'session_status' => ['type' => 'integer', 'default' => 1, 'description' => '会话状态：1=启用(默认)；0=禁用']
+                    ],
+                    'required'   => ['session_id', 'session_name']
+                ],
+            ],
+        ],
+        [
+            'type'     => 'function',
+            'function' => [
                 'name'        => 'save',
                 'description' => '新增记忆。level按内容：system(人设/规则)、important(事实/偏好)、daily(日常/结果)；role按来源：system/user/assistant/tool。内容需压缩提炼。返回：{status, create_id}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
-                        'level'   => ['type' => 'string', 'enum' => ['system', 'important', 'daily'], 'description' => '层级'],
-                        'role'    => ['type' => 'string', 'enum' => ['user', 'assistant', 'system', 'tool'], 'description' => '来源角色'],
-                        'content' => ['type' => 'string', 'description' => '记忆内容']
+                        'level'      => ['type' => 'string', 'enum' => ['system', 'important', 'daily'], 'description' => '层级'],
+                        'role'       => ['type' => 'string', 'enum' => ['user', 'assistant', 'system', 'tool'], 'description' => '来源角色'],
+                        'content'    => ['type' => 'string', 'description' => '记忆内容'],
+                        'date'       => ['type' => 'integer', 'default' => 0, 'description' => '日期：YYYYMMDD (0=当天)'],
+                        'session_id' => ['type' => 'string', 'default' => '', 'description' => '会话ID(可选，默认空)']
                     ],
                     'required'   => ['level', 'role', 'content']
                 ],
@@ -46,7 +94,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'update',
-                'description' => '更新记忆(按create_id)，可改level/role/content/expire_at。仅实质变化时调用，内容需压缩提炼。返回：{status, affected_rows}或{status, error}。',
+                'description' => '更新记忆(按create_id)，可改level/role/content/date/expire_at。仅实质变化时调用，内容需压缩提炼。返回：{status, affected_rows}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
@@ -54,6 +102,7 @@ class skills
                         'level'     => ['type' => 'string', 'enum' => ['system', 'important', 'daily', 'misc'], 'description' => '新层级'],
                         'role'      => ['type' => 'string', 'enum' => ['user', 'assistant', 'system', 'tool'], 'description' => '新角色'],
                         'content'   => ['type' => 'string', 'description' => '新内容'],
+                        'date'      => ['type' => 'integer', 'default' => 0, 'description' => '日期：YYYYMMDD (0=保留原值)'],
                         'expire_at' => ['type' => 'string', 'default' => '', 'description' => '过期时间：YYYY-mm-dd HH:ii:ss']
                     ],
                     'required'   => ['create_id', 'level', 'role', 'content']
@@ -64,14 +113,16 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'read',
-                'description' => '读取记忆。level指定层级；date(YYYYMMDD)按日读取，不传取最新；offset起始位置、length条数（0=全部）。返回：{status, data: [{level, role, content, create_id, create_time}], total}或{status, error}。',
+                'description' => '读取记忆。level指定层级；date(YYYYMMDD)按日读取，不传取最新；session_id限定会话（system/important不受会话过滤，daily/misc受会话过滤）；offset起始位置、length条数（0=全部）。返回：{status, data: [{level, role, content, create_id, create_time, session_id}], total}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
-                        'level'  => ['type' => 'string', 'enum' => ['system', 'important', 'daily', 'misc', 'all'], 'description' => '层级(含all)'],
-                        'date'   => ['type' => 'integer', 'default' => 0, 'description' => '指定日期：YYYYMMDD (0=不限)'],
-                        'offset' => ['type' => 'integer', 'default' => 0, 'description' => '偏移量'],
-                        'length' => ['type' => 'integer', 'default' => 10, 'description' => '条数（0为全部，建议5-20）']
+                        'level'      => ['type' => 'string', 'enum' => ['system', 'important', 'daily', 'misc', 'all'], 'description' => '层级(含all)'],
+                        'date'       => ['type' => 'integer', 'default' => 0, 'description' => '指定日期：YYYYMMDD (0=不限)'],
+                        'offset'     => ['type' => 'integer', 'default' => 0, 'description' => '偏移量'],
+                        'length'     => ['type' => 'integer', 'default' => 10, 'description' => '条数（0为全部，建议5-20）'],
+                        'session_id' => ['type' => 'string', 'default' => '', 'description' => '会话ID(可选，默认空=不限)'],
+                        'create_id'  => ['type' => 'integer', 'default' => 0, 'description' => '游标：仅取create_id小于此值的记录(0=不限)']
                     ],
                     'required'   => ['level']
                 ],
@@ -81,7 +132,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'search',
-                'description' => '全文搜索记忆。关键词数量不限，建议用3-5个特征词，mode控制匹配逻辑（or任一/and全中），level指定层级或all全搜。返回结果过多时，可用date_start/date_end缩小时间窗范围。返回：{status, data: [{...}], total}或{status, error}。',
+                'description' => '全文搜索记忆。关键词数量不限，建议用3-5个特征词，mode控制匹配逻辑（or任一/and全中），level指定层级或all全搜。可用session_id限定会话（system/important不受会话过滤，daily/misc受会话过滤）。返回结果过多时，可用date_start/date_end缩小时间窗范围。返回：{status, data: [{...}], total}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
@@ -91,7 +142,8 @@ class skills
                         'date_start' => ['type' => 'integer', 'default' => 0, 'description' => '起始日期：YYYYMMDD (0=不限)'],
                         'date_end'   => ['type' => 'integer', 'default' => 0, 'description' => '结束日期：YYYYMMDD (0=不限)'],
                         'offset'     => ['type' => 'integer', 'default' => 0, 'description' => '偏移量'],
-                        'length'     => ['type' => 'integer', 'default' => 20, 'description' => '条数（0=全部，建议10-30）']
+                        'length'     => ['type' => 'integer', 'default' => 20, 'description' => '条数（0=全部，建议10-30）'],
+                        'session_id' => ['type' => 'string', 'default' => '', 'description' => '会话ID(可选，默认空=不限)']
                     ],
                     'required'   => ['level', 'keywords']
                 ],
@@ -101,7 +153,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'delete',
-                'description' => '删除记忆。传create_ids按ID精确删；否则按层级+时间字符串(start/end_time)+关键词组合删。返回：{status, deleted}或{status, error}。',
+                'description' => '删除记忆。传create_ids按ID精确删；否则按层级+时间字符串(start/end_time)+关键词+session_id组合删（system/important不受会话过滤，daily/misc受会话过滤）。返回：{status, deleted}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
@@ -110,7 +162,8 @@ class skills
                         'start_time' => ['type' => 'string', 'description' => '开始时间：YYYY-mm-dd HH:ii:ss'],
                         'end_time'   => ['type' => 'string', 'description' => '结束时间：YYYY-mm-dd HH:ii:ss'],
                         'keywords'   => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => '关键词数组（与时间范围AND）'],
-                        'mode'       => ['type' => 'string', 'enum' => ['and', 'or'], 'default' => 'and', 'description' => '关键词匹配模式']
+                        'mode'       => ['type' => 'string', 'enum' => ['and', 'or'], 'default' => 'and', 'description' => '关键词匹配模式'],
+                        'session_id' => ['type' => 'string', 'default' => '', 'description' => '会话ID(可选，默认空=不限)']
                     ],
                     'required'   => ['level']
                 ],

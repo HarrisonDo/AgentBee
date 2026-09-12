@@ -40,19 +40,30 @@ class go extends Factory
     private string $db_path;
     private bool   $fts_enabled = true;
 
+    private array $session_list = [];
+
+    private const ROLES      = ['system', 'user', 'assistant', 'tool'];
     private const LEVELS     = ['system', 'important', 'daily', 'misc'];
-    private const ROLES      = ['user', 'assistant', 'system', 'tool'];
     private const ALL_LEVELS = ['system', 'important', 'daily', 'misc', 'all'];
+
+    private const DDL_SESSION = '
+        CREATE TABLE IF NOT EXISTS agent_session (
+            session_id   TEXT PRIMARY KEY,
+            session_name TEXT NOT NULL,
+            session_status  INTEGER NOT NULL,
+            create_time  INTEGER NOT NULL
+        )';
 
     private const DDL_MEMORY = '
         CREATE TABLE IF NOT EXISTS agent_memory (
-            create_id INTEGER PRIMARY KEY,
-            expire_at INTEGER DEFAULT 0,
-            date_key  INTEGER NOT NULL,
-            level     TEXT NOT NULL,
-            role      TEXT NOT NULL,
-            content   TEXT NOT NULL,
-            tokens    TEXT NOT NULL
+            create_id  INTEGER PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            date_key   INTEGER NOT NULL,
+            expire_at  INTEGER DEFAULT 0,
+            level      TEXT NOT NULL,
+            role       TEXT NOT NULL,
+            content    TEXT NOT NULL,
+            tokens     TEXT NOT NULL
         )';
 
     private const DDL_TASK = '
@@ -65,10 +76,13 @@ class go extends Factory
         )';
 
     private const DDL_INDEXES = [
+        'CREATE INDEX IF NOT EXISTS idx_session_status ON agent_session(session_status)',
+        'CREATE INDEX IF NOT EXISTS idx_create_time ON agent_session(create_time)',
         'CREATE INDEX IF NOT EXISTS idx_mem_date ON agent_memory(date_key)',
         'CREATE INDEX IF NOT EXISTS idx_mem_expire ON agent_memory(expire_at)',
         'CREATE INDEX IF NOT EXISTS idx_mem_level_create ON agent_memory(level, create_id DESC)',
         'CREATE INDEX IF NOT EXISTS idx_mem_lvl_date_create ON agent_memory(level, date_key, create_id DESC)',
+        'CREATE INDEX IF NOT EXISTS idx_mem_session ON agent_memory(session_id)',
         'CREATE INDEX IF NOT EXISTS idx_task_runat ON agent_task(run_at)',
     ];
 
@@ -110,6 +124,99 @@ class go extends Factory
     }
 
     // =========================================================================
+    //  Session CRUD
+    // =========================================================================
+
+    /**
+     * @param string $session_id
+     * @param string $session_name
+     *
+     * @return string[]
+     * @throws \ReflectionException
+     */
+    public function saveSession(string $session_id, string $session_name): array
+    {
+        if (in_array($session_id, $this->session_list, true)) {
+            return ['status' => 'success', 'session_id' => $session_id];
+        }
+
+        $saved = $this->libSQLite->table('agent_session')
+            ->insert([
+                'session_id'     => $session_id,
+                'session_name'   => $session_name,
+                'session_status' => 1,
+                'create_time'    => time(),
+            ])
+            ->execute();
+
+        $result = $saved
+            ? ['status' => 'success', 'session_id' => $session_id]
+            : ['status' => 'error', 'error' => '会话[#' . $session_id . ']保存失败'];
+
+        unset($session_id, $session_name);
+        return $result;
+    }
+
+    /**
+     * @param int $session_status
+     *
+     * @return array
+     * @throws \ReflectionException
+     */
+    public function readSession(int $session_status = 1): array
+    {
+        if (1 !== $session_status) {
+            $session_status = 0;
+        }
+
+        $sessions = $this->libSQLite->table('agent_session')
+            ->select('session_id', 'session_name', 'create_time')
+            ->where(['session_status', $session_status])
+            ->order(['create_time' => 'DESC'])
+            ->fetchAll();
+
+        foreach ($sessions as $id => $session) {
+            $sessions[$id]['create_time'] = date('Y-m-d H:i:s', $session['create_time']);
+        }
+
+        $this->session_list = array_column($sessions, 'session_id');
+
+        $result = ['status' => 'success', 'sessions' => $sessions];
+
+        unset($session_status, $sessions, $id, $session);
+        return $result;
+    }
+
+    /**
+     * @param string $session_id
+     * @param string $session_name
+     * @param int    $session_status
+     *
+     * @return string[]
+     * @throws \ReflectionException
+     */
+    public function updateSession(string $session_id, string $session_name, int $session_status = 1): array
+    {
+        if (1 !== $session_status) {
+            $session_status = 0;
+        }
+
+        $this->libSQLite->table('agent_session')
+            ->update([
+                'session_name'   => $session_name,
+                'session_status' => $session_status
+            ])
+            ->where(['session_id', $session_id])
+            ->limit(1)
+            ->execute();
+
+        $result = ['status' => 'success', 'affected_rows' => $this->libSQLite->getAffectedRows()];
+
+        unset($session_id, $session_name, $session_status);
+        return $result;
+    }
+
+    // =========================================================================
     //  Memory CRUD
     // =========================================================================
 
@@ -117,13 +224,17 @@ class go extends Factory
      * @param string $level
      * @param string $role
      * @param string $content
+     * @param int    $date
+     * @param string $session_id
      *
-     * @return array
+     * @return array|string[]
      * @throws \ReflectionException
      */
-    public function save(string $level, string $role, string $content): array
+    public function save(string $level, string $role, string $content, int $date = 0, string $session_id = ''): array
     {
-        if ('' === trim($content)) {
+        $content = trim($content);
+
+        if ('' === $content) {
             return ['status' => 'error', 'error' => '内容为空'];
         }
 
@@ -135,7 +246,10 @@ class go extends Factory
             return ['status' => 'error', 'error' => '无效角色：' . $role . '，可用：user/assistant/system/tool'];
         }
 
-        $date_key  = (int)date('Ymd');
+        if (0 === $date) {
+            $date = (int)date('Ymd');
+        }
+
         $create_id = $this->generateMicroTimestamp('agent_memory');
 
         $expire_at = 'misc' === $level
@@ -144,19 +258,30 @@ class go extends Factory
             ? (time() + $this->utils->agent_config['misc_keep_days'] * 86400)
             : 0;
 
-        $this->libSQLite->table('agent_memory')->insert([
-            'create_id' => $create_id,
-            'expire_at' => $expire_at,
-            'date_key'  => $date_key,
-            'level'     => $level,
-            'role'      => $role,
-            'content'   => $content,
-            'tokens'    => $this->buildTokens($content)
-        ])->execute();
+        if (in_array($level, ['important', 'system'], true)) {
+            $session_id = '';
+        }
+
+        if ('' !== $session_id) {
+            $this->saveSession($session_id, mb_substr($content, 0, 8, 'UTF-8'));
+        }
+
+        $this->libSQLite->table('agent_memory')
+            ->insert([
+                'create_id'  => $create_id,
+                'session_id' => $session_id,
+                'expire_at'  => $expire_at,
+                'date_key'   => $date,
+                'level'      => $level,
+                'role'       => $role,
+                'content'    => $content,
+                'tokens'     => $this->buildTokens($content)
+            ])
+            ->execute();
 
         $result = ['status' => 'success', 'create_id' => $create_id];
 
-        unset($level, $role, $content, $create_id, $expire_at, $date_key);
+        unset($level, $role, $content, $date, $session_id, $create_id, $expire_at);
         return $result;
     }
 
@@ -165,14 +290,17 @@ class go extends Factory
      * @param string $level
      * @param string $role
      * @param string $content
+     * @param int    $date
      * @param string $expire_at
      *
      * @return array|string[]
      * @throws \ReflectionException
      */
-    public function update(int $create_id, string $level, string $role, string $content, string $expire_at = ''): array
+    public function update(int $create_id, string $level, string $role, string $content, int $date = 0, string $expire_at = ''): array
     {
-        if ('' === trim($content)) {
+        $content = trim($content);
+
+        if ('' === $content) {
             return ['status' => 'error', 'error' => '内容为空'];
         }
 
@@ -195,17 +323,23 @@ class go extends Factory
         }
 
         $record = $this->libSQLite->table('agent_memory')
-            ->select('create_id')
-            ->where(['create_id', '=', $create_id])
+            ->select('create_id', 'session_id', 'date_key')
+            ->where(['create_id', $create_id])
+            ->limit(1)
             ->fetch();
 
         if ([] === $record) {
             return ['status' => 'error', 'error' => '记录不存在：' . $create_id];
         }
 
+        if (0 === $date) {
+            $date = $record['date_key'];
+        }
+
         $this->libSQLite->table('agent_memory')
-            ->where(['create_id', '=', $create_id])
+            ->where(['create_id', $create_id])
             ->update([
+                'date_key'  => $date,
                 'expire_at' => $expire_at,
                 'level'     => $level,
                 'role'      => $role,
@@ -214,7 +348,7 @@ class go extends Factory
             ])
             ->execute();
 
-        unset($create_id, $level, $role, $content, $expire_at, $record);
+        unset($create_id, $level, $role, $content, $date, $expire_at, $record);
         return ['status' => 'success', 'affected_rows' => $this->libSQLite->getAffectedRows()];
     }
 
@@ -223,12 +357,13 @@ class go extends Factory
      * @param int    $date
      * @param int    $offset
      * @param int    $length
+     * @param string $session_id
      * @param int    $create_id
      *
-     * @return array
+     * @return array|string[]
      * @throws \ReflectionException
      */
-    public function read(string $level, int $date = 0, int $offset = 0, int $length = 10, int $create_id = 0): array
+    public function read(string $level, int $date = 0, int $offset = 0, int $length = 10, string $session_id = '', int $create_id = 0): array
     {
         if (!in_array($level, self::ALL_LEVELS)) {
             return ['status' => 'error', 'error' => '无效层级：' . $level . '，可用：system/important/daily/misc/all'];
@@ -236,14 +371,25 @@ class go extends Factory
 
         $query = $this->libSQLite
             ->table('agent_memory')
-            ->select('level', 'role', 'content', 'create_id');
+            ->select('level', 'role', 'content', 'create_id', 'session_id');
 
         if ('all' !== $level) {
-            $query->where(['level', '=', $level]);
+            $query->where(['level', $level]);
+
+            if ('' !== $session_id && in_array($level, ['daily', 'misc'], true)) {
+                $query->where(['session_id', $session_id]);
+            }
+        } else {
+            if ('' !== $session_id) {
+                $query->where(['level', 'system']);
+                $query->or(['level', 'important']);
+                $query->or(['level', 'daily'], ['session_id', $session_id]);
+                $query->or(['level', 'misc'], ['session_id', $session_id]);
+            }
         }
 
         if (0 < $date) {
-            $query->where(['date_key', '=', $date]);
+            $query->where(['date_key', $date]);
         }
 
         if (0 < $create_id) {
@@ -265,7 +411,7 @@ class go extends Factory
 
         $result = ['status' => 'success', 'data' => $data, 'total' => $query->getLastFoundRows()];
 
-        unset($query, $date_int, $data, $item);
+        unset($level, $date, $offset, $length, $session_id, $create_id, $query, $data, $item);
         return $result;
     }
 
@@ -277,11 +423,12 @@ class go extends Factory
      * @param int    $date_end
      * @param int    $offset
      * @param int    $length
+     * @param string $session_id
      *
      * @return array|string[]
      * @throws \ReflectionException
      */
-    public function search(array $keywords, string $level = 'all', string $mode = 'or', int $date_start = 0, int $date_end = 0, int $offset = 0, int $length = 20): array
+    public function search(array $keywords, string $level = 'all', string $mode = 'or', int $date_start = 0, int $date_end = 0, int $offset = 0, int $length = 20, string $session_id = ''): array
     {
         if (!in_array($level, self::ALL_LEVELS)) {
             return ['status' => 'error', 'error' => '无效层级：' . $level . '，可用：system/important/daily/misc/all'];
@@ -316,8 +463,8 @@ class go extends Factory
         }
 
         $result = $this->fts_enabled && $use_fts
-            ? $this->searchViaFts($keywords, $level, $mode, $date_start, $date_end, $offset, $length)
-            : $this->searchViaLike($keywords, $level, $mode, $date_start, $date_end, $offset, $length);
+            ? $this->searchViaFts($keywords, $level, $mode, $date_start, $date_end, $offset, $length, $session_id)
+            : $this->searchViaLike($keywords, $level, $mode, $date_start, $date_end, $offset, $length, $session_id);
 
         if (isset($result['data'])) {
             foreach ($result['data'] as &$msg) {
@@ -331,7 +478,7 @@ class go extends Factory
 
         $result['status'] = 'success';
 
-        unset($level, $keywords, $mode, $offset, $length, $date_start, $date_end, $use_fts, $word, $msg);
+        unset($keywords, $level, $mode, $date_start, $date_end, $offset, $length, $session_id, $use_fts, $word, $char);
         return $result;
     }
 
@@ -342,16 +489,17 @@ class go extends Factory
      * @param string $end_time
      * @param array  $keywords
      * @param string $mode
+     * @param string $session_id
      *
      * @return array|string[]
      * @throws \ReflectionException
      */
-    public function delete(string $level, array $create_ids = [], string $start_time = '', string $end_time = '', array $keywords = [], string $mode = 'and'): array
+    public function delete(string $level, array $create_ids = [], string $start_time = '', string $end_time = '', array $keywords = [], string $mode = 'and', string $session_id = ''): array
     {
         if (!in_array($level, self::ALL_LEVELS)) {
             $result = ['status' => 'error', 'error' => '无效层级：' . $level . '，可用：system/important/daily/misc/all'];
 
-            unset($level, $create_ids, $start_time, $end_time, $keywords, $mode);
+            unset($level, $create_ids, $start_time, $end_time, $keywords, $mode, $session_id);
             return $result;
         }
 
@@ -391,10 +539,6 @@ class go extends Factory
             } else {
                 $query = $this->libSQLite->table('agent_memory');
 
-                if ('all' !== $level) {
-                    $query->where(['level', '=', $level]);
-                }
-
                 $query->where(['create_id', 'IN', $valid_ids])
                     ->delete()
                     ->execute();
@@ -403,14 +547,25 @@ class go extends Factory
             }
 
             unset($valid_ids);
-        } elseif (0 < $start_time || 0 < $end_time || [] !== $keywords) {
+        } elseif (0 < $start_time || 0 < $end_time || [] !== $keywords || '' !== $session_id) {
             if (0 < $start_time && 0 < $end_time && $start_time > $end_time) {
                 $result = ['status' => 'error', 'error' => '起始时间不能大于结束时间'];
             } else {
                 $query = $this->libSQLite->table('agent_memory');
 
                 if ('all' !== $level) {
-                    $query->where(['level', '=', $level]);
+                    $query->where(['level', $level]);
+
+                    if ('' !== $session_id && in_array($level, ['daily', 'misc'], true)) {
+                        $query->where(['session_id', $session_id]);
+                    }
+                } else {
+                    if ('' !== $session_id) {
+                        $query->where(['level', 'system']);
+                        $query->or(['level', 'important']);
+                        $query->or(['level', 'daily'], ['session_id', $session_id]);
+                        $query->or(['level', 'misc'], ['session_id', $session_id]);
+                    }
                 }
 
                 if (0 < $start_time) {
@@ -452,7 +607,7 @@ class go extends Factory
             $result = ['status' => 'error', 'error' => '缺少删除条件，请补充必要条件后重试'];
         }
 
-        unset($level, $create_ids, $start_time, $end_time, $keywords, $mode, $query);
+        unset($level, $create_ids, $start_time, $end_time, $keywords, $mode, $session_id, $query);
         return $result;
     }
 
@@ -616,6 +771,9 @@ class go extends Factory
      */
     private function setupSchema(): void
     {
+        // Create session table if not exists
+        $this->libSQLite->exec(self::DDL_SESSION);
+
         // Create memory table if not exists
         $this->libSQLite->exec(self::DDL_MEMORY);
 
@@ -765,11 +923,12 @@ class go extends Factory
      * @param int    $date_end
      * @param int    $offset
      * @param int    $length
+     * @param string $session_id
      *
      * @return array
      * @throws \ReflectionException
      */
-    private function searchViaFts(array $keywords, string $level, string $mode, int $date_start, int $date_end, int $offset, int $length): array
+    private function searchViaFts(array $keywords, string $level, string $mode, int $date_start, int $date_end, int $offset, int $length, string $session_id = ''): array
     {
         $keywords = array_map([$this, 'buildTokens'], $keywords);
         $keywords = array_filter($keywords, 'strlen');
@@ -778,21 +937,23 @@ class go extends Factory
             return ['data' => [], 'total' => 0];
         }
 
-        $keywords = array_map(function ($text)
-        {
-            $tokens = explode(' ', $text);
-            $tokens = array_filter($tokens, 'strlen');
-
-            $escaped = array_map(function ($token)
+        $keywords = array_map(
+            function ($text)
             {
-                return in_array(strtoupper($token), ['AND', 'OR', 'NOT'], true)
-                    ? '"' . str_replace('"', '""', $token) . '"'
-                    : $token;
-            }, $tokens);
+                $tokens = explode(' ', $text);
+                $tokens = array_filter($tokens, 'strlen');
 
-            unset($text, $tokens);
-            return implode(' AND ', $escaped);
-        }, $keywords);
+                $escaped = array_map(function ($token)
+                {
+                    return in_array(strtoupper($token), ['AND', 'OR', 'NOT'], true)
+                        ? '"' . str_replace('"', '""', $token) . '"'
+                        : $token;
+                }, $tokens);
+
+                unset($text, $tokens);
+                return implode(' AND ', $escaped);
+            }, $keywords
+        );
 
         $kw_string = ('and' === strtolower($mode))
             ? implode(' AND ', $keywords)
@@ -802,10 +963,21 @@ class go extends Factory
             ->table('agent_memory')
             ->join('agent_memory_fts', 'INNER')
             ->on(['agent_memory.create_id', '=', 'agent_memory_fts.rowid'])
-            ->select('agent_memory.level', 'agent_memory.role', 'agent_memory.content', 'agent_memory.create_id');
+            ->select('agent_memory.level', 'agent_memory.role', 'agent_memory.content', 'agent_memory.create_id', 'agent_memory.session_id');
 
         if ('all' !== $level) {
-            $query->where(['agent_memory.level', '=', $level]);
+            $query->where(['agent_memory.level', $level]);
+
+            if ('' !== $session_id && in_array($level, ['daily', 'misc'], true)) {
+                $query->where(['agent_memory.session_id', $session_id]);
+            }
+        } else {
+            if ('' !== $session_id) {
+                $query->where(['agent_memory.level', 'system']);
+                $query->or(['agent_memory.level', 'important']);
+                $query->or(['agent_memory.level', 'daily'], ['agent_memory.session_id', $session_id]);
+                $query->or(['agent_memory.level', 'misc'], ['agent_memory.session_id', $session_id]);
+            }
         }
 
         if (0 < $date_start && 0 < $date_end) {
@@ -825,7 +997,7 @@ class go extends Factory
         $data  = $query->fetchAll();
         $total = $query->getLastFoundRows();
 
-        unset($level, $keywords, $mode, $offset, $length, $date_start, $date_end, $kw_string, $query);
+        unset($keywords, $level, $mode, $date_start, $date_end, $offset, $length, $kw_string, $session_id, $query);
         return ['data' => $data, 'total' => $total];
     }
 
@@ -837,18 +1009,30 @@ class go extends Factory
      * @param int    $date_end
      * @param int    $offset
      * @param int    $length
+     * @param string $session_id
      *
      * @return array
      * @throws \ReflectionException
      */
-    private function searchViaLike(array $keywords, string $level, string $mode, int $date_start, int $date_end, int $offset, int $length): array
+    private function searchViaLike(array $keywords, string $level, string $mode, int $date_start, int $date_end, int $offset, int $length, string $session_id = ''): array
     {
         $query = $this->libSQLite
             ->table('agent_memory')
-            ->select('level', 'role', 'content', 'create_id');
+            ->select('level', 'role', 'content', 'create_id', 'session_id');
 
         if ('all' !== $level) {
-            $query->where(['level', '=', $level]);
+            $query->where(['level', $level]);
+
+            if ('' !== $session_id && in_array($level, ['daily', 'misc'], true)) {
+                $query->where(['session_id', $session_id]);
+            }
+        } else {
+            if ('' !== $session_id) {
+                $query->where(['level', 'system']);
+                $query->or(['level', 'important']);
+                $query->or(['level', 'daily'], ['session_id', $session_id]);
+                $query->or(['level', 'misc'], ['session_id', $session_id]);
+            }
         }
 
         if (0 < $date_start && 0 < $date_end) {
@@ -873,9 +1057,12 @@ class go extends Factory
                         $conditions[] = ['or', 'content', 'LIKE', '%' . $kw . '%'];
                     }
                 }
+
                 $query->where(...$conditions);
                 unset($conditions);
             }
+
+            unset($idx, $kw);
         }
 
         $query->order(['create_id' => 'ASC'])->limit($offset, $length);
@@ -883,7 +1070,7 @@ class go extends Factory
         $data   = $query->fetchAll();
         $result = ['data' => $data, 'total' => $query->getLastFoundRows()];
 
-        unset($query, $data, $keywords, $mode, $offset, $length);
+        unset($keywords, $level, $mode, $date_start, $date_end, $offset, $length, $session_id, $query, $data);
         return $result;
     }
 }
