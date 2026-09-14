@@ -348,6 +348,7 @@ class completions extends stream
                         ];
                     } else {
                         $result_data['socket_id']    = $metadata['socket_id'];
+                        $result_data['session_id']   = $metadata['sessionId'];
                         $result_data['process_name'] = $metadata['workerName'];
 
                         $handler_calls[] = [

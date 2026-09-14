@@ -154,7 +154,7 @@ class go extends Factory
                 json_encode([
                     'cmd'        => $cmd,
                     'system'     => $system,
-                    'history'    => $this->core->context->getHistory($receiver),
+                    'history'    => $this->core->context->getHistory($metadata['sessionId'], $receiver),
                     'metadata'   => $metadata,
                     'llm_params' => $this->utils->getChildWorker($type, $receiver, 'llm_params')
                 ], JSON_FORMAT)
@@ -163,6 +163,7 @@ class go extends Factory
             $this->core->context->message_retry = false;
         } catch (\Throwable $throwable) {
             $this->core->context->message_retry = true;
+            $this->core->error->exceptionHandler($throwable, false, false);
             $this->utils->debug('System: process #' . $proc_idx . ' busy: ' . $throwable->getMessage(), 'trace');
             unset($throwable);
         }

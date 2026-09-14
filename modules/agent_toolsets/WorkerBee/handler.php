@@ -7,6 +7,8 @@ use Nervsys\Core\Factory;
 
 class handler extends Factory
 {
+    private string $session_id;
+
     /**
      * @param array      $payload_data
      * @param agent_core $agent_core
@@ -25,6 +27,7 @@ class handler extends Factory
             $agent_core->utils->debug('WorkerBee already exists: ' . $payload_data['worker_name'] . ' | ' . $worker_info['worker_role'] . ' already exists!', 'trace');
 
             $agent_core->core->context->addMessageQueue(
+                $payload_data['session_id'],
                 WORKER_MAIN,
                 [
                     'type'    => 'text',
@@ -35,6 +38,8 @@ class handler extends Factory
             return '[WorkerBee] "`' . $payload_data['worker_name'] . '`" 已存在。请换名或直接使用 (角色: ' . $worker_info['worker_role'] . ')';
         }
 
+        $this->session_id = hash('md5', $payload_data['worker_name']);
+
         $proc_idx = $agent_core->runProcWorker(
             $agent_core->utils->getWorkerIDX(),
             WORKER_CHILD,
@@ -44,7 +49,7 @@ class handler extends Factory
 
         $agent_core->utils->debug('WorkerBee started: ' . $payload_data['worker_name'] . ' (WorkerID: ' . $proc_idx . ', ' . $payload_data['worker_role'] . ')', 'trace');
 
-        $init_prompt = $payload_data['init_prompt'] . ' | 先阅读用户要求，用一句话介绍你的名字和角色，并回复“已就绪”。';
+        $init_prompt = $payload_data['init_prompt'] . "\n" . '先阅读用户要求，用一句话介绍你的名字和角色，并回复“已就绪”。';
 
         $worker_info = [
             'proc_idx'    => $proc_idx,
@@ -55,10 +60,17 @@ class handler extends Factory
             'last_talk'   => date('Y-m-d H:i:s')
         ];
 
-        $this->sendMessage($agent_core, $worker_info, ['content' => $init_prompt]);
+        $this->sendMessage(
+            $agent_core,
+            $payload_data['session_id'],
+            $worker_info,
+            ['content' => $init_prompt]
+        );
+
         $agent_core->utils->addChildWorker(WORKER_CHILD, $payload_data['worker_name'], $worker_info);
         $agent_core->core->context->addUserMessage(
-            $worker_info['worker_name'],
+            $this->session_id,
+            $payload_data['worker_name'],
             [['type' => 'text', 'content' => '[用户要求] ' . $init_prompt]]
         );
 
@@ -67,7 +79,8 @@ class handler extends Factory
             $payload_data['worker_name'],
             $payload_data['worker_role'],
             $payload_data['worker_name'],
-            1
+            1,
+            $this->session_id
         );
 
         $agent_core->openai->talkTo(
@@ -104,6 +117,7 @@ class handler extends Factory
         if ([] === $worker_info || 0 === $agent_core->utils->procMgr->getStatus($worker_info['proc_idx'])) {
             // WorkerBee died, notice main worker
             $agent_core->core->context->addMessageQueue(
+                $payload_data['session_id'],
                 WORKER_MAIN,
                 [
                     'type'    => 'text',
@@ -117,9 +131,15 @@ class handler extends Factory
         if ('ready' !== $worker_info['status']) {
             $agent_core->utils->debug('WorkerBee: ' . $worker_info['worker_name'] . ' is busy, new message queued.', 'trace');
 
-            $this->sendMessage($agent_core, $worker_info, $payload_data);
+            $this->sendMessage(
+                $agent_core,
+                $payload_data['session_id'],
+                $worker_info,
+                $payload_data
+            );
 
             $agent_core->core->context->addMessageQueue(
+                $this->session_id,
                 $worker_info['worker_name'],
                 [
                     'type'    => 'text',
@@ -133,11 +153,17 @@ class handler extends Factory
         $agent_core->utils->debug('WorkerBee: ' . $worker_info['worker_name'] . ' is working on task.', 'trace');
 
         $agent_core->utils->setChildWorker(WORKER_CHILD, $worker_info['worker_name'], 'status', 'busy');
-        $agent_core->core->context->refreshHistory($worker_info['worker_name']);
+        $agent_core->core->context->refreshHistory($this->session_id, $worker_info['worker_name']);
 
-        $this->sendMessage($agent_core, $worker_info, $payload_data);
+        $this->sendMessage(
+            $agent_core,
+            $payload_data['session_id'],
+            $worker_info,
+            $payload_data
+        );
 
         $agent_core->core->context->addUserMessage(
+            $this->session_id,
             $worker_info['worker_name'],
             [['type' => 'text', 'content' => $payload_data['content']]]
         );
@@ -147,7 +173,8 @@ class handler extends Factory
             $worker_info['worker_name'],
             $worker_info['worker_role'],
             $worker_info['worker_name'],
-            1
+            1,
+            hash('md5', $payload_data['worker_name'])
         );
 
         $agent_core->openai->talkTo(
@@ -184,10 +211,15 @@ class handler extends Factory
             $agent_core->utils->debug('WorkerBee closed: ' . $worker_info['worker_name'] . ' (WorkerID:' . $worker_info['proc_idx'] . ', ' . $worker_info['worker_role'] . ')', 'trace');
 
             $agent_core->utils->procMgr->close($worker_info['proc_idx']);
-            $agent_core->core->context->removeHistory($worker_info['worker_name']);
+            $agent_core->core->context->removeHistory($this->session_id, $worker_info['worker_name']);
             $agent_core->utils->removeChildWorker(WORKER_CHILD, $worker_info['worker_name']);
 
-            $this->sendMessage($agent_core, $worker_info, ['content' => '子进程"' . $payload_data['worker_name'] . '"已关闭。']);
+            $this->sendMessage(
+                $agent_core,
+                $payload_data['session_id'],
+                $worker_info,
+                ['content' => '子进程"' . $payload_data['worker_name'] . '"已关闭。']
+            );
         } else {
             $agent_core->utils->debug('WorkerBee not found: ' . $payload_data['worker_name'], 'trace');
         }
@@ -224,6 +256,7 @@ class handler extends Factory
 
     /**
      * @param agent_core $agent_core
+     * @param string     $session_id
      * @param array      $worker_info
      * @param array      $payload_data
      *
@@ -231,14 +264,15 @@ class handler extends Factory
      * @throws \Random\RandomException
      * @throws \ReflectionException
      */
-    private function sendMessage(agent_core $agent_core, array $worker_info, array $payload_data): void
+    private function sendMessage(agent_core $agent_core, string $session_id, array $worker_info, array $payload_data): void
     {
         $worker_message = $agent_core->utils->getMessageMarker(
                 WORKER_MAIN,
                 WORKER_MAIN,
                 'Assistant',
                 $worker_info['worker_name'],
-                1
+                1,
+                $session_id
             ) + [
                 'type' => 'content',
                 'data' => AGENT_NAME . ': ' . $payload_data['content']

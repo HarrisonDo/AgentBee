@@ -208,13 +208,21 @@ class go extends Factory
      * @return string[]
      * @throws \ReflectionException
      */
-    public function updateSession(string $session_id, string $session_name = '', int $session_status = 1): array
+    public function updateSession(string $session_id, string $session_name = '', int $session_status = 0): array
     {
-        if (1 !== $session_status) {
-            $session_status = 2;
+        if ('' === $session_name && 0 === $session_status) {
+            return ['status' => 'success', 'affected_rows' => 0];
         }
 
-        $session_data = ['session_status' => $session_status];
+        $session_data = [];
+
+        if (0 !== $session_status) {
+            if (!in_array($session_status, [1, 2], true)) {
+                $session_status = 1;
+            }
+
+            $session_data['session_status'] = $session_status;
+        }
 
         if ('' !== $session_name) {
             $session_data['session_name'] = $session_name;

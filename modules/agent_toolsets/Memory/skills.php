@@ -50,7 +50,7 @@ class skills
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
-                        'session_status' => ['type' => 'integer', 'default' => 1, 'description' => '会话状态：1=启用(默认)；0=禁用']
+                        'session_status' => ['type' => 'integer', 'default' => 1, 'description' => '会话状态：1=启用(默认)；2=已删除；0=全部']
                     ],
                     'required'   => []
                 ],
@@ -66,7 +66,7 @@ class skills
                     'properties' => [
                         'session_id'     => ['type' => 'string', 'description' => '会话ID'],
                         'session_name'   => ['type' => 'string', 'default' => '', 'description' => '新会话名称(可选，为空表示不修改)'],
-                        'session_status' => ['type' => 'integer', 'default' => 1, 'description' => '会话状态：1=启用(默认)；2=禁用']
+                        'session_status' => ['type' => 'integer', 'default' => 0, 'description' => '会话状态：1=启用；2=删除；0=不修改(默认)']
                     ],
                     'required'   => ['session_id']
                 ],

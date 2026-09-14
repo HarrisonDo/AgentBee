@@ -144,17 +144,18 @@ class message extends Factory
     /**
      * @param string $socket_id
      * @param array  $data_content
+     * @param string $session_id
      *
      * @return array
      * @throws \ReflectionException
      */
-    public function process_memory(string $socket_id, array $data_content): array
+    public function process_memory(string $socket_id, array $data_content, string $session_id): array
     {
         $act = $data_content['act'] ?? 'unknown';
 
         switch ($act) {
             case 'read':
-                $content = $data_content['memory']->read('misc', 0, 0, $data_content['length'], $this->utils->session_id, $data_content['create_id'] ?? 0);
+                $content = $data_content['memory']->read('misc', 0, 0, $data_content['length'], $session_id, $data_content['create_id'] ?? 0);
 
                 $content['act'] = $act;
                 break;
@@ -173,9 +174,22 @@ class message extends Factory
                 $content['act'] = $act;
                 break;
 
+            case 'renameSession':
+                if ('' !== $session_id && '' !== ($data_content['session_name'] ?? '')) {
+                    $content = $data_content['memory']->updateSession($session_id, $data_content['session_name']);
+                } else {
+                    $content = ['status' => 'error', 'error' => '缺少会话ID'];
+                }
+
+                $content['act'] = $act;
+                break;
+
             case 'deleteSession':
-                if (isset($data_content['sessionId']) && '' !== $data_content['sessionId']) {
-                    $content = $data_content['memory']->updateSession($data_content['sessionId'], '', 2);
+                if ('' !== $session_id) {
+                    $context = context::new();
+                    $context->removeHistory($session_id, WORKER_MAIN);
+                    $context->removeMessageQueue($session_id, WORKER_MAIN);
+                    $content = $data_content['memory']->updateSession($session_id, '', 2);
                 } else {
                     $content = ['status' => 'error', 'error' => '缺少会话ID'];
                 }
@@ -197,7 +211,7 @@ class message extends Factory
             'type'     => 'memory'
         ];
 
-        unset($socket_id, $data_content, $act, $content);
+        unset($socket_id, $data_content, $session_id, $act, $content);
         return $result;
     }
 

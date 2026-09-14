@@ -72,13 +72,14 @@ final class core extends Factory
 
     /**
      * @param string $type
+     * @param string $session_id
      * @param string $worker_name
      * @param array  $llm_params
      *
      * @return int
      * @throws \ReflectionException
      */
-    public function getMaxTokens(string $type, string $worker_name, array $llm_params = []): int
+    public function getMaxTokens(string $type, string $session_id, string $worker_name, array $llm_params = []): int
     {
         $llm_tools = [] !== $this->llm_tools ? $this->llm_tools : [];
 
@@ -87,7 +88,7 @@ final class core extends Factory
             $llm_tools['tools'] = $this->context->buildTools($llm_tools['tools']);
         }
 
-        $history = $this->context->getHistory($worker_name, false);
+        $history = $this->context->getHistory($session_id, $worker_name, false);
 
         foreach ($history as $key => $item) {
             if (!isset($item['contents']) || !is_array($item['contents'])) {
@@ -110,7 +111,7 @@ final class core extends Factory
         $inputs  = (int)($context_len * $ratio * 0.714);
         $outputs = ($this->utils->agent_config['agent_llm']['model_ctx'] ?? 131072) - $inputs;
 
-        unset($type, $worker_name, $llm_params, $llm_tools, $history, $key, $item, $contents, $context, $compressed, $context_len, $ratio, $inputs);
+        unset($type, $session_id, $worker_name, $llm_params, $llm_tools, $history, $key, $item, $contents, $context, $compressed, $context_len, $ratio, $inputs);
         return $outputs;
     }
 

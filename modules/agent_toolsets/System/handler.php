@@ -16,6 +16,7 @@ class handler extends Factory
     public function cleanContext(array $payload_data, agent_core $agent_core): array
     {
         $agent_core->core->context->cleanHistory(
+            $payload_data['session_id'],
             $payload_data['worker_name'],
             $payload_data['keep_normal'],
             $payload_data['max_tool_pairs'],
@@ -70,10 +71,14 @@ class handler extends Factory
 
         $data_url = $agent_core->utils->resizeImage($binary_data);
 
-        $agent_core->core->context->addUserMessage($payload_data['process_name'], [
-            ['type' => 'text', 'content' => '"' . $filename . '"：图片已加载到上下文，无需读取文件，直接识别。'],
-            ['type' => 'image', 'content' => $data_url]
-        ]);
+        $agent_core->core->context->addUserMessage(
+            $payload_data['session_id'],
+            $payload_data['process_name'],
+            [
+                ['type' => 'text', 'content' => '"' . $filename . '"：图片已加载到上下文，无需读取文件，直接识别。'],
+                ['type' => 'image', 'content' => $data_url]
+            ]
+        );
 
         if ($payload_data['rendering']) {
             $message = $agent_core->utils->getMessageMarker(
@@ -82,7 +87,7 @@ class handler extends Factory
                 'Assistant',
                 $payload_data['process_name'],
                 0,
-                hash('md5', uniqid(microtime(), true))
+                $payload_data['session_id']
             );
 
             $agent_core->core->sendImageMessage(

@@ -40,8 +40,6 @@ class utils extends Factory
     public int $proc_idx   = 10;
     public int $worker_idx = 1000;
 
-    public string $session_id;
-
     public array  $agent_config;
     public string $pid_file_path;
 
@@ -316,6 +314,7 @@ class utils extends Factory
      * @param string $worker_role
      * @param string $window_name
      * @param int    $is_sub_talk
+     * @param string $session_id
      * @param string $message_id
      *
      * @return array
@@ -326,6 +325,7 @@ class utils extends Factory
         string $worker_role,
         string $window_name,
         int    $is_sub_talk,
+        string $session_id,
         string $message_id = ''
     ): array
     {
@@ -338,7 +338,7 @@ class utils extends Factory
             'isSubTalk'  => $is_sub_talk,
             'workerName' => $worker_name,
             'workerRole' => $worker_role,
-            'sessionId'  => $this->session_id,
+            'sessionId'  => $session_id,
             'messageId'  => $message_id,
             'WindowName' => $window_name
         ];

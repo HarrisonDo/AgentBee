@@ -89,28 +89,31 @@ class context extends Factory
     /**
      * Add a user message.
      *
+     * @param string $session_id
      * @param string $worker_name
      * @param array  $contents [{type=text|image, content=xxxxx}]
      *
      * @return void
      */
-    public function addUserMessage(string $worker_name, array $contents): void
+    public function addUserMessage(string $session_id, string $worker_name, array $contents): void
     {
-        $message = ['role' => 'user'];
-
-        if ([] !== $contents) {
-            $message['contents'] = $contents;
+        if ([] === $contents) {
+            return;
         }
 
-        $this->history[$worker_name]   ??= [];
-        $this->history[$worker_name][] = $message;
+        $this->history[$session_id][$worker_name]   ??= [];
+        $this->history[$session_id][$worker_name][] = [
+            'role'     => 'user',
+            'contents' => $contents
+        ];
 
-        unset($worker_name, $contents, $message);
+        unset($session_id, $worker_name, $contents);
     }
 
     /**
      * Add an assistant message.
      *
+     * @param string $session_id
      * @param string $worker_name
      * @param string $content
      * @param array  $tool_calls
@@ -118,7 +121,7 @@ class context extends Factory
      *
      * @return void
      */
-    public function addAssistantMessage(string $worker_name, string $content = '', array $tool_calls = [], string $reasoning_content = ''): void
+    public function addAssistantMessage(string $session_id, string $worker_name, string $content = '', array $tool_calls = [], string $reasoning_content = ''): void
     {
         $message = ['role' => 'assistant', 'content' => $content];
 
@@ -130,116 +133,130 @@ class context extends Factory
             $message['tool_calls'] = array_map(fn(array $tool_call): array => $this->normalizeToolCall($tool_call), $tool_calls);
         }
 
-        $this->history[$worker_name]   ??= [];
-        $this->history[$worker_name][] = $message;
+        $this->history[$session_id][$worker_name]   ??= [];
+        $this->history[$session_id][$worker_name][] = $message;
 
-        unset($worker_name, $content, $tool_calls, $reasoning_content, $message);
+        unset($session_id, $worker_name, $content, $tool_calls, $reasoning_content, $message);
     }
 
     /**
      * Add a tool result.
      *
+     * @param string $session_id
      * @param string $worker_name
      * @param string $call_id
      * @param string $content
      *
      * @return void
      */
-    public function addToolResult(string $worker_name, string $call_id, string $content): void
+    public function addToolResult(string $session_id, string $worker_name, string $call_id, string $content): void
     {
-        $this->history[$worker_name]   ??= [];
-        $this->history[$worker_name][] = [
+        $this->history[$session_id][$worker_name]   ??= [];
+        $this->history[$session_id][$worker_name][] = [
             'role'    => 'tool',
             'call_id' => $call_id,
             'content' => $content,
         ];
 
-        unset($worker_name, $call_id, $content);
+        unset($session_id, $worker_name, $call_id, $content);
     }
 
     /**
+     * @param string $session_id
      * @param string $worker_name
      * @param array  $message
      *
      * @return void
      */
-    public function addMessageQueue(string $worker_name, array $message): void
+    public function addMessageQueue(string $session_id, string $worker_name, array $message): void
     {
-        $this->message_queue[$worker_name]   ??= [];
-        $this->message_queue[$worker_name][] = $message;
+        $this->message_queue[$session_id][$worker_name]   ??= [];
+        $this->message_queue[$session_id][$worker_name][] = $message;
 
-        unset($worker_name, $message);
+        unset($session_id, $worker_name, $message);
     }
 
     /**
+     * @param string $session_id
      * @param string $worker_name
      * @param bool   $popout
      *
      * @return array
      */
-    public function getMessageQueue(string $worker_name, bool $popout = false): array
+    public function getMessageQueue(string $session_id, string $worker_name, bool $popout = false): array
     {
-        $messages = $this->message_queue[$worker_name] ?? [];
+        $messages = $this->message_queue[$session_id][$worker_name] ?? [];
 
         if ($popout) {
-            unset($this->message_queue[$worker_name]);
+            unset($this->message_queue[$session_id][$worker_name]);
         }
 
-        unset($worker_name, $popout);
+        unset($session_id, $worker_name, $popout);
         return $messages;
     }
 
     /**
+     * @param string $session_id
      * @param string $worker_name
      *
      * @return void
      */
-    public function removeMessageQueue(string $worker_name): void
+    public function removeMessageQueue(string $session_id, string $worker_name): void
     {
-        unset($this->message_queue[$worker_name], $worker_name);
+        unset($this->message_queue[$session_id][$worker_name], $session_id, $worker_name);
+    }
+
+    /**
+     * @return array
+     */
+    public function getQueueSessionId(): array
+    {
+        return [] !== $this->message_queue ? array_keys($this->message_queue) : [];
     }
 
     /**
      * Get formated/normalized conversation events for a worker.
      *
+     * @param string $session_id
      * @param string $worker_name
      * @param bool   $formated
      *
      * @return array
      */
-    public function getHistory(string $worker_name, bool $formated = true): array
+    public function getHistory(string $session_id, string $worker_name, bool $formated = true): array
     {
-        if (!isset($this->history[$worker_name]) || [] === $this->history[$worker_name]) {
+        if (!isset($this->history[$session_id][$worker_name]) || [] === $this->history[$session_id][$worker_name]) {
             return [];
         }
 
         $worker_history = $formated
-            ? $this->api_object->build($this->history[$worker_name])
-            : $this->history[$worker_name];
+            ? $this->api_object->build($this->history[$session_id][$worker_name])
+            : $this->history[$session_id][$worker_name];
 
-        unset($worker_name, $formated);
+        unset($session_id, $worker_name, $formated);
         return $worker_history;
     }
 
     /**
      * Count all events or events for one role.
      *
-     * @param string $worker_name Worker/session name.
-     * @param string $role_name   Optional role filter.
+     * @param string $session_id
+     * @param string $worker_name
+     * @param string $role_name
      *
-     * @return int Event count.
+     * @return int
      */
-    public function countHistory(string $worker_name, string $role_name = ''): int
+    public function countHistory(string $session_id, string $worker_name, string $role_name = ''): int
     {
         if ('' === $role_name) {
-            return count($this->history[$worker_name] ?? []);
+            return count($this->history[$session_id][$worker_name] ?? []);
         }
 
-        $role_history = array_column($this->history[$worker_name], 'role');
+        $role_history = array_column($this->history[$session_id][$worker_name], 'role');
         $role_count   = array_count_values($role_history);
         $msg_count    = $role_count[$role_name] ?? 0;
 
-        unset($worker_name, $role_name, $role_history, $role_count);
+        unset($session_id, $worker_name, $role_name, $role_history, $role_count);
         return $msg_count;
     }
 
@@ -248,40 +265,47 @@ class context extends Factory
      *
      * @param string $worker_name Worker/session name.
      */
-    public function removeHistory(string $worker_name): void
+    public function removeHistory(string $session_id, string $worker_name): void
     {
-        unset($this->message_queue[$worker_name], $this->history[$worker_name], $this->tools[$worker_name], $worker_name);
+        unset(
+            $this->message_queue[$session_id][$worker_name],
+            $this->history[$session_id][$worker_name],
+            $this->tools[$worker_name],
+            $session_id,
+            $worker_name
+        );
     }
 
     /**
      * Flush the message queue for a worker and append all queued text messages as a single user message.
      *
+     * @param string $session_id
      * @param string $worker_name
      *
      * @return int Number of messages moved from queue to history.
      */
-    public function refreshHistory(string $worker_name): int
+    public function refreshHistory(string $session_id, string $worker_name): int
     {
-        if (!isset($this->message_queue[$worker_name]) || [] === $this->message_queue[$worker_name]) {
+        if (!isset($this->message_queue[$session_id][$worker_name]) || [] === $this->message_queue[$session_id][$worker_name]) {
             return 0;
         }
 
         $messages = [];
-        while (null !== ($message = array_shift($this->message_queue[$worker_name]))) {
+        while (null !== ($message = array_shift($this->message_queue[$session_id][$worker_name]))) {
             $messages[] = $message;
         }
 
         $count_messages = count($messages);
 
         if ($count_messages > 0) {
-            $this->addUserMessage($worker_name, $messages);
+            $this->addUserMessage($session_id, $worker_name, $messages);
         }
 
         if ($this->message_retry) {
             $count_messages = 1;
         }
 
-        unset($worker_name, $messages, $message);
+        unset($session_id, $worker_name, $messages, $message);
         return $count_messages;
     }
 
@@ -294,9 +318,9 @@ class context extends Factory
      *
      * @return array Removal and retention statistics.
      */
-    public function cleanHistory(string $worker_name, int $keep_normal = 6, int $max_tool_pairs = 2): array
+    public function cleanHistory(string $session_id, string $worker_name, int $keep_normal = 6, int $max_tool_pairs = 2): array
     {
-        $history = $this->history[$worker_name] ?? [];
+        $history = $this->history[$session_id][$worker_name] ?? [];
 
         $keep_normal    = max(4, $keep_normal);
         $max_tool_pairs = max(0, $max_tool_pairs);
@@ -326,12 +350,12 @@ class context extends Factory
         }
 
         if (null === $first_user) {
-            $this->history[$worker_name] = [];
+            $this->history[$session_id][$worker_name] = [];
 
             $result = [
                 'removed_normal' => $total_normal,
                 'removed_tools'  => $total_tools,
-                'current_count'  => count($this->history[$worker_name]),
+                'current_count'  => count($this->history[$session_id][$worker_name]),
             ];
 
             unset($worker_name, $keep_normal, $max_tool_pairs, $history, $messages, $total_normal, $total_tools, $message, $is_tool_calls, $first_user, $index);
@@ -372,12 +396,12 @@ class context extends Factory
         }
 
         if ([] === $normal_indices) {
-            $this->history[$worker_name] = [];
+            $this->history[$session_id][$worker_name] = [];
 
             $result = [
                 'removed_normal' => $total_normal,
                 'removed_tools'  => $total_tools,
-                'current_count'  => count($this->history[$worker_name]),
+                'current_count'  => count($this->history[$session_id][$worker_name]),
             ];
 
             unset($worker_name, $keep_normal, $max_tool_pairs, $history, $messages, $total_normal, $total_tools, $message, $is_tool_calls, $first_user, $index, $groups, $results, $valid_groups, $normal_indices, $group_index, $call_ids, $group_results, $call_id);
@@ -426,7 +450,7 @@ class context extends Factory
             }
         }
 
-        $this->history[$worker_name] = $new_history;
+        $this->history[$session_id][$worker_name] = $new_history;
 
         $result = [
             'removed_normal' => $total_normal - $kept_normal,
@@ -434,7 +458,7 @@ class context extends Factory
             'current_count'  => count($new_history),
         ];
 
-        unset($worker_name, $keep_normal, $max_tool_pairs, $history, $messages, $total_normal, $total_tools, $message, $is_tool_calls, $first_user, $index, $groups, $results, $valid_groups, $normal_indices, $group_index, $call_ids, $group_results, $call_id, $start, $selected_groups, $selected_results, $kept_normal, $new_history);
+        unset($session_id, $worker_name, $keep_normal, $max_tool_pairs, $history, $messages, $total_normal, $total_tools, $message, $is_tool_calls, $first_user, $index, $groups, $results, $valid_groups, $normal_indices, $group_index, $call_ids, $group_results, $call_id, $start, $selected_groups, $selected_results, $kept_normal, $new_history);
         return $result;
     }
 
