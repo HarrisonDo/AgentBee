@@ -94,6 +94,14 @@ export interface ChatSession {
    * 一旦这个会话发出第一条消息，标记就没意义了。
    */
   keepEmpty?: boolean;
+  /**
+   * 用户在界面上手动改过标题（`renameSession`）。
+   *
+   * 打上之后本地标题就是最终答案：`applyRemoteSessions()` 不会再用后端
+   * `session_name` 覆盖它，第一条用户消息也不会再触发「前 8 个字」的自动命名。
+   * 后端改名接口到位后，这个标记同时也是「本地改动还没同步到服务端」的判据。
+   */
+  titleEdited?: boolean;
   messages: ChatMessage[];
 }
 

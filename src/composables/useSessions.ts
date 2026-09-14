@@ -12,6 +12,12 @@ const MIN_STORED_MESSAGES = 6;
 const SAVE_DEBOUNCE_MS = 650;
 /** 会话标题取第一句话的前 8 个字，与后端命名规则保持一致。 */
 const SESSION_TITLE_LENGTH = 8;
+/**
+ * 手动重命名允许的长度上限。
+ * 比自动标题的 8 字宽很多（自动标题是从第一句话截的，手动是用户自己写的），
+ * 但仍要有个上限：侧边栏只有一行，太长只会被省略号吃掉，还会把 localStorage 撑大。
+ */
+export const MAX_SESSION_TITLE_LENGTH = 40;
 
 export interface UseSessionsOptions {
   /** 未起标题时的占位文案（走 i18n）。不传时退回 DEFAULT_TITLE。 */
@@ -203,6 +209,31 @@ export function useSessions(options: UseSessionsOptions = {}) {
     return true;
   }
 
+  /**
+   * 手动重命名会话标题。**目前只改本地**（后端还没有改名接口）。
+   *
+   * 几个刻意的取舍：
+   * - 空白标题直接拒绝（返回 `null`），调用方据此提示用户；不做「清空即恢复默认名」，
+   *   那会让人以为名字被系统改掉了。
+   * - 前后空格折叠、连续空白合并、超长按 `MAX_SESSION_TITLE_LENGTH` 截断。
+   * - 打上 `titleEdited`：之后既不会被 `readSession` 回来的 `session_name` 覆盖，
+   *   也不会被「第一句话前 8 个字」的自动命名覆盖。
+   * - **不动 `updatedAt`**：改名不是一次会话活动，不该让列表重新排序或把它顶到最前，
+   *   时间戳也应该继续显示最后一次真正聊天的时间。
+   */
+  function renameSession(sessionId: string, title: string): string | null {
+    const session = getSessionById(sessionId);
+    if (!session) return null;
+
+    const normalized = normalizeSessionTitle(title);
+    if (!normalized) return null;
+
+    session.title = normalized;
+    session.titleEdited = true;
+    saveSessions();
+    return normalized;
+  }
+
   function removeSession(sessionId: string): boolean {
     const index = sessions.value.findIndex((session) => session.id === sessionId);
     if (index < 0) return false;
@@ -270,7 +301,8 @@ export function useSessions(options: UseSessionsOptions = {}) {
         if (name && existing.remoteName !== name) {
           existing.remoteName = name;
           // 本地还没起过标题时直接用后端名称，后端是按第一句话前 8 个字命名的。
-          if (isPlaceholderTitle(existing.title)) existing.title = name;
+          // 手动改过名的（`titleEdited`）永远以本地为准，后端改名的接口到位前更是如此。
+          if (!existing.titleEdited && isPlaceholderTitle(existing.title)) existing.title = name;
           changed = true;
         }
         return;
@@ -346,6 +378,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     getSessionById,
     loadSessions,
     removeSession,
+    renameSession,
     saveSessions,
     scheduleSaveSessions,
     sessions,
@@ -377,8 +410,22 @@ export function buildSessionTitle(text: string, fallback: string = DEFAULT_TITLE
     : collapsed;
 }
 
+/**
+ * 手动标题的规范化：折叠空白 + 截断。返回空串表示这个标题不可用。
+ * 截断不加省略号，这样「再次编辑一个已被截断的标题」不会越滚越长。
+ */
+export function normalizeSessionTitle(title: string): string {
+  const collapsed = (title || '').replace(/\s+/g, ' ').trim();
+  if (!collapsed) return '';
+  return collapsed.length > MAX_SESSION_TITLE_LENGTH
+    ? collapsed.slice(0, MAX_SESSION_TITLE_LENGTH)
+    : collapsed;
+}
+
 function applyFirstMessageTitle(session: ChatSession, message: ChatMessage, fallback: string) {
   if (message.role !== 'user') return;
+  // 手动改过名的会话不再自动起名，否则用户刚写的标题会被第一句话顶掉。
+  if (session.titleEdited) return;
   const userMessages = session.messages.filter((item) => item.role === 'user');
   // 已经有更早的用户消息就说明标题早就定过了。
   if (userMessages.length > 1) return;

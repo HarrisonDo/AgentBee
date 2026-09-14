@@ -557,14 +557,63 @@ body:has(.login-window-backdrop) {
   opacity: 0;
 }
 
+/* 重命名入口和删除按钮一样平时隐形，hover / 聚焦时出现，避免列表看起来太吵。 */
+.session-item-rename {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  opacity: 0;
+}
+
 .session-item:hover .session-item-delete,
-.session-item-delete:focus-visible {
+.session-item-delete:focus-visible,
+.session-item:hover .session-item-rename,
+.session-item-rename:focus-visible {
   opacity: 1;
 }
 
 .session-item-delete:not(:disabled):hover {
   color: var(--danger);
   background: var(--danger-soft);
+}
+
+.session-item-rename:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+}
+
+/* 进入编辑态后整行都让给输入框。 */
+.session-item.editing {
+  background: var(--accent-soft);
+}
+
+.session-item-edit {
+  flex: 1;
+  min-width: 0;
+  margin: 4px 6px;
+  padding: 5px 7px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.82rem;
+}
+
+.session-item-edit::placeholder {
+  color: var(--faint);
+}
+
+.session-item-edit:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.session-error {
+  margin: 6px 2px 0;
+  color: var(--danger);
+  font-size: 0.74rem;
+  line-height: 1.45;
 }
 
 .app.sidebar-collapsed .session-panel {

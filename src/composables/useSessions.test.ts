@@ -273,3 +273,104 @@ describe('useSessions', () => {
       .toHaveLength(1);
   });
 });
+
+describe('renameSession', () => {
+  it('renames a session and flags the title as manually edited', () => {
+    const sessions = useSessions();
+    sessions.addMessage('user', '原来叫这个名字');
+    const id = sessions.activeSessionId.value;
+
+    expect(sessions.renameSession(id, '  我的   分析报告  ')).toBe('我的 分析报告');
+    const session = sessions.getSessionById(id);
+    expect(session?.title).toBe('我的 分析报告');
+    expect(session?.titleEdited).toBe(true);
+  });
+
+  it('rejects a blank title instead of clearing the old one', () => {
+    const sessions = useSessions();
+    sessions.addMessage('user', '别把我清空');
+    const id = sessions.activeSessionId.value;
+
+    expect(sessions.renameSession(id, '   ')).toBeNull();
+    expect(sessions.renameSession(id, '')).toBeNull();
+    expect(sessions.getSessionById(id)?.title).toBe('别把我清空');
+    // 被拒绝的这次操作不该留下「改过名」的痕迹。
+    expect(sessions.getSessionById(id)?.titleEdited).toBeUndefined();
+  });
+
+  it('returns null for an unknown session id', () => {
+    const sessions = useSessions();
+    sessions.addMessage('user', '存在的一条');
+    expect(sessions.renameSession('missing', '新名字')).toBeNull();
+    expect(sessions.renameSession('', '新名字')).toBeNull();
+    expect(sessions.sessions.value[0].title).toBe('存在的一条');
+  });
+
+  it('truncates and stays idempotent for over-long titles', () => {
+    const sessions = useSessions();
+    sessions.addMessage('user', '起点');
+    const id = sessions.activeSessionId.value;
+    const long = '一二三四五六七八九十'.repeat(6);
+
+    const trimmed = sessions.renameSession(id, long);
+    expect(trimmed).toHaveLength(40);
+    // 再编辑一次同一个标题不该继续增长（截断不带省略号的原因）。
+    expect(sessions.renameSession(id, trimmed as string)).toBe(trimmed);
+  });
+
+  it('is not overwritten by the backend session_name on reconnect', () => {
+    const sessions = useSessions();
+    sessions.addMessage('user', '第一句话');
+    const id = sessions.activeSessionId.value;
+    sessions.renameSession(id, '我起的名字');
+
+    sessions.applyRemoteSessions([
+      { session_id: id, session_name: '第一句话', create_time: '2026-09-14 09:44:00' },
+    ]);
+
+    expect(sessions.getSessionById(id)?.title).toBe('我起的名字');
+    // 后端的原名还是要记下来，将来同步改名要以它为准。
+    expect(sessions.getSessionById(id)?.remoteName).toBe('第一句话');
+  });
+
+  it('is not overwritten by the first-message auto title', () => {
+    const sessions = useSessions({ defaultTitle: () => '新对话' });
+    const fresh = sessions.createSession();
+    // 还没说话就先改好名字（用户主动命名一个空会话）。
+    expect(sessions.renameSession(fresh.id, '先起好名字')).toBe('先起好名字');
+
+    sessions.addMessage('user', '这句话不该变成标题');
+    expect(sessions.getSessionById(fresh.id)?.title).toBe('先起好名字');
+  });
+
+  it('does not reorder the list or touch the timestamp', () => {
+    const sessions = useSessions();
+    sessions.addMessage('user', '第一个话题');
+    const older = sessions.activeSessionId.value;
+    sessions.createSession();
+    sessions.addMessage('user', '第二个话题');
+    const newer = sessions.activeSessionId.value;
+
+    expect(sessions.sessions.value.map((session) => session.id)).toEqual([newer, older]);
+    const before = sessions.getSessionById(older)?.updatedAt;
+
+    sessions.renameSession(older, '改个名字');
+
+    // 改名不是一次会话活动：不该把它顶到最前，时间戳也该继续显示最后一次聊天的时间。
+    expect(sessions.sessions.value.map((session) => session.id)).toEqual([newer, older]);
+    expect(sessions.getSessionById(older)?.updatedAt).toBe(before);
+  });
+
+  it('survives a reload and keeps the flag', () => {
+    const first = useSessions({ defaultTitle: () => '新对话' });
+    first.addMessage('user', '会被记住的会话');
+    const id = first.activeSessionId.value;
+    first.renameSession(id, '我改过的名字');
+    first.saveSessions();
+
+    const second = useSessions({ defaultTitle: () => '新对话' });
+    second.loadSessions();
+    expect(second.getSessionById(id)?.title).toBe('我改过的名字');
+    expect(second.getSessionById(id)?.titleEdited).toBe(true);
+  });
+});

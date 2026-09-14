@@ -125,6 +125,7 @@ message 事件时主动收尾该轮次——后端对这种 `need_llm = false` �
   后端把 content 展开到了顶层，响应形如 `{ "type":"memory", "act":"readSession", "status":"success",
   "sessions":[{"session_id":"...","session_name":"...","create_time":"..."}] }`。
   前端对 `type: 'session'` 的响应也兼容（`useWebSocketAgent.ts` 里的 `SESSION_REQUEST_TYPE` 可切换）。
+  重命名走的是本地实现（见下），后端接口若也做成 memory 的一个 act，按同样格式加一条即可。
 - **拉取时机**：连接成功后和 `getConfig` / `getModels` / memory read 一起自动发一次 `readSession`；
   面板上的刷新按钮可手动再拉。
 - **新建会话**：`sessionId` 由前端 `makeId()`（UUID）生成，每次 chat 请求都会带上；
@@ -149,6 +150,16 @@ message 事件时主动收尾该轮次——后端对这种 `need_llm = false` �
   后端可能按「放弃上一轮」的语义把 A 那一轮 close 掉（前端会保守保留已流出的内容）。
 - **会话标题**：默认占位文案走 i18n（`untitledSession`，zh「新对话」/ en「New conversation」），
   由 `useSessions({ defaultTitle })` 注入；第一句话起标题后按前 8 个字。
+- **重命名会话**：列表项 hover 出现铅笔按钮，或者双击标题进入行内编辑；Enter / 失焦提交，
+  Esc 取消，空标题或没改动都算放弃（保持原名，不弹错）。
+  - **目前纯前端**：`useSessions.renameSession()` 只改本地并落 `localStorage`，**不发任何 WS 请求**
+    （后端还没有改名接口，`process_memory` 只有 `read` / `delete` / `readSession` / `deleteSession`）。
+    接口确定后只需改 `App.vue` 的 `renameSession()` 一处：补一次 `sendSessionAct(...)`，
+    成功时用后端返回的 `session_name` 覆盖本地，失败回滚。
+  - 手动标题会打上 `ChatSession.titleEdited`，之后 `applyRemoteSessions()` 不再用后端 `session_name`
+    覆盖它，第一句话也不再触发「前 8 个字」的自动命名。
+  - 标题规范化：折叠空白、上限 `MAX_SESSION_TITLE_LENGTH`（40 字）硬截断（不带省略号，保证重复编辑幂等）。
+  - **不动 `updatedAt`**：改名不是会话活动，不该让列表重排、也不该改掉「最后聊天时间」。
 - **本地存储**：`localStorage` 的 `agentbee.sessions.v3`，每个会话各自保留最多 50 条消息，
   最多存 30 个会话，写满时按 quota 自动裁剪。
 - **聊天历史按会话隔离**：`memory read` 请求在**顶层**带 `sessionId`（`useWebSocketAgent.readMemory()`）。

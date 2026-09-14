@@ -949,6 +949,21 @@ function selectSession(sessionId: string) {
   maybeScrollAfterUpdate();
 }
 
+/**
+ * 会话重命名。**目前只改本地**——后端还没有改名接口。
+ *
+ * 后端接口到位后，唯一的改动点就在这个函数里：在 `sessions.renameSession()` 前后
+ * 补一次 WS 请求（act 名以后端 `process_memory` / `process_session` 的实际分支为准，
+ * 现在只有 `readSession` / `deleteSession`），成功时用后端返回的 `session_name`
+ * 覆盖本地标题，失败时回滚成旧标题。
+ * `ChatSession.titleEdited` 已经标好「本地改过名」，`readSession` 回来的旧名字
+ * 不会把用户的改动反覆盖回去。
+ */
+function renameSession(sessionId: string, title: string) {
+  if (!sessions.renameSession(sessionId, title)) return;
+  sessionError.value = '';
+}
+
 function requestSessionDelete(sessionId: string) {
   if (!agent.canSend.value) {
     // 没连上就只删本地，不给后端发请求。
@@ -1564,10 +1579,12 @@ function redactConnectionUrl(value: string): string {
           :loading="sessionLoading"
           :streaming-session-ids="agent.streamingSessionIds.value"
           :can-request="agent.canSend.value"
+          :error="sessionError"
           @new-session="createSession"
           @refresh="requestSessionRead"
           @select="selectSession"
           @remove="requestSessionDelete"
+          @rename="renameSession"
         />
 
         <ConnectionPanel
