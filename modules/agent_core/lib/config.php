@@ -191,6 +191,7 @@ class config extends Factory
             'sandbox_mode'   => false,
             'workspace_url'  => '',
             'workspace_path' => App::new()->root_path . DIRECTORY_SEPARATOR . 'workspace',
+            'reset_interval' => 21600,
             'memory_limit'   => '4G',
             'agent_debug'    => 'trace'
         ];

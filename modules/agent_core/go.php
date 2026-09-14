@@ -39,9 +39,10 @@ class go extends Factory
     public memory $memory;
     public openai $openai;
 
-    public int $wait_until  = 0;
-    public int $keep_pairs  = 2;
-    public int $wait_status = self::STATUS_IDLE;
+    public int $wait_until    = 0;
+    public int $keep_pairs    = 2;
+    public int $wait_status   = self::STATUS_IDLE;
+    public int $last_response = 0;
 
     public bool $ctx_warning = false;
 
@@ -512,6 +513,8 @@ class go extends Factory
                     break;
 
                 case 'end':
+                    $this->last_response = time();
+
                     if (WORKER_MAIN === $payload['sender']) {
                         $this->setStatus(self::STATUS_IDLE);
                     } else {
@@ -753,12 +756,19 @@ class go extends Factory
      */
     public function onHeartbeat(string $socket_id): string
     {
+        $now_time = time();
+
         if (self::STATUS_IDLE !== $this->wait_status) {
-            if ($this->wait_until > time()) {
+            if ($this->wait_until > $now_time) {
                 return '';
             }
 
             $this->setStatus(self::STATUS_IDLE, true);
+        }
+
+        if (0 < $this->last_response && $now_time - $this->last_response >= $this->utils->agent_config['reset_interval'] ?? 21600) {
+            $this->setStatus(self::STATUS_IDLE);
+            $this->core->context->removeHistory(WORKER_MAIN);
         }
 
         $task_list    = $this->memory->runTask();
