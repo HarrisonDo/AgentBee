@@ -177,12 +177,13 @@ class skills
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
+                        'session_id'      => ['type' => 'string', 'description' => '会话ID'],
                         'task_prompt'     => ['type' => 'string', 'description' => '任务提示词'],
                         'run_at'          => ['type' => 'string', 'description' => '执行时间：YYYY-mm-dd HH:ii:ss'],
                         'repeat'          => ['type' => 'boolean', 'default' => false, 'description' => '是否重复'],
                         'repeat_interval' => ['type' => 'integer', 'default' => 0, 'description' => '重复间隔(秒)，repeat=true时有效']
                     ],
-                    'required'   => ['task_prompt', 'run_at']
+                    'required'   => ['session_id', 'task_prompt', 'run_at']
                 ],
             ],
         ],
@@ -211,7 +212,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'runTask',
-                'description' => '执行所有到期任务，返回提示词索引数组。返回：提示词数组。',
+                'description' => '执行所有到期任务。返回：{[session_id, task], ...}。',
             ],
         ]
     ];

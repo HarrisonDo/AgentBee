@@ -69,6 +69,7 @@ class go extends Factory
     private const DDL_TASK = '
         CREATE TABLE IF NOT EXISTS agent_task (
             create_id INTEGER PRIMARY KEY,
+            session_id TEXT NOT NULL,
             run_at    INTEGER NOT NULL,
             repeat    INTEGER DEFAULT 0,
             interval  INTEGER DEFAULT 0,
@@ -632,6 +633,7 @@ class go extends Factory
     // =========================================================================
 
     /**
+     * @param string $session_id
      * @param string $task_prompt
      * @param string $run_at
      * @param bool   $repeat
@@ -640,7 +642,7 @@ class go extends Factory
      * @return array
      * @throws \ReflectionException
      */
-    public function addTask(string $task_prompt, string $run_at, bool $repeat = false, int $repeat_interval = 0): array
+    public function addTask(string $session_id, string $task_prompt, string $run_at, bool $repeat = false, int $repeat_interval = 0): array
     {
         $now    = time();
         $run_at = strtotime($run_at);
@@ -659,11 +661,12 @@ class go extends Factory
 
         $create_id = $this->generateMicroTimestamp('agent_task');
         $this->libSQLite->table('agent_task')->replace([
-            'create_id' => $create_id,
-            'run_at'    => $run_at,
-            'repeat'    => $repeat ? 1 : 0,
-            'interval'  => $repeat_interval,
-            'prompt'    => $task_prompt
+            'create_id'  => $create_id,
+            'session_id' => $session_id,
+            'run_at'     => $run_at,
+            'repeat'     => $repeat ? 1 : 0,
+            'interval'   => $repeat_interval,
+            'prompt'     => $task_prompt
         ])->execute();
 
         $result = ['status' => 'success', 'create_id' => $create_id, 'run_time' => date('Y-m-d H:i:s', $run_at)];
@@ -718,14 +721,14 @@ class go extends Factory
 
         // Fetch due tasks
         $tasks = $this->libSQLite->table('agent_task')
-            ->select('create_id', 'prompt', 'run_at', 'repeat', 'interval')
+            ->select('create_id', 'session_id', 'prompt', 'run_at', 'repeat', 'interval')
             ->where(['run_at', '<=', $now])
             ->fetchAll();
 
         $result = [];
 
         foreach ($tasks as $task) {
-            $result[] = $task['prompt'];
+            $result[] = ['session_id' => $task['session_id'], 'task' => $task['prompt']];
 
             if ($task['repeat']) {
                 // Recurring task: calculate next run time
