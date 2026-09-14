@@ -4,7 +4,6 @@ import {
   ArrowDownToLine,
   History,
   LoaderCircle,
-  MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
@@ -15,6 +14,7 @@ import FilePreviewPanel from './components/FilePreviewPanel.vue';
 import Composer from './components/Composer.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
 import ConnectionPanel from './components/ConnectionPanel.vue';
+import SessionPanel from './components/SessionPanel.vue';
 import LoginWin from './components/LoginWin.vue';
 import SettingsView from './components/SettingsView.vue';
 import SystemLogGroup from './components/SystemLogGroup.vue';
@@ -38,6 +38,7 @@ import type {
   ClientAttachment,
   ClientSettingAct,
   MemoryRecord,
+  RemoteSession,
   ServerMessage,
 } from './protocol/types';
 
@@ -103,12 +104,25 @@ const HISTORY_PAGE_SIZE = 50;
 const MEMORY_PAGE_SIZE = 30;
 const MEMORY_LATEST_PAGE_SIZE = 50;
 const MEMORY_RESPONSE_TIMEOUT_MS = 15_000;
+const SESSION_RESPONSE_TIMEOUT_MS = 15_000;
 const LEGACY_MEMORY_CACHE_STORAGE_KEY = 'agentbee.memoryCache.v1';
 localStorage.removeItem(LEGACY_MEMORY_CACHE_STORAGE_KEY);
 const memoryRecords = ref<MemoryRecord[]>([]);
+/**
+ * 当前在途 memory 读取请求所属的会话 id。
+ * 用来丢弃「会话已经切走之后才回来」的响应——否则上一个会话的历史会被画进新会话。
+ */
+let memoryRequestSessionId = '';
+/** 服务端历史已经加载过的会话 id，用来避免对同一个会话重复拉取。 */
+let historyLoadedForSession = '';
 let pendingMemoryDeleteIds: number[] = [];
 let memoryResponseTimer: number | null = null;
 let pendingMemoryReadMode: MemoryReadMode | null = null;
+const sessionLoading = ref(false);
+const sessionDeleting = ref(false);
+const sessionDeleteCandidateId = ref<string | null>(null);
+const sessionError = ref('');
+let sessionResponseTimer: number | null = null;
 let resizeStartX = 0;
 let resizeStartWidth = 0;
 let resizePointerId: number | null = null;
@@ -118,13 +132,15 @@ const { locale, setLocale, t } = useI18n();
 const { setTheme, theme } = useTheme();
 useAppViewport();
 
-const sessions = useSessions();
+const sessions = useSessions({ defaultTitle: () => t.value.untitledSession });
 sessions.loadSessions();
 
 const agent = useWebSocketAgent({
   activeSession: () => sessions.activeSession.value,
   addMessage: sessions.addMessage,
+  getSessionById: sessions.getSessionById,
   onMemoryMessage: handleMemoryMessage,
+  onSessionMessage: handleSessionMessage,
   onSettingMessage: handleSettingMessage,
   onSystemMessage: handleSystemMessage,
   saveSessions: sessions.saveSessions,
@@ -141,7 +157,10 @@ watch(() => agent.canSend.value, (canSend) => {
     }
     requestModels(true);
     resetMemoryHistory();
-    requestMemoryRead('latest');
+    // 先拉会话列表：`readMemory` 必须带 sessionId，而「当前是哪个会话」要等
+    // `applyRemoteSessions` 落定（可能把本地落到后端最近的一条）之后才准确。
+    // 列表响应到了再拉历史（见 handleSessionMessage）；发不出去就立刻兜底拉一次。
+    if (!requestSessionRead()) requestMemoryRead('latest');
     return;
   }
   memoryLoading.value = false;
@@ -151,6 +170,10 @@ watch(() => agent.canSend.value, (canSend) => {
   pendingMemoryDeleteIds = [];
   pendingMemoryReadMode = null;
   clearMemoryResponseTimer();
+  clearSessionResponseTimer();
+  sessionLoading.value = false;
+  sessionDeleting.value = false;
+  sessionDeleteCandidateId.value = null;
 });
 
 const activeMeta = computed(() => {
@@ -266,6 +289,9 @@ function onSend(
   onDispatched: (dispatched: boolean) => void,
 ) {
   currentView.value = 'chat';
+  // 会话列表可能被删空（空列表是合法状态）。直接发消息就先起一条，
+  // 否则这一轮会挂到内存里的兜底会话上，既不在列表里也存不下来。
+  if (!sessions.sessions.value.length) sessions.createSession();
   agent.sendText(text, attachments, (dispatched) => {
     onDispatched(dispatched);
     if (dispatched) maybeScrollAfterUpdate();
@@ -341,6 +367,9 @@ function retryMemoryHistory() {
 
 function requestMemoryRead(mode: MemoryReadMode) {
   if (!agent.canSend.value) return false;
+  // 没有当前会话就没有「属于它的历史」：这时发出去后端会按空 session_id 返回**全局**记录，
+  // 正好是「删光会话后旧历史又冒出来」的成因。直接不发。
+  if (!sessions.activeSessionId.value) return false;
   if (mode === 'older' && !memoryHasMore.value) return false;
 
   if (memoryReadMode.value !== null || memoryDeleting.value) {
@@ -360,6 +389,8 @@ function requestMemoryRead(mode: MemoryReadMode) {
   }
   if (!agent.readMemory(length, createId)) return false;
 
+  // 记下这次请求属于哪个会话，回来时用来丢弃「已经切走」的响应。
+  memoryRequestSessionId = sessions.activeSessionId.value;
   memoryReadMode.value = mode;
   if (mode === 'older') preserveHistoryScrollAfterUpdate();
   memoryLoading.value = mode === 'older' || (mode === 'latest' && !memoryRecords.value.length);
@@ -757,11 +788,20 @@ function sendSettingRequest(act: ClientSettingAct, content?: unknown) {
 }
 
 function handleMemoryMessage(act: string, msg: ServerMessage) {
+  // 会话 CRUD 目前是 memory 类型下的 act，转发给会话处理。
+  if (act === 'readSession' || act === 'deleteSession') {
+    handleSessionMessage(act, msg);
+    return;
+  }
+
   const errorMessage = normalizeServerError(msg);
 
   if (act === 'read') {
     const mode = memoryReadMode.value;
     if (!mode) return;
+    // 会话已经切走之后才回来的响应：直接丢掉，否则会把上一个会话的历史画进新会话。
+    // 注意不能动 memoryReadMode —— 它属于当前在途的那个请求。
+    if (memoryRequestSessionId !== sessions.activeSessionId.value) return;
     clearMemoryResponseTimer();
     memoryReadMode.value = null;
     if (mode === 'older') preserveHistoryScrollAfterUpdate();
@@ -778,6 +818,8 @@ function handleMemoryMessage(act: string, msg: ServerMessage) {
     const responseTotal = toNonNegativeInteger(msg.total);
     if (mode === 'latest') applyLatestMemorySnapshot(page, responseTotal);
     if (mode === 'older') applyOlderMemoryPage(page, responseTotal);
+    // 记下「这个会话的历史已经拉过了」，会话列表回来时就不必重复拉。
+    historyLoadedForSession = memoryRequestSessionId;
     memoryError.value = '';
     runPendingMemoryRead();
     return;
@@ -808,6 +850,136 @@ function handleMemoryMessage(act: string, msg: ServerMessage) {
       .filter((record) => !deletedIds.has(record.create_id));
     memoryError.value = '';
   }
+}
+
+// ---------------------------------------------------------------------------
+// 会话（session）：readSession / deleteSession，形如 memory
+// ---------------------------------------------------------------------------
+
+function requestSessionRead(): boolean {
+  if (!agent.canSend.value) return false;
+  if (!agent.readSessions()) return false;
+  sessionLoading.value = true;
+  sessionError.value = '';
+  // 会话列表超时也要把历史拉起来，否则聊天区会一直空着。
+  startSessionResponseTimer(() => requestMemoryRead('latest'));
+  return true;
+}
+
+function startSessionResponseTimer(onTimeout?: () => void) {
+  clearSessionResponseTimer();
+  sessionResponseTimer = window.setTimeout(() => {
+    sessionResponseTimer = null;
+    if (!sessionLoading.value) return;
+    sessionLoading.value = false;
+    sessionError.value = t.value.sessionReadTimeout;
+    onTimeout?.();
+  }, SESSION_RESPONSE_TIMEOUT_MS);
+}
+
+function clearSessionResponseTimer() {
+  if (sessionResponseTimer === null) return;
+  window.clearTimeout(sessionResponseTimer);
+  sessionResponseTimer = null;
+}
+
+function handleSessionMessage(act: string, msg: ServerMessage) {
+  const errorMessage = normalizeServerError(msg);
+
+  if (act === 'readSession') {
+    clearSessionResponseTimer();
+    sessionLoading.value = false;
+    if (errorMessage) {
+      sessionError.value = errorMessage;
+      // 会话列表拿不到，至少把当前会话的历史拉起来，别让聊天区空着。
+      requestMemoryRead('latest');
+      return;
+    }
+    // 后端把 content 展开到了顶层，所以 sessions 可能在 msg.data 也可能直接在 msg 上。
+    sessions.applyRemoteSessions(parseRemoteSessions(msg.data ?? (msg as { sessions?: unknown }).sessions));
+    sessionError.value = '';
+    // `applyRemoteSessions` 可能把本地落到后端最近的一条（首次连接，或当前会话已被删）。
+    // 这时必须补拉那个会话的历史；已经加载过当前会话的历史就不重复拉。
+    if (historyLoadedForSession !== sessions.activeSessionId.value) {
+      requestMemoryRead('latest');
+    }
+    return;
+  }
+
+  if (act === 'deleteSession') {
+    clearSessionResponseTimer();
+    sessionDeleting.value = false;
+    if (errorMessage) {
+      sessionError.value = errorMessage;
+      return;
+    }
+    // 无论后端删没删掉，本地都按用户意图移除。
+    if (sessionDeleteCandidateId.value) {
+      const deletedId = sessionDeleteCandidateId.value;
+      const wasActive = deletedId === sessions.activeSessionId.value;
+      sessions.removeSession(deletedId);
+      sessionDeleteCandidateId.value = null;
+      // 删掉的正是当前会话时落点已经换人，历史也得跟着换。
+      if (wasActive) reloadActiveSessionHistory();
+    }
+    sessionError.value = '';
+  }
+}
+
+function createSession() {
+  sessions.createSession();
+  previewFile.value = null;
+  selectedSubAgentName.value = null;
+  sessionError.value = '';
+  // 新会话在服务端还没有任何记录，重拉后历史会是空的，不会带上别的会话的记录。
+  reloadActiveSessionHistory();
+  maybeScrollAfterUpdate();
+}
+
+function selectSession(sessionId: string) {
+  if (sessionId === sessions.activeSessionId.value) return;
+  // 流式输出期间也允许切换：每一轮都记了归属会话，后端推来的内容会落回原会话，
+  // 面板上给正在输出的那条打「生成中」标记即可。
+  if (!sessions.switchSession(sessionId)) return;
+  previewFile.value = null;
+  selectedSubAgentName.value = null;
+  sessionError.value = '';
+  // 历史是按会话过滤的，切过去就得重新拉这个会话自己的记录。
+  reloadActiveSessionHistory();
+  maybeScrollAfterUpdate();
+}
+
+function requestSessionDelete(sessionId: string) {
+  if (!agent.canSend.value) {
+    // 没连上就只删本地，不给后端发请求。
+    const wasActive = sessionId === sessions.activeSessionId.value;
+    sessions.removeSession(sessionId);
+    // 删的是当前会话：清掉它残留的历史，别让它继续挂在聊天区。
+    if (wasActive) reloadActiveSessionHistory();
+    return;
+  }
+  sessionDeleteCandidateId.value = sessionId;
+}
+
+function cancelSessionDelete() {
+  sessionDeleteCandidateId.value = null;
+}
+
+function confirmSessionDelete() {
+  const sessionId = sessionDeleteCandidateId.value;
+  if (!sessionId) return;
+  sessionDeleting.value = true;
+  sessionError.value = '';
+
+  const sent = agent.deleteSession(sessionId);
+  if (sent) {
+    startSessionResponseTimer();
+    return;
+  }
+  // 发送失败（多半是掉线）就只清本地。
+  sessionDeleting.value = false;
+  sessions.removeSession(sessionId);
+  sessionDeleteCandidateId.value = null;
 }
 
 function handleSettingMessage(act: string, content: unknown, msg: ServerMessage) {
@@ -986,6 +1158,30 @@ function applyOlderMemoryPage(page: MemoryRecord[], responseTotal: number | null
   }
 }
 
+/** 解析后端 readSession 的返回，容错掉任何缺 session_id 的脏数据。 */
+function parseRemoteSessions(value: unknown): RemoteSession[] {
+  const list = Array.isArray(value) ? value : [];
+  const seen = new Set<string>();
+
+  return list.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const id = String(item.session_id ?? item.sessionId ?? item.id ?? '').trim();
+    if (!id || seen.has(id)) return [];
+    seen.add(id);
+
+    const name = [item.session_name, item.sessionName, item.name]
+      .find((candidate): candidate is string => typeof candidate === 'string' && candidate.trim() !== '');
+    const time = [item.create_time, item.createTime, item.created_at]
+      .find((candidate) => typeof candidate === 'string' || typeof candidate === 'number');
+
+    return [{
+      session_id: id,
+      session_name: name,
+      create_time: time as string | number | undefined,
+    }];
+  });
+}
+
 function sortUniqueMemoryRecords(records: MemoryRecord[]): MemoryRecord[] {
   const uniqueRecords = new Map<number, MemoryRecord>();
   records.forEach((record) => uniqueRecords.set(record.create_id, record));
@@ -1087,6 +1283,20 @@ function resetMemoryHistory() {
   memoryReadMode.value = null;
   pendingMemoryDeleteIds = [];
   pendingMemoryReadMode = null;
+  memoryRequestSessionId = '';
+  historyLoadedForSession = '';
+}
+
+/**
+ * 切会话 / 新建会话后重新拉取**这个会话**的历史。
+ *
+ * 服务端历史是按 `session_id` 过滤的（见 `useWebSocketAgent.readMemory` 里的顶层 sessionId），
+ * 所以必须重拉：否则聊天区会继续显示上一个会话的记录。新建会话时最明显——
+ * 本地消息是空的，屏幕上却还挂着旧会话的历史。
+ */
+function reloadActiveSessionHistory() {
+  resetMemoryHistory();
+  if (agent.canSend.value) requestMemoryRead('latest');
 }
 
 function handlePageHide(event: PageTransitionEvent) {
@@ -1347,18 +1557,18 @@ function redactConnectionUrl(value: string): string {
       </div>
 
       <div class="sidebar-body">
-        <nav class="sidebar-nav" :aria-label="t.navigation">
-          <button
-            type="button"
-            class="sidebar-nav-item"
-            :class="{ active: currentView === 'chat' }"
-            :title="t.conversation"
-            @click="closeSettings"
-          >
-            <MessageSquare :size="16" aria-hidden="true" />
-            <span>{{ t.conversation }}</span>
-          </button>
-        </nav>
+        <SessionPanel
+          :labels="t"
+          :sessions="sessions.sessions.value"
+          :active-session-id="sessions.activeSessionId.value"
+          :loading="sessionLoading"
+          :streaming-session-ids="agent.streamingSessionIds.value"
+          :can-request="agent.canSend.value"
+          @new-session="createSession"
+          @refresh="requestSessionRead"
+          @select="selectSession"
+          @remove="requestSessionDelete"
+        />
 
         <ConnectionPanel
           :labels="t"
@@ -1563,5 +1773,15 @@ function redactConnectionUrl(value: string): string {
     :title="t.deleteMemoryConfirmTitle"
     @cancel="cancelMemoryDelete"
     @confirm="confirmMemoryDelete"
+  />
+
+  <ConfirmDialog
+    v-if="sessionDeleteCandidateId !== null"
+    :cancel-label="t.cancel"
+    :confirm-label="t.deleteAction"
+    :message="t.deleteSessionConfirm"
+    :title="t.deleteSessionConfirmTitle"
+    @cancel="cancelSessionDelete"
+    @confirm="confirmSessionDelete"
   />
 </template>

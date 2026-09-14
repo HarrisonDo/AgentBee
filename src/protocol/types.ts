@@ -80,10 +80,20 @@ export interface ChatFile {
 }
 
 export interface ChatSession {
+  /** 同时作为发给后端的 sessionId；新建会话由前端生成。 */
   id: string;
   title: string;
   createdAt: string;
   updatedAt: string;
+  /** 后端 readSession 里同步过来的名称；本地标题会被第一句话覆盖。 */
+  remoteName?: string;
+  /**
+   * 用户在界面上主动点的「新建会话」留的空壳。
+   * 它和 `ensureSession()` 兜底出来的空占位长得一样，但语义不同：
+   * 兜底占位在后端有历史时要被丢掉（直接进最近一条会话），用户主动新建的要留着。
+   * 一旦这个会话发出第一条消息，标记就没意义了。
+   */
+  keepEmpty?: boolean;
   messages: ChatMessage[];
 }
 
@@ -126,8 +136,21 @@ export interface ClientHistoryRequest {
   sessionId: string;
 }
 
+/**
+ * 会话 CRUD 目前复用 memory 这个 type：后端 `process_memory` 里
+ * 直接 switch 了 read / delete / readSession / deleteSession 四个 act。
+ */
+export type ClientMemoryAct = 'read' | 'delete' | ClientSessionAct;
+
 export interface ClientMemoryReadRequest {
   type: 'memory';
+  /**
+   * 必须带当前会话 id：后端 `go.php:863` 会用这个**顶层**字段覆盖 `utils->session_id`，
+   * 而 `message.php process_memory` 的 read 分支把这个值传给 `Memory::read()`，
+   * 只有非空时才会给 `agent_memory` 加 `session_id` 过滤。
+   * 不带就等于「读全局历史」——新建的会话会看到别的会话的记录。
+   */
+  sessionId?: string;
   content: {
     act: 'read';
     length: number;
@@ -140,6 +163,14 @@ export interface ClientMemoryDeleteRequest {
   content: {
     act: 'delete';
     create_ids: number[];
+  };
+}
+
+export interface ClientMemorySessionRequest {
+  type: 'memory';
+  content: {
+    act: ClientSessionAct;
+    sessionId?: string;
   };
 }
 
@@ -177,14 +208,35 @@ export interface ClientSystemRequest {
   };
 }
 
+export type ClientSessionAct = 'readSession' | 'deleteSession';
+
+export interface ClientSessionRequest {
+  type: 'session';
+  content: {
+    act: ClientSessionAct;
+    sessionId?: string;
+    [key: string]: unknown;
+  };
+}
+
+/** 后端 readSession 返回的一条会话记录。 */
+export interface RemoteSession {
+  session_id: string;
+  session_name?: string;
+  session_status?: string | number;
+  create_time?: string | number;
+}
+
 export type ClientMessage =
   | ClientChatMessage
   | ClientHistoryRequest
   | ClientMemoryReadRequest
   | ClientMemoryDeleteRequest
+  | ClientMemorySessionRequest
   | ClientStopRequest
   | ClientSettingRequest
-  | ClientSystemRequest;
+  | ClientSystemRequest
+  | ClientSessionRequest;
 
 export interface ServerMessage {
   type?: ServerEventType | string;

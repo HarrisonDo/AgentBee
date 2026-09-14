@@ -361,8 +361,7 @@ body:has(.login-window-backdrop) {
   padding: 12px 8px;
 }
 
-.sidebar-collapsed .brand-copy,
-.sidebar-collapsed .sidebar-nav {
+.sidebar-collapsed .brand-copy {
   display: none;
 }
 
@@ -433,38 +432,6 @@ body:has(.login-window-backdrop) {
   color: var(--faint);
 }
 
-.sidebar-nav {
-  flex: 1;
-  min-height: 0;
-  padding: 8px;
-}
-
-.sidebar-nav-item {
-  width: 100%;
-  min-height: 38px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  text-align: left;
-  border: 0;
-  border-radius: 8px;
-  color: var(--muted);
-  background: transparent;
-  font-size: 0.86rem;
-  font-weight: 550;
-}
-
-.sidebar-nav-item:hover {
-  color: var(--text);
-  background: color-mix(in srgb, var(--surface) 58%, transparent);
-}
-
-.sidebar-nav-item.active {
-  color: var(--text);
-  background: var(--accent-soft);
-}
-
 .topbar-title strong,
 .topbar-title span {
   overflow: hidden;
@@ -475,6 +442,133 @@ body:has(.login-window-backdrop) {
 .topbar-title span {
   color: var(--muted);
   font-size: 0.72rem;
+}
+
+.session-panel {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  padding: 0 8px 8px;
+}
+
+.session-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 2px 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.session-panel-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.session-panel-tool {
+  width: 26px;
+  height: 26px;
+}
+
+.session-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  align-content: start;
+  gap: 2px;
+}
+
+.session-empty {
+  margin: 10px 2px 0;
+  color: var(--faint);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.session-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 8px;
+}
+
+.session-item:hover {
+  background: color-mix(in srgb, var(--surface) 58%, transparent);
+}
+
+.session-item.active {
+  background: var(--accent-soft);
+}
+
+.session-item-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  padding: 7px 2px 7px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  font-size: 0.82rem;
+}
+
+.session-item.active .session-item-main {
+  color: var(--text);
+  font-weight: 550;
+}
+
+/* 正在流式输出的会话：打一个转圈标记，但仍然可以点进去切走。 */
+.session-item-spinner {
+  flex-shrink: 0;
+  margin-right: 2px;
+  color: var(--muted);
+}
+
+.session-item.streaming .session-item-title {
+  color: var(--text);
+}
+
+.session-item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-item-time {
+  color: var(--faint, var(--muted));
+  font-size: 0.68rem;
+  opacity: 0.75;
+}
+
+.session-item-delete {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  opacity: 0;
+}
+
+.session-item:hover .session-item-delete,
+.session-item-delete:focus-visible {
+  opacity: 1;
+}
+
+.session-item-delete:not(:disabled):hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.app.sidebar-collapsed .session-panel {
+  display: none;
 }
 
 .connection {
@@ -2573,8 +2667,7 @@ body:has(.login-window-backdrop) {
     min-width: 0;
   }
 
-  .brand-copy p,
-  .sidebar-nav {
+  .brand-copy p {
     display: none;
   }
 

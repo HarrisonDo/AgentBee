@@ -111,6 +111,66 @@
 `process_chat`）收到后清空上下文并回一句确认，**不会**写进记忆。前端在收到 `act === 'reset'` 的
 message 事件时主动收尾该轮次——后端对这种 `need_llm = false` 的答复不会再发 `end`。
 
+### 会话（session）
+
+侧边栏有「会话」面板：列出会话、点击切换、每条可删除，顶部可新建。
+
+- **协议**：会话 CRUD 目前是 **memory 类型下的 act**，不是独立的 `session` 类型——后端
+  `lib/message.php` 的 `process_memory` 里直接 switch 了 `read` / `delete` / `readSession` /
+  `deleteSession`，并没有 `process_session`。所以请求长这样：
+  ```json
+  { "type": "memory", "content": { "act": "readSession" } }
+  { "type": "memory", "content": { "act": "deleteSession", "sessionId": "uuid" } }
+  ```
+  后端把 content 展开到了顶层，响应形如 `{ "type":"memory", "act":"readSession", "status":"success",
+  "sessions":[{"session_id":"...","session_name":"...","create_time":"..."}] }`。
+  前端对 `type: 'session'` 的响应也兼容（`useWebSocketAgent.ts` 里的 `SESSION_REQUEST_TYPE` 可切换）。
+- **拉取时机**：连接成功后和 `getConfig` / `getModels` / memory read 一起自动发一次 `readSession`；
+  面板上的刷新按钮可手动再拉。
+- **新建会话**：`sessionId` 由前端 `makeId()`（UUID）生成，每次 chat 请求都会带上；
+  后端收到第一条消息后自动入库，会话名取第一句话的前 8 个字。前端本地标题也按同样的 8 字规则生成。
+- **打开时的落点**：本地会话列表**可以为空**，不会为了「让界面有东西可渲染」凭空造一条空会话——只有
+  `activeSession` 会退回内存兜底（不进列表、不落盘）。连接后 `readSession` 回来时：本地没有任何真实内容
+  （或当前停在兜底会话上）就直接进入后端最近的一条会话（后端按 `create_time DESC` 返回）；
+  后端也没有历史就保持空列表并提示「还没有会话」，由用户自己点新建。
+  用户主动点「新建会话」留的空壳带 `keepEmpty` 标记，不会被清掉；一旦发出第一条消息标记即失效。
+  旧版本会把兜底占位写进 `localStorage`，`loadSessions()` 加载时会顺手清掉。
+- **删除**：先弹确认框，确认后发 `deleteSession`（后端是软删，即 `updateSession(..., status=2)`），
+  没连上时只删本地。删掉当前会话就落到最近一条；**全部删光则保持空列表**，不再自动补一条。
+  另外 `applyRemoteSessions()` 把后端当权威：本地标着「来自后端」、这次却没返回的会话会被清掉，
+  删过的会话不会从本地缓存里复活。
+- **流式输出期间可以自由切换会话**：每一轮在 `pendingTurns` 里都记了自己的归属
+  （`{ assistantId, sessionId }`），`ensureAssistantMessage` / `finishAssistantMessage` /
+  `closeAssistantMessage` / 无响应超时都通过 `resolveTurnSession()` 按记录的 sessionId 找回原会话。
+  所以切走之后，后端推来的 content/end 仍会写回发起这一轮的会话，而不是当前正在看的那个。
+  会话列表中正在输出的那条会显示转圈标记（`streamingSessionIds`）。
+  「停止」优先停当前会话正在跑的那一轮；当前会话没有在跑的，就停最近发起的那一轮，提示写进被停的那个会话。
+  注意：后端一轮只服务一个 `curr_message_id`，在 A 还在输出时又去 B 发消息，
+  后端可能按「放弃上一轮」的语义把 A 那一轮 close 掉（前端会保守保留已流出的内容）。
+- **会话标题**：默认占位文案走 i18n（`untitledSession`，zh「新对话」/ en「New conversation」），
+  由 `useSessions({ defaultTitle })` 注入；第一句话起标题后按前 8 个字。
+- **本地存储**：`localStorage` 的 `agentbee.sessions.v3`，每个会话各自保留最多 50 条消息，
+  最多存 30 个会话，写满时按 quota 自动裁剪。
+- **聊天历史按会话隔离**：`memory read` 请求在**顶层**带 `sessionId`（`useWebSocketAgent.readMemory()`）。
+  后端 `go.php:863` 用它设置 `utils->session_id`，`process_memory` 的 read 再把它传给
+  `Memory::read()`——那里对 `daily`/`misc` 只在 `session_id !== ''` 时才加 `where`。
+  **漏带这个字段后端就会返回全局历史**，表现就是「新建会话还能看到旧会话的记录」。
+  配套行为：切会话 / 新建会话 / 删掉当前会话都会 `resetMemoryHistory()` + 重拉
+  （`reloadActiveSessionHistory()`）；连接时先 `readSession`、等会话落点定了再拉历史；
+  迟到的响应按发起时的会话 id 丢弃（`memoryRequestSessionId` 比对），
+  避免把上一个会话的历史画进新会话。
+
+### `close` 事件不可信（已修复的历史 bug）
+
+后端 `go.php` 会在处理下一条用户消息前，对残留的 `curr_message_id` 补发一次 `type: 'close'`。
+而 `curr_message_id` 只有在最后一次 content/think 缓冲 flush **成功**时才会被清空，
+一旦那次 flush 失败或该轮根本没有 content/think，这个 `close` 就会指向一个早已结束并渲染好的轮次。
+早期前端收到 `close` 就按 messageId 把整条 assistant 消息删掉，于是出现了
+「上一轮回复莫名整段消失」的偶发现象。
+
+现在前端改成保守处理：已结束的轮次忽略 `close`；仍在 loading 且有产出的按 `stopped` 收尾并保留内容；
+只有 loading 且什么都没产出的空壳才移除。
+
 ### 仍然存在的限制
 
 `file://` 无法在浏览器里加载（开发态页面是 http 源，生产态是 file:// 源，Chrome 都拦），

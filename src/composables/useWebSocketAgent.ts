@@ -5,6 +5,7 @@ import type {
   ChatSession,
   ClientAttachment,
   ClientMessage,
+  ClientSessionAct,
   ClientSettingAct,
   ClientSystemAct,
   ServerMessage,
@@ -28,6 +29,8 @@ const AUTO_CONNECT_MAX_RETRY_MS = 15_000;
 const FOREGROUND_RECONNECT_THRESHOLD_MS = 30_000;
 const STREAM_FLUSH_MS = 80;
 const WS_TOKEN_STORAGE_KEY = 'agentbee.wsToken';
+/** 会话请求走哪个 type；后端目前只在 process_memory 里实现了这两个 act。 */
+const SESSION_REQUEST_TYPE: 'memory' | 'session' = 'memory';
 
 export type ConnectionIssueKind =
   | 'closed'
@@ -67,12 +70,24 @@ interface QueuedTextSend {
   text: string;
 }
 
+/**
+ * 一轮对话的归属。messageId → 这条 assistant 消息所在会话。
+ * 有了它，用户在流式输出期间切到别的会话，后续事件仍能落回原来的会话。
+ */
+interface PendingTurn {
+  assistantId: string | null;
+  sessionId: string;
+}
+
 interface UseWebSocketAgentOptions {
   activeSession: () => ChatSession | null;
   addMessage: (role: ChatMessage['role'], content: string, extra?: Partial<ChatMessage>) => ChatMessage;
+  /** 按 id 找会话；找不到（比如已被删除）时返回 null，宁可丢弃也不写错会话。 */
+  getSessionById?: (sessionId: string) => ChatSession | null;
   onSettingMessage?: (act: string, content: unknown, msg: ServerMessage) => void;
   onSystemMessage?: (act: string, content: unknown, msg: ServerMessage) => void;
   onMemoryMessage?: (act: string, msg: ServerMessage) => void;
+  onSessionMessage?: (act: string, msg: ServerMessage) => void;
   saveSessions: () => void;
   scheduleSaveSessions: () => void;
   touchSession: (session: ChatSession) => void;
@@ -87,7 +102,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   const autoConnectPaused = ref(false);
   const retryScheduled = ref(false);
   const isOnline = ref(navigator.onLine);
-  const pendingTurns = ref(new Map<string, string | null>());
+  const pendingTurns = ref(new Map<string, PendingTurn>());
   const socket = ref<WebSocket | null>(null);
   const noResponseTimers = new Map<string, number>();
   const pendingStreamUpdates = new Map<string, PendingStreamUpdate>();
@@ -104,6 +119,14 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
 
   const canSend = computed(() => connected.value && socket.value?.readyState === WebSocket.OPEN);
   const hasPendingTurns = computed(() => pendingTurns.value.size > 0);
+  /** 正在流式输出的会话 id 列表：会话列表用它打「生成中」标记，但不阻止切换。 */
+  const streamingSessionIds = computed(() => {
+    const ids = new Set<string>();
+    pendingTurns.value.forEach((turn) => {
+      if (turn?.sessionId) ids.add(turn.sessionId);
+    });
+    return Array.from(ids);
+  });
   const connectionState = computed<ConnectionState>(() => {
     if (connected.value) return 'connected';
     if (!isOnline.value) return 'offline';
@@ -349,7 +372,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       attachments: toChatAttachments(attachments),
       messageId,
     });
-    pendingTurns.value.set(messageId, null);
+    pendingTurns.value.set(messageId, { assistantId: null, sessionId: session.id });
     ensureAssistantMessage(messageId);
     startNoResponseTimer(messageId);
 
@@ -404,7 +427,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       removeAssistantForMessage(session, previousMessageId);
     }
     userMessage.messageId = messageId;
-    pendingTurns.value.set(messageId, null);
+    pendingTurns.value.set(messageId, { assistantId: null, sessionId: session.id });
     ensureAssistantMessage(messageId);
     startNoResponseTimer(messageId);
     options.touchSession(session);
@@ -420,10 +443,20 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
 
   function stopCurrent() {
     if (!canSend.value) return;
-    const session = options.activeSession();
-    const messageId = getLatestPendingMessageId();
+    // 优先停当前会话正在跑的那一轮；当前会话没有在跑的，就停最近发起的那一轮。
+    const messageId = getActiveSessionPendingMessageId() || getLatestPendingMessageId();
+    const { session } = resolveTurnSession(messageId);
     sendJson({ type: 'stop', sessionId: session ? session.id : null, messageId });
-    options.addMessage('system', 'Stop request sent.');
+    if (session) {
+      // 提示写进被停止的那个会话，而不是用户此刻正在看的会话。
+      session.messages.push({
+        id: makeId(),
+        role: 'system',
+        content: 'Stop request sent.',
+        time: nowTime(),
+      });
+      options.touchSession(session);
+    }
     finishAssistantMessage(messageId, 'stopped');
   }
 
@@ -456,8 +489,14 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       options.addMessage('error', 'Not connected, memory history was not loaded.');
       return false;
     }
+    // 顶层 sessionId 决定后端 `utils->session_id`（`go.php:863`），
+    // `process_memory` 的 read 用它给 agent_memory 加会话过滤。
+    // 漏掉这个字段，后端就会把 utils->session_id 清空并返回**全局**历史，
+    // 表现就是「新建会话还能看到旧会话的记录」。
+    const sessionId = options.activeSession()?.id || '';
     sendJson({
       type: 'memory',
+      sessionId,
       content: {
         act: 'read',
         length: Math.max(1, Math.floor(length)),
@@ -465,6 +504,35 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       },
     });
     return true;
+  }
+
+  /**
+   * 会话请求。后端（`lib/message.php process_memory`）目前是把 readSession / deleteSession
+   * 当作 **memory 类型的一个 act** 实现的，没有独立的 process_session，
+   * 所以这里必须发 `type: 'memory'`，否则后端反射不到方法。
+   * 若后端哪天拆出 `type: 'session'`，把 SESSION_REQUEST_TYPE 改掉即可，
+   * 响应侧两种 type 都能识别。
+   */
+  function sendSessionAct(act: ClientSessionAct, content?: Record<string, unknown>): boolean {
+    if (!canSend.value) {
+      options.addMessage('error', 'Not connected, session request was not sent.');
+      return false;
+    }
+    const payload: ClientMessage = SESSION_REQUEST_TYPE === 'session'
+      ? { type: 'session', content: { ...(content || {}), act } }
+      : { type: 'memory', content: { ...(content || {}), act } };
+    sendJson(payload);
+    return true;
+  }
+
+  function readSessions(): boolean {
+    return sendSessionAct('readSession');
+  }
+
+  function deleteSession(sessionId: string): boolean {
+    const id = sessionId.trim();
+    if (!id) return false;
+    return sendSessionAct('deleteSession', { sessionId: id });
   }
 
   function deleteMemory(createIds: number[]) {
@@ -519,6 +587,11 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     if (type === 'memory') {
       const { act } = unwrapActContent(msg);
       options.onMemoryMessage?.(act, msg);
+      return;
+    }
+    if (type === 'session') {
+      const { act } = unwrapActContent(msg);
+      options.onSessionMessage?.(act, msg);
       return;
     }
     if (type === 'history') return;
@@ -610,9 +683,13 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   }
 
   function ensureAssistantMessage(messageId: string | null, msg?: ServerMessage) {
-    const session = options.activeSession();
+    const resolvedMessageId = messageId || getLatestPendingMessageId();
+    // 既没有 messageId 也没有在等待的轮次：这段内容没有归属。
+    // 早先用 makeId() 兜底会凭空造一个空 assistant 气泡，并把它永久留在 pendingTurns 里。
+    if (!resolvedMessageId) return null;
+    // 归属会话取这一轮发起时记录的那个：流式输出期间切换会话，内容也不会跑错地方。
+    const session = resolveTurnSession(resolvedMessageId).session;
     if (!session) return null;
-    const resolvedMessageId = messageId || getLatestPendingMessageId() || makeId();
     const isSubTalk = msg?.isSubTalk === 1;
 
     let assistant = session.messages.find((message) => (
@@ -636,7 +713,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       session.messages.push(assistant);
     }
 
-    pendingTurns.value.set(resolvedMessageId, assistant.id);
+    pendingTurns.value.set(resolvedMessageId, { assistantId: assistant.id, sessionId: session.id });
     return { session, assistant, messageId: resolvedMessageId };
   }
 
@@ -698,9 +775,8 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     msg?: ServerMessage,
   ) {
     flushPendingStreamUpdates(messageId);
-    const resolvedMessageId = messageId || getLatestPendingMessageId();
+    const { messageId: resolvedMessageId, session } = resolveTurnSession(messageId);
     if (resolvedMessageId) clearNoResponseTimer(resolvedMessageId);
-    const session = options.activeSession();
     if (session && resolvedMessageId) {
       const assistant = session.messages.find((message) => (
         message.role === 'assistant' && message.messageId === resolvedMessageId
@@ -709,6 +785,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
         applySenderMeta(assistant, msg);
         assistant.status = status;
       }
+      options.touchSession(session);
     }
     if (resolvedMessageId) pendingTurns.value.delete(resolvedMessageId);
     options.saveSessions();
@@ -716,11 +793,14 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
 
   function finishAllPendingWithoutResponse() {
     flushPendingStreamUpdates();
-    const session = options.activeSession();
-    if (!session || !pendingTurns.value.size) return;
+    if (!pendingTurns.value.size) return;
 
-    pendingTurns.value.forEach((_, messageId) => {
+    pendingTurns.value.forEach((turn, messageId) => {
       clearNoResponseTimer(messageId);
+      const session = turn?.sessionId && options.getSessionById
+        ? options.getSessionById(turn.sessionId)
+        : options.activeSession();
+      if (!session) return;
       const assistant = session.messages.find((message) => (
         message.role === 'assistant' && message.messageId === messageId
       ));
@@ -732,12 +812,37 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     options.saveSessions();
   }
 
+  /**
+   * 后端 `close` 的语义是「放弃这一轮」，但它并不总是针对正在流式输出的那一轮：
+   * go.php 会在处理下一条用户消息前，对残留的 `curr_message_id` 补发一次 close，
+   * 而 `curr_message_id` 只有在最后一次 content/think 缓冲 flush 成功时才会被清空——
+   * 一旦那次 flush 失败（或该轮没有 content/think），close 就会指向一个**早已结束并渲染好**的轮次。
+   * 直接按 messageId 删除会把用户已经看到的整段回复抹掉，所以这里改成保守处理：
+   *  - 已结束（done/error/stopped）：什么都不做，close 是过期的
+   *  - 仍在 loading 且有内容/思考/工具：按 stopped 收尾，保留已流出的内容
+   *  - 仍在 loading 且什么都没产出：没有可保留的东西，移除这个空壳
+   */
   function closeAssistantMessage(messageId: string | null) {
     flushPendingStreamUpdates(messageId);
-    const resolvedMessageId = messageId || getLatestPendingMessageId();
+    const { messageId: resolvedMessageId, session } = resolveTurnSession(messageId);
     if (resolvedMessageId) clearNoResponseTimer(resolvedMessageId);
-    const session = options.activeSession();
     if (!session || !resolvedMessageId) return;
+
+    const assistant = session.messages.find((message) => (
+      message.role === 'assistant' && message.messageId === resolvedMessageId
+    ));
+
+    if (assistant && assistant.status !== 'loading') {
+      pendingTurns.value.delete(resolvedMessageId);
+      return;
+    }
+
+    if (assistant && hasAssistantOutput(assistant)) {
+      assistant.status = 'stopped';
+      pendingTurns.value.delete(resolvedMessageId);
+      options.saveSessions();
+      return;
+    }
 
     session.messages = session.messages.filter((message) => !(
       message.role === 'assistant' && message.messageId === resolvedMessageId
@@ -758,7 +863,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   function startNoResponseTimer(messageId: string) {
     clearNoResponseTimer(messageId);
     const timerId = window.setTimeout(() => {
-      const session = options.activeSession();
+      const session = resolveTurnSession(messageId).session;
       const assistant = session?.messages.find((message) => (
         message.role === 'assistant' && message.messageId === messageId
       ));
@@ -895,6 +1000,36 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     return ids.length ? ids[ids.length - 1] : null;
   }
 
+  /** 当前会话里最近一轮的 messageId（「停止」优先停用户正在看的这一轮）。 */
+  function getActiveSessionPendingMessageId(): string | null {
+    const activeId = options.activeSession()?.id;
+    if (!activeId) return null;
+    let found: string | null = null;
+    pendingTurns.value.forEach((turn, messageId) => {
+      if (turn?.sessionId === activeId) found = messageId;
+    });
+    return found;
+  }
+
+  /**
+   * 解析一个 messageId 属于哪个会话。
+   * 优先用该轮发起时记录的 sessionId——这样流式输出期间切到别的会话，
+   * 后续 content/end 仍会落回原会话，而不是写进用户刚切过去的那一个。
+   * 只有在没有记录（服务端主动推的零散内容）时才退回当前会话。
+   */
+  function resolveTurnSession(messageId: string | null): {
+    messageId: string | null;
+    session: ChatSession | null;
+  } {
+    const resolvedMessageId = messageId || getLatestPendingMessageId();
+    if (!resolvedMessageId) return { messageId: null, session: options.activeSession() };
+    const turn = pendingTurns.value.get(resolvedMessageId);
+    if (turn?.sessionId && options.getSessionById) {
+      return { messageId: resolvedMessageId, session: options.getSessionById(turn.sessionId) };
+    }
+    return { messageId: resolvedMessageId, session: options.activeSession() };
+  }
+
   function applySenderMeta(message: ChatMessage, msg?: ServerMessage) {
     if (!msg) return;
     if (typeof msg.workerName === 'string' && msg.workerName.trim()) {
@@ -943,17 +1078,21 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     connectionState,
     disconnect,
     deleteMemory,
+    deleteSession,
     autoConnectPaused,
     hasPendingTurns,
     reconnect,
     resumeConnection,
     readMemory,
+    readSessions,
     resendEditedText,
+    sendSessionAct,
     sendSettingAct,
     sendSystemAct,
     sendText,
     startAutoConnect,
     stopCurrent,
+    streamingSessionIds,
     wsToken,
     wsUrl,
   };
