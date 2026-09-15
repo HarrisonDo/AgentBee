@@ -495,3 +495,62 @@ describe('memory history requests', () => {
     });
   });
 });
+
+describe('session rename requests', () => {
+  it('puts sessionId at the top level and keeps only session_name in content', () => {
+    const { agent, sendUserText, sockets } = setupAgent();
+    sendUserText('warmup');
+
+    expect(agent.renameSession('session-1', '我起的名字')).toBe(true);
+    const payload = JSON.parse(sockets[0].sent[sockets[0].sent.length - 1]);
+    // 目标会话 id 在**顶层**：后端 `process_memory($socket_id, $data_content, $session_id)`
+    // 的第三个参数就是它。content 里只放 act 自己的参数。
+    expect(payload).toMatchObject({
+      type: 'memory',
+      sessionId: 'session-1',
+      content: { act: 'renameSession', session_name: '我起的名字' },
+    });
+    expect(payload.content).not.toHaveProperty('sessionId');
+  });
+
+  it('refuses to send an empty session id or an empty name', () => {
+    const { agent, sendUserText, sockets } = setupAgent();
+    sendUserText('warmup');
+    const before = sockets[0].sent.length;
+
+    expect(agent.renameSession('', '名字')).toBe(false);
+    expect(agent.renameSession('   ', '名字')).toBe(false);
+    expect(agent.renameSession('session-1', '   ')).toBe(false);
+    expect(sockets[0].sent).toHaveLength(before);
+  });
+});
+
+describe('session delete requests', () => {
+  it('puts the target sessionId at the top level, not in content', () => {
+    const { agent, sendUserText, sockets } = setupAgent();
+    sendUserText('warmup');
+
+    expect(agent.deleteSession('session-9')).toBe(true);
+    const payload = JSON.parse(sockets[0].sent[sockets[0].sent.length - 1]);
+    expect(payload).toMatchObject({
+      type: 'memory',
+      sessionId: 'session-9',
+      content: { act: 'deleteSession' },
+    });
+    expect(payload.content).not.toHaveProperty('sessionId');
+  });
+
+  it('carries the active session id on readSession too', () => {
+    const { agent, sendUserText, sockets } = setupAgent();
+    sendUserText('warmup');
+
+    expect(agent.readSessions()).toBe(true);
+    // readSession 本身不按会话过滤，但顶层不带 sessionId 会把后端的
+    // `utils->session_id` 清空，所以照样带上当前会话。
+    expect(JSON.parse(sockets[0].sent[sockets[0].sent.length - 1])).toMatchObject({
+      type: 'memory',
+      sessionId: 'session-1',
+      content: { act: 'readSession' },
+    });
+  });
+});

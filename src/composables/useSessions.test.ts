@@ -373,4 +373,137 @@ describe('renameSession', () => {
     expect(second.getSessionById(id)?.title).toBe('我改过的名字');
     expect(second.getSessionById(id)?.titleEdited).toBe(true);
   });
+
+  it('rolls a failed backend rename back, including the edited flag', () => {
+    const sessions = useSessions();
+    sessions.addMessage('user', '原来的标题');
+    const id = sessions.activeSessionId.value;
+    const previous = sessions.getSessionById(id)?.title as string;
+    expect(sessions.getSessionById(id)?.titleEdited).toBeUndefined();
+
+    sessions.renameSession(id, '改过的名字');
+    expect(sessions.getSessionById(id)?.titleEdited).toBe(true);
+
+    // 后端回 error → 回滚不仅要把名字退回去，`titleEdited` 也得还原成 false：
+    // 这次改名根本没生效，不该留下「用户手动命名过」的痕迹。
+    expect(sessions.restoreSessionTitle(id, previous, false)).toBe(true);
+    expect(sessions.getSessionById(id)?.title).toBe(previous);
+    expect(sessions.getSessionById(id)?.titleEdited).toBeUndefined();
+  });
+
+  it('rolls back to the previous name when an earlier rename had already succeeded', () => {
+    const sessions = useSessions();
+    sessions.addMessage('user', '起点');
+    const id = sessions.activeSessionId.value;
+
+    sessions.renameSession(id, '第一次改名');
+    sessions.renameSession(id, '第二次改名');
+    sessions.restoreSessionTitle(id, '第一次改名', true);
+
+    expect(sessions.getSessionById(id)?.title).toBe('第一次改名');
+    // 第一次改名是成功的，所以标记要留着。
+    expect(sessions.getSessionById(id)?.titleEdited).toBe(true);
+  });
+});
+
+describe('opening the window', () => {
+  it('never persists an unused new session, and drops legacy ones on load', () => {
+    // 1) 用户点了「新建会话」但一句话都没说 → 不写盘。
+    const first = useSessions({ defaultTitle: () => '新对话' });
+    first.createSession();
+    expect(first.sessions.value).toHaveLength(1);
+    first.saveSessions();
+
+    const second = useSessions({ defaultTitle: () => '新对话' });
+    second.loadSessions();
+    expect(second.sessions.value).toHaveLength(0);
+
+    // 2) 早期版本把它连 `keepEmpty` 一起存了下来 → 打开时清掉。
+    //    否则它会排在列表最前面，看起来就像「一打开窗口又自动新建了一个」。
+    storage.set('agentbee.sessions.v3', JSON.stringify([
+      {
+        id: 'legacy-shell',
+        title: '新对话',
+        createdAt: '2026-09-15T09:00:00.000Z',
+        updatedAt: '2026-09-15T09:00:00.000Z',
+        keepEmpty: true,
+        messages: [],
+      },
+      {
+        id: 'real',
+        title: '聊过的',
+        remoteName: '聊过的',
+        createdAt: '2026-09-14T09:00:00.000Z',
+        updatedAt: '2026-09-14T09:00:00.000Z',
+        messages: [{ id: 'm1', role: 'user', content: 'hi', time: '' }],
+      },
+    ]));
+
+    const third = useSessions({ defaultTitle: () => '新对话' });
+    third.loadSessions();
+    expect(third.sessions.value.map((session) => session.id)).toEqual(['real']);
+    expect(third.activeSessionId.value).toBe('real');
+  });
+
+  it('lands on the first session when the first readSession arrives', () => {
+    // 上次退出时停在缓存里的这一条上。注意时间要用**绝对时刻**比：
+    // 后端 `create_time` 是本地时间字符串，存进本地的是 ISO(UTC)，两边的时刻要对得上。
+    storage.set('agentbee.sessions.v3', JSON.stringify([
+      {
+        id: 'cached',
+        title: '缓存里的',
+        remoteName: '缓存里的',
+        createdAt: '2026-09-13T01:00:00.000Z',
+        updatedAt: '2026-09-13T01:00:00.000Z',
+        messages: [{ id: 'm1', role: 'user', content: 'hi', time: '' }],
+      },
+    ]));
+
+    const sessions = useSessions({ defaultTitle: () => '新对话' });
+    sessions.loadSessions();
+    expect(sessions.activeSessionId.value).toBe('cached');
+
+    // 打开窗口后的第一份 readSession：应该定位到第一条（最近一条），
+    // 而不是停在缓存里那条，更不该凭空造一个新的。
+    sessions.applyRemoteSessions([
+      { session_id: 'newest', session_name: '刚聊的', create_time: '2026-09-14 10:00:00' },
+      { session_id: 'cached', session_name: '缓存里的', create_time: '2026-09-13 09:00:00' },
+    ]);
+
+    expect(sessions.sessions.value.map((session) => session.id)).toEqual(['newest', 'cached']);
+    expect(sessions.activeSessionId.value).toBe('newest');
+  });
+
+  it('does not drag the user back on later refreshes', () => {
+    const sessions = useSessions({ defaultTitle: () => '新对话' });
+    const remote = [
+      { session_id: 'newest', session_name: '最近的', create_time: '2026-09-14 10:00:00' },
+      { session_id: 'older', session_name: '早一点的', create_time: '2026-09-14 09:00:00' },
+    ];
+    sessions.applyRemoteSessions(remote);
+    expect(sessions.activeSessionId.value).toBe('newest');
+
+    expect(sessions.switchSession('older')).toBe(true);
+    // 手动点刷新：用户已经在 older 里了，不能再被拽回第一条。
+    sessions.applyRemoteSessions(remote);
+
+    expect(sessions.activeSessionId.value).toBe('older');
+  });
+
+  it('does not drag the user back after they already sent a message', () => {
+    const sessions = useSessions({ defaultTitle: () => '新对话' });
+    sessions.applyRemoteSessions([
+      { session_id: 'first', session_name: '第一个', create_time: '2026-09-14 10:00:00' },
+      { session_id: 'second', session_name: '第二个', create_time: '2026-09-14 09:00:00' },
+    ]);
+    sessions.switchSession('second');
+    sessions.addMessage('user', '我在这里说话了');
+
+    sessions.applyRemoteSessions([
+      { session_id: 'first', session_name: '第一个', create_time: '2026-09-14 10:00:00' },
+      { session_id: 'second', session_name: '第二个', create_time: '2026-09-14 09:00:00' },
+    ]);
+
+    expect(sessions.activeSessionId.value).toBe('second');
+  });
 });

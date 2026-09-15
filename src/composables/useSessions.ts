@@ -32,6 +32,22 @@ export function useSessions(options: UseSessionsOptions = {}) {
   const fallbackSession = ref<ChatSession>(createEmptySession(resolveDefaultTitle()));
   let saveTimer: number | null = null;
   let storageDisabled = false;
+  /**
+   * 「本次打开还没有落点」。
+   *
+   * 窗口刚打开时不存在「用户正在某个会话里」这回事，所以第一份 `readSession` 回来后
+   * 应该直接站到列表第一条（后端按 `create_time DESC` 返回，即最近一条），
+   * 而不是停在本地缓存里的某条上、更不该凭空造一个新的。
+   *
+   * 一旦用户自己动过（发消息 / 新建 / 切换 / 删除 / 改名），这个标记立刻作废：
+   * 之后再收到 readSession（手动刷新、断线重连）绝不能把用户从他正在聊的会话里踢走。
+   */
+  let initialPlacementPending = true;
+
+  /** 用户自己决定了落点（或已经在某个会话里活动过）：放弃首次自动定位。 */
+  function markPlacementDecided() {
+    initialPlacementPending = false;
+  }
 
   function resolveDefaultTitle(): string {
     const label = options.defaultTitle?.()?.trim();
@@ -45,16 +61,38 @@ export function useSessions(options: UseSessionsOptions = {}) {
   }
 
   /**
-   * 本地兜底出来的「空占位」会话：没有任何消息、不是后端下发的、标题还是占位文案。
+   * 「空会话」：一句话都没说过、标题还是占位文案、也没被手动命名过。
+   * 这种会话没有任何用户内容，只是界面上的一个空壳。
+   */
+  function isEmptySession(session: ChatSession): boolean {
+    return session.messages.length === 0
+      && !session.titleEdited
+      && isPlaceholderTitle(session.title);
+  }
+
+  /**
+   * 不该落盘的空壳：空会话 + 不是后端下发的。
+   *
+   * 早期版本会把兜底占位存进 localStorage，于是「删了会话、刷新又冒出一条空会话」；
+   * 后来用户主动点「新建会话」留的空壳（`keepEmpty`）也会被存下来，刷新后排在列表最前，
+   * 看起来就像「一打开窗口又自动新建了一个」。两者都归到这一类，一律不写盘。
+   *
+   * 后端下发的空会话（有 `remoteName`）要留着：它代表服务端真实存在的会话，
+   * 下次连不上时列表也不至于空掉。
+   */
+  function isUnusedEmptySession(session: ChatSession): boolean {
+    return !session.remoteName && isEmptySession(session);
+  }
+
+  /**
+   * 本地兜底出来的「空占位」会话：不该落盘的空壳 + 不是用户主动新建的。
    * 它只是 `ensureSession()` 为了让界面有东西可渲染临时塞进来的，不是真实历史。
    *
-   * 用户主动点「新建会话」留的空壳（`keepEmpty`）不算在内——那是他自己的意图。
+   * 用户主动点「新建会话」留的空壳（`keepEmpty`）不算在内——那是他自己的意图，
+   * 在本次打开期间要留着（只是不写盘）。
    */
   function isBlankPlaceholderSession(session: ChatSession): boolean {
-    return !session.keepEmpty
-      && !session.remoteName
-      && session.messages.length === 0
-      && isPlaceholderTitle(session.title);
+    return !session.keepEmpty && isUnusedEmptySession(session);
   }
 
   const activeSession = computed<ChatSession>(() => {
@@ -86,11 +124,13 @@ export function useSessions(options: UseSessionsOptions = {}) {
   function loadSessions() {
     clearSaveTimer();
     storageDisabled = false;
+    // 一次新的「打开」：落点重新交给第一份 readSession 决定。
+    initialPlacementPending = true;
     localStorage.removeItem(LEGACY_STORAGE_KEY);
     localStorage.removeItem(SINGLE_SESSION_STORAGE_KEY);
-    // 顺手清掉历史遗留的兜底占位：早期版本会把「新对话」空壳一起存进 localStorage，
+    // 顺手清掉历史遗留的空壳（含早期版本存下来的兜底占位、以及没用过的「新建会话」）：
     // 不清就会每次打开都看见一条凭空多出来的空会话（连不上后端时也一样）。
-    sessions.value = restoreSessions().filter((session) => !isBlankPlaceholderSession(session));
+    sessions.value = restoreSessions().filter((session) => !isUnusedEmptySession(session));
     activeSessionId.value = sessions.value.length ? sessions.value[0].id : '';
     // 本地一条都没有时，兜底会话必须是干净的：否则会把上一轮的残留消息渲染出来。
     if (!sessions.value.length) fallbackSession.value = createEmptySession(resolveDefaultTitle());
@@ -101,10 +141,10 @@ export function useSessions(options: UseSessionsOptions = {}) {
     if (storageDisabled) return;
     clearSaveTimer();
 
-    // 空占位永远不落盘：它只是列表被删空时的内存兜底，
-    // 存进 localStorage 就会在刷新后「复活」成一条新对话。
+    // 空壳永远不落盘（兜底占位、以及用户点出来但一句话都没说的「新建会话」）：
+    // 存进 localStorage 就会在刷新后「复活」成一条空会话，看起来像打开时被自动新建了。
     let snapshot = createStorageSnapshot(
-      sessions.value.filter((session) => !isBlankPlaceholderSession(session)),
+      sessions.value.filter((session) => !isUnusedEmptySession(session)),
     );
 
     for (let attempt = 0; attempt < MAX_SAVE_ATTEMPTS; attempt += 1) {
@@ -137,6 +177,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
   function clearLocalHistory() {
     storageDisabled = true;
     clearSaveTimer();
+    initialPlacementPending = true;
     localStorage.removeItem(LEGACY_STORAGE_KEY);
     localStorage.removeItem(SINGLE_SESSION_STORAGE_KEY);
     localStorage.removeItem(STORAGE_KEY);
@@ -151,6 +192,8 @@ export function useSessions(options: UseSessionsOptions = {}) {
   }
 
   function addMessage(role: MessageRole, content: string, extra: Partial<ChatMessage> = {}): ChatMessage {
+    // 用户已经在这里说话了：之后 readSession 回来不许再自动跳走。
+    markPlacementDecided();
     // 列表被删空时（空列表是合法状态）先起一条：否则消息会落进内存里的兜底会话，
     // 既进不了列表、也存不进 localStorage，刷新就丢了。
     if (!sessions.value.length) createSession();
@@ -188,6 +231,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
    * 标 `keepEmpty`：这是用户主动要的空会话，刷新拿到历史列表时不能被当成占位清掉。
    */
   function createSession(): ChatSession {
+    markPlacementDecided();
     const session = createEmptySession(resolveDefaultTitle(), true);
     sessions.value.unshift(session);
     activeSessionId.value = session.id;
@@ -204,6 +248,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
   function switchSession(sessionId: string): boolean {
     const exists = sessions.value.some((session) => session.id === sessionId);
     if (!exists || sessionId === activeSessionId.value) return false;
+    markPlacementDecided();
     activeSessionId.value = sessionId;
     saveSessions();
     return true;
@@ -228,16 +273,35 @@ export function useSessions(options: UseSessionsOptions = {}) {
     const normalized = normalizeSessionTitle(title);
     if (!normalized) return null;
 
+    markPlacementDecided();
     session.title = normalized;
     session.titleEdited = true;
     saveSessions();
     return normalized;
   }
 
+  /**
+   * 把标题回滚成改名前（后端 `renameSession` 失败时用）。
+   *
+   * 与 `renameSession()` 的差别：`titleEdited` 也一并还原。这次改名根本没生效，
+   * 不该留下「用户手动命名过」的痕迹——否则「第一句话前 8 个字」的自动命名会被永久挡掉，
+   * 那个会话就再也起不了名字了。
+   */
+  function restoreSessionTitle(sessionId: string, title: string, titleEdited: boolean): boolean {
+    const session = getSessionById(sessionId);
+    if (!session || !title) return false;
+    session.title = title;
+    if (titleEdited) session.titleEdited = true;
+    else delete session.titleEdited;
+    saveSessions();
+    return true;
+  }
+
   function removeSession(sessionId: string): boolean {
     const index = sessions.value.findIndex((session) => session.id === sessionId);
     if (index < 0) return false;
 
+    markPlacementDecided();
     const wasActive = sessions.value[index].id === activeSessionId.value;
     sessions.value.splice(index, 1);
 
@@ -259,12 +323,17 @@ export function useSessions(options: UseSessionsOptions = {}) {
    * - 本地标着「来自后端」、后端却没有 → 服务端已删，本地跟着删（否则会复活）。
    * - 本地空占位 → 丢掉（早期版本会把兜底占位存进 localStorage）。
    *
-   * 落点：本地本来就没有真实历史、或当前停在空占位上时，直接进入排序后的第一条
-   * （后端按 `create_time DESC` 返回，即最近一条）；后端也没有历史就保持空列表，
-   * 由用户自己点「新建会话」，不再凭空造一条。
-   * 只有用户主动点「新建会话」留的空壳（`keepEmpty`）会被保留。
+   * 落点：**本次打开的第一份 readSession 会直接定位到排序后的第一条**
+   * （后端按 `create_time DESC` 返回，即最近一条）；用户自己动过之后（发过消息 /
+   * 新建 / 切换 / 删除 / 改名）就不再有自动定位，手动刷新和断线重连都不会把他踢走。
+   * 后端也没有历史就保持空列表，由用户自己点「新建会话」，不再凭空造一条。
+   * 只有用户主动点「新建会话」留的空壳（`keepEmpty`）在本次打开期间会被保留。
    */
   function applyRemoteSessions(remote: RemoteSession[]): void {
+    // 只在「本次打开的第一份 readSession」上生效；读到就作废，提前 return 的路径也算。
+    const pendingInitialPlacement = initialPlacementPending;
+    initialPlacementPending = false;
+
     // 后端返回的会话 id 集合：会话是不是还存在，以服务端为准。
     const remoteIds = new Set(
       remote.map((item) => String(item.session_id || '').trim()).filter(Boolean),
@@ -332,10 +401,11 @@ export function useSessions(options: UseSessionsOptions = {}) {
       fallbackSession.value = createEmptySession(resolveDefaultTitle());
     }
 
-    // 本地本来就没有真实历史，或者当前就停在一个空占位上：
-    // 直接落到排序后的第一条（后端按 create_time DESC 返回，即最近的一条会话）。
+    // 本次打开还没有落点（第一份 readSession），或者本地本来就没有真实历史、
+    // 或者当前就停在一个空占位上：直接落到排序后的第一条
+    // （后端按 create_time DESC 返回，即最近的一条会话）。
     // 没有任何历史时列表就保持为空，由用户自己点「新建会话」。
-    if (!localHasRealContent || activeIsBlankPlaceholder) {
+    if (pendingInitialPlacement || !localHasRealContent || activeIsBlankPlaceholder) {
       activeSessionId.value = '';
     }
 
@@ -379,6 +449,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     loadSessions,
     removeSession,
     renameSession,
+    restoreSessionTitle,
     saveSessions,
     scheduleSaveSessions,
     sessions,

@@ -15,6 +15,7 @@ import Composer from './components/Composer.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
 import ConnectionPanel from './components/ConnectionPanel.vue';
 import SessionPanel from './components/SessionPanel.vue';
+import ToastStack from './components/ToastStack.vue';
 import LoginWin from './components/LoginWin.vue';
 import SettingsView from './components/SettingsView.vue';
 import SystemLogGroup from './components/SystemLogGroup.vue';
@@ -25,6 +26,7 @@ import { useAppViewport } from './composables/useAppViewport';
 import { useI18n } from './composables/useI18n';
 import { useSessions } from './composables/useSessions';
 import { useTheme } from './composables/useTheme';
+import { useToasts } from './composables/useToasts';
 import {
   useWebSocketAgent,
   type ConnectionIssue,
@@ -121,8 +123,24 @@ let pendingMemoryReadMode: MemoryReadMode | null = null;
 const sessionLoading = ref(false);
 const sessionDeleting = ref(false);
 const sessionDeleteCandidateId = ref<string | null>(null);
+/**
+ * 在途的改名请求。失败时要回滚成改名前，所以得记下「原来叫什么、原来是不是手动命名的」；
+ * `nextTitle` 供成功提示用。不需要 timeout：本地已经先生效了，
+ * 后端没有回应也不影响用户看到的结果。
+ */
+let sessionRenameCandidate: {
+  sessionId: string;
+  nextTitle: string;
+  previous: { title: string; titleEdited: boolean };
+} | null = null;
 const sessionError = ref('');
 let sessionResponseTimer: number | null = null;
+/**
+ * 删除专用的超时计时器。
+ * 不能复用 `sessionResponseTimer`：那个的守卫是 `sessionLoading`，删除时它一直是 false，
+ * 计时器会直接空跑——会话既没删掉、界面上又没有任何解释。
+ */
+let sessionDeleteTimer: number | null = null;
 let resizeStartX = 0;
 let resizeStartWidth = 0;
 let resizePointerId: number | null = null;
@@ -130,6 +148,7 @@ let chatShellResizeObserver: ResizeObserver | null = null;
 
 const { locale, setLocale, t } = useI18n();
 const { setTheme, theme } = useTheme();
+const toasts = useToasts();
 useAppViewport();
 
 const sessions = useSessions({ defaultTitle: () => t.value.untitledSession });
@@ -171,9 +190,12 @@ watch(() => agent.canSend.value, (canSend) => {
   pendingMemoryReadMode = null;
   clearMemoryResponseTimer();
   clearSessionResponseTimer();
+  clearSessionDeleteTimer();
   sessionLoading.value = false;
   sessionDeleting.value = false;
   sessionDeleteCandidateId.value = null;
+  // 掉线了就不该再等改名的回执：本地已经生效，回执来了也没人认领。
+  sessionRenameCandidate = null;
 });
 
 const activeMeta = computed(() => {
@@ -789,8 +811,19 @@ function sendSettingRequest(act: ClientSettingAct, content?: unknown) {
 
 function handleMemoryMessage(act: string, msg: ServerMessage) {
   // 会话 CRUD 目前是 memory 类型下的 act，转发给会话处理。
-  if (act === 'readSession' || act === 'deleteSession') {
+  if (act === 'readSession' || act === 'deleteSession' || act === 'renameSession') {
     handleSessionMessage(act, msg);
+    return;
+  }
+
+  // 兜底：后端 `process_memory` 的每个 case 都会补 `$content['act'] = $act`，
+  // 只有 default（`$data_content['act'] ?? 'unknown'` 认不出来的 act）把 content 整个换成
+  // `{status, error}`，**响应里没有 act**（见 message.php + go.php 的 `['type'=>…] + $content`）。
+  // 所以「发出一个后端不认识的 act」会表现为一条无 act 的 memory 错误。
+  // 此刻若正好有在途的改名请求，就按改名失败处理——否则标题会一直停在用户改的名字上，
+  // 后端却从没接受过。等服务端补上 case，响应自带 act，自然走上面的正常路径。
+  if (!act && sessionRenameCandidate && normalizeServerError(msg)) {
+    handleSessionMessage('renameSession', msg);
     return;
   }
 
@@ -883,6 +916,28 @@ function clearSessionResponseTimer() {
   sessionResponseTimer = null;
 }
 
+/**
+ * 删除的超时兜底：超时就当成「失败」弹提示，并把确认框收掉。
+ * 没有它的话，后端不回执（掉线、服务端异常）时用户只会看到确认框一直挂着，
+ * 既没有成功也没有失败的结论。
+ */
+function startSessionDeleteTimer() {
+  clearSessionDeleteTimer();
+  sessionDeleteTimer = window.setTimeout(() => {
+    sessionDeleteTimer = null;
+    if (!sessionDeleting.value) return;
+    sessionDeleting.value = false;
+    sessionDeleteCandidateId.value = null;
+    toasts.pushToast(t.value.sessionDeleteTimeout, 'error');
+  }, SESSION_RESPONSE_TIMEOUT_MS);
+}
+
+function clearSessionDeleteTimer() {
+  if (sessionDeleteTimer === null) return;
+  window.clearTimeout(sessionDeleteTimer);
+  sessionDeleteTimer = null;
+}
+
 function handleSessionMessage(act: string, msg: ServerMessage) {
   const errorMessage = normalizeServerError(msg);
 
@@ -907,22 +962,62 @@ function handleSessionMessage(act: string, msg: ServerMessage) {
   }
 
   if (act === 'deleteSession') {
-    clearSessionResponseTimer();
+    clearSessionDeleteTimer();
     sessionDeleting.value = false;
     if (errorMessage) {
-      sessionError.value = errorMessage;
+      // 后端没能删掉（缺会话 ID、服务端异常…）：本地**保留**这条会话，
+      // 否则下次 readSession 会把它又带回来，看起来就像「删了又复活」。
+      sessionDeleteCandidateId.value = null;
+      sessionError.value = '';
+      toasts.pushToast(`${t.value.sessionDeleteFailed}：${errorMessage}`, 'error');
       return;
     }
-    // 无论后端删没删掉，本地都按用户意图移除。
+    // 后端确认删掉了，本地跟着移除。
     if (sessionDeleteCandidateId.value) {
       const deletedId = sessionDeleteCandidateId.value;
+      const deletedName = sessions.getSessionById(deletedId)?.title || '';
       const wasActive = deletedId === sessions.activeSessionId.value;
       sessions.removeSession(deletedId);
       sessionDeleteCandidateId.value = null;
       // 删掉的正是当前会话时落点已经换人，历史也得跟着换。
       if (wasActive) reloadActiveSessionHistory();
+      sessionError.value = '';
+      toasts.pushToast(
+        deletedName ? `${t.value.sessionDeleted}：${deletedName}` : t.value.sessionDeleted,
+        'success',
+      );
     }
+    return;
+  }
+
+  if (act === 'renameSession') {
+    const pending = sessionRenameCandidate;
+    sessionRenameCandidate = null;
+    // 没有在途的改名（比如后端主动推的一条）：没什么可对齐的。
+    if (!pending) return;
+    if (errorMessage) {
+      // 后端没改成功：把标题退回原名，别让本地和服务端不一致。
+      sessions.restoreSessionTitle(
+        pending.sessionId,
+        pending.previous.title,
+        pending.previous.titleEdited,
+      );
+      sessionError.value = '';
+      toasts.pushToast(
+        `${t.value.sessionRenameFailed}：${errorMessage}，${t.value.sessionRenameRolledBack}`,
+        'error',
+      );
+      return;
+    }
+    // 成功后用后端返回的名字对齐（后端可能自己做过规范化 / 截断）。
+    // 后端把 content 展开到顶层，所以名字可能在 msg 上，也可能在 msg.data 里。
+    const payload = (msg.data ?? msg) as { session_name?: unknown };
+    const serverName = String(payload.session_name ?? '').trim();
+    // `renameSession()` 返回规范化后的标题；后端没回名字就用本地这次的。
+    const finalName = (serverName && sessions.renameSession(pending.sessionId, serverName))
+      || pending.nextTitle;
     sessionError.value = '';
+    toasts.pushToast(`${t.value.sessionRenamed}：${finalName}`, 'success');
   }
 }
 
@@ -950,27 +1045,47 @@ function selectSession(sessionId: string) {
 }
 
 /**
- * 会话重命名。**目前只改本地**——后端还没有改名接口。
+ * 会话重命名。策略是「本地先生效，再同步给后端」：
  *
- * 后端接口到位后，唯一的改动点就在这个函数里：在 `sessions.renameSession()` 前后
- * 补一次 WS 请求（act 名以后端 `process_memory` / `process_session` 的实际分支为准，
- * 现在只有 `readSession` / `deleteSession`），成功时用后端返回的 `session_name`
- * 覆盖本地标题，失败时回滚成旧标题。
- * `ChatSession.titleEdited` 已经标好「本地改过名」，`readSession` 回来的旧名字
- * 不会把用户的改动反覆盖回去。
+ * - 请求形如 `{ type:'memory', sessionId, content:{ act:'renameSession', session_name } }`
+ *   （见 `useWebSocketAgent.renameSession()`）：**sessionId 在顶层**，content 里只有 `session_name`。
+ * - 本地立刻改好，界面上不会有等待感；离线时只改本地，不发注定失败的请求。
+ * - 结果用右下角提示播报（成功 / 失败）；后端返回 error 还会把标题回滚成改名前。
  */
 function renameSession(sessionId: string, title: string) {
-  if (!sessions.renameSession(sessionId, title)) return;
+  const target = sessions.getSessionById(sessionId);
+  if (!target) return;
+  // 回滚要连 `titleEdited` 一起还原，所以先把「改名前长什么样」记下来。
+  const previous = { title: target.title, titleEdited: Boolean(target.titleEdited) };
+
+  const renamed = sessions.renameSession(sessionId, title);
+  if (!renamed) return;
   sessionError.value = '';
+
+  // 没连上就只改本地：明确说明这次不会同步到服务端，别让人以为已经生效了。
+  if (!agent.canSend.value) {
+    toasts.pushToast(t.value.sessionRenameLocal, 'info');
+    return;
+  }
+  if (!agent.renameSession(sessionId, renamed)) return;
+  // 成功 / 失败都等后端回执再弹（本地已经改了，但服务端认不认要以回执为准）。
+  sessionRenameCandidate = { sessionId, nextTitle: renamed, previous };
 }
 
 function requestSessionDelete(sessionId: string) {
   if (!agent.canSend.value) {
     // 没连上就只删本地，不给后端发请求。
+    const deletedName = sessions.getSessionById(sessionId)?.title || '';
     const wasActive = sessionId === sessions.activeSessionId.value;
-    sessions.removeSession(sessionId);
+    const removed = sessions.removeSession(sessionId);
     // 删的是当前会话：清掉它残留的历史，别让它继续挂在聊天区。
     if (wasActive) reloadActiveSessionHistory();
+    if (removed) {
+      toasts.pushToast(
+        deletedName ? `${t.value.sessionDeleteLocal}：${deletedName}` : t.value.sessionDeleteLocal,
+        'info',
+      );
+    }
     return;
   }
   sessionDeleteCandidateId.value = sessionId;
@@ -983,18 +1098,26 @@ function cancelSessionDelete() {
 function confirmSessionDelete() {
   const sessionId = sessionDeleteCandidateId.value;
   if (!sessionId) return;
+  const deletedName = sessions.getSessionById(sessionId)?.title || '';
   sessionDeleting.value = true;
   sessionError.value = '';
 
   const sent = agent.deleteSession(sessionId);
   if (sent) {
-    startSessionResponseTimer();
+    // 等后端回执：成功 / 失败都会弹提示；一直没回执则由超时兜底报失败。
+    startSessionDeleteTimer();
     return;
   }
   // 发送失败（多半是掉线）就只清本地。
   sessionDeleting.value = false;
-  sessions.removeSession(sessionId);
+  const removed = sessions.removeSession(sessionId);
   sessionDeleteCandidateId.value = null;
+  if (removed) {
+    toasts.pushToast(
+      deletedName ? `${t.value.sessionDeleteLocal}：${deletedName}` : t.value.sessionDeleteLocal,
+      'info',
+    );
+  }
 }
 
 function handleSettingMessage(act: string, content: unknown, msg: ServerMessage) {
@@ -1348,6 +1471,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearMemoryResponseTimer();
+  clearSessionResponseTimer();
+  clearSessionDeleteTimer();
   window.removeEventListener('pagehide', handlePageHide);
   window.removeEventListener('pageshow', handlePageShow);
   chatShellResizeObserver?.disconnect();
@@ -1800,5 +1925,11 @@ function redactConnectionUrl(value: string): string {
     :title="t.deleteSessionConfirmTitle"
     @cancel="cancelSessionDelete"
     @confirm="confirmSessionDelete"
+  />
+
+  <ToastStack
+    :toasts="toasts.toasts.value"
+    :dismiss-label="t.dismissToast"
+    @dismiss="toasts.dismissToast"
   />
 </template>

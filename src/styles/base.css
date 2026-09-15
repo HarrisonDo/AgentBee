@@ -620,6 +620,105 @@ body:has(.login-window-backdrop) {
   display: none;
 }
 
+/* --------------------------------------------------------------------------
+   操作结果提示（toast）：删除 / 重命名的成功与失败。
+   固定在右下角——避开头部的 topbar 和底部的输入框，窄屏时靠 max-width 自适应。
+   z-index 取 130，高于 ConfirmDialog 的 120：删除失败时确认框可能还开着，
+   提示必须压在它上面否则用户看不到。
+   -------------------------------------------------------------------------- */
+.toast-stack {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 130;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 10px 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  pointer-events: auto;
+  animation: toast-rise 0.18s ease-out;
+}
+
+.toast-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.toast-message {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.toast-close {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  opacity: 0.65;
+}
+
+.toast-close:hover {
+  opacity: 1;
+}
+
+.toast-success {
+  border-color: color-mix(in srgb, var(--success) 46%, var(--line));
+}
+
+.toast-success .toast-icon {
+  color: var(--success);
+}
+
+.toast-error {
+  border-color: color-mix(in srgb, var(--danger) 50%, var(--line));
+}
+
+.toast-error .toast-icon {
+  color: var(--danger);
+}
+
+.toast-info {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+}
+
+.toast-info .toast-icon {
+  color: var(--accent);
+}
+
+@keyframes toast-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+
 .connection {
   padding: 8px;
   border-top: 0;

@@ -484,19 +484,35 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     return true;
   }
 
+  /**
+   * 出站消息的 **顶层 `sessionId`**，统一从这里取。
+   *
+   * 后端 `go.php` 的派发是
+   * `$this->message->$type_method($socket_id, $data['content'], $data['sessionId'] ?? '')`——
+   * `sessionId` 只从**顶层**读，再作为第三个参数进 `process_*`。
+   * 所以：**`sessionId` 一律放顶层，`content` 里只放 act 自己的参数**
+   * （`session_name` / `create_ids` / `length` / `create_id` …）。
+   * 目前只有 `process_memory` 真正用它（read 的会话过滤、renameSession / deleteSession 的目标会话）；
+   * 其余 `process_*` 是两参数签名，多传一个会被 PHP 忽略。
+   */
+  function currentSessionId(sessionId?: string): string {
+    const explicit = (sessionId || '').trim();
+    if (explicit) return explicit;
+    return options.activeSession()?.id || '';
+  }
+
   function readMemory(length: number, createId = 0) {
     if (!canSend.value) {
       options.addMessage('error', 'Not connected, memory history was not loaded.');
       return false;
     }
-    // 顶层 sessionId 决定后端 `utils->session_id`（`go.php:863`），
-    // `process_memory` 的 read 用它给 agent_memory 加会话过滤。
-    // 漏掉这个字段，后端就会把 utils->session_id 清空并返回**全局**历史，
+    // 顶层 sessionId 会作为第三个参数进 `process_memory`，read 分支再把它传给
+    // `Memory::read(..., $session_id, ...)`——那里对 `daily`/`misc` 只在非空时才加
+    // `where session_id`。**漏掉这个字段后端就返回全局历史**，
     // 表现就是「新建会话还能看到旧会话的记录」。
-    const sessionId = options.activeSession()?.id || '';
     sendJson({
       type: 'memory',
-      sessionId,
+      sessionId: currentSessionId(),
       content: {
         act: 'read',
         length: Math.max(1, Math.floor(length)),
@@ -507,20 +523,28 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   }
 
   /**
-   * 会话请求。后端（`lib/message.php process_memory`）目前是把 readSession / deleteSession
-   * 当作 **memory 类型的一个 act** 实现的，没有独立的 process_session，
+   * 会话请求。后端（`lib/message.php process_memory`）目前是把 readSession / deleteSession /
+   * renameSession 当作 **memory 类型的一个 act** 实现的，没有独立的 process_session，
    * 所以这里必须发 `type: 'memory'`，否则后端反射不到方法。
    * 若后端哪天拆出 `type: 'session'`，把 SESSION_REQUEST_TYPE 改掉即可，
    * 响应侧两种 type 都能识别。
+   *
+   * `sessionId` 走**顶层**：`readSession` 不传就带上当前会话（后端 readSession 不按会话过滤，
+   * 带上只是为了「会话相关请求一律带顶层 sessionId」这条约定统一）；
+   * `deleteSession` / `renameSession` 传的是**目标会话**，后端直接读它。
    */
-  function sendSessionAct(act: ClientSessionAct, content?: Record<string, unknown>): boolean {
+  function sendSessionAct(
+    act: ClientSessionAct,
+    sessionId?: string,
+    content?: Record<string, unknown>,
+  ): boolean {
     if (!canSend.value) {
       options.addMessage('error', 'Not connected, session request was not sent.');
       return false;
     }
     const payload: ClientMessage = SESSION_REQUEST_TYPE === 'session'
-      ? { type: 'session', content: { ...(content || {}), act } }
-      : { type: 'memory', content: { ...(content || {}), act } };
+      ? { type: 'session', sessionId: currentSessionId(sessionId), content: { ...(content || {}), act } }
+      : { type: 'memory', sessionId: currentSessionId(sessionId), content: { ...(content || {}), act } };
     sendJson(payload);
     return true;
   }
@@ -532,7 +556,22 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   function deleteSession(sessionId: string): boolean {
     const id = sessionId.trim();
     if (!id) return false;
-    return sendSessionAct('deleteSession', { sessionId: id });
+    // 目标会话 id 放顶层，content 里不带 sessionId。
+    return sendSessionAct('deleteSession', id);
+  }
+
+  /**
+   * 重命名会话：`{ type:'memory', sessionId, content:{ act:'renameSession', session_name } }`。
+   *
+   * 目标会话 id 走**顶层**——后端 `process_memory` 的第三个参数就是它，
+   * `content` 里只放 act 自己的参数。名字字段用蛇形 `session_name`，
+   * 对齐后端 `updateSession(session_id, session_name)` 和 `readSession` 返回里的同名字段。
+   */
+  function renameSession(sessionId: string, sessionName: string): boolean {
+    const id = sessionId.trim();
+    const name = sessionName.trim();
+    if (!id || !name) return false;
+    return sendSessionAct('renameSession', id, { session_name: name });
   }
 
   function deleteMemory(createIds: number[]) {
@@ -544,6 +583,9 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     if (!ids.length) return false;
     sendJson({
       type: 'memory',
+      // 后端的 delete 分支不按会话过滤（`create_id` 是主键），但会话相关请求一律带上顶层
+      // sessionId，保持和 read / renameSession / deleteSession 一致。
+      sessionId: currentSessionId(),
       content: { act: 'delete', create_ids: ids },
     });
     return true;
@@ -1085,6 +1127,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     resumeConnection,
     readMemory,
     readSessions,
+    renameSession,
     resendEditedText,
     sendSessionAct,
     sendSettingAct,

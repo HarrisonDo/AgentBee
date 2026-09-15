@@ -117,25 +117,41 @@ message 事件时主动收尾该轮次——后端对这种 `need_llm = false` �
 
 - **协议**：会话 CRUD 目前是 **memory 类型下的 act**，不是独立的 `session` 类型——后端
   `lib/message.php` 的 `process_memory` 里直接 switch 了 `read` / `delete` / `readSession` /
-  `deleteSession`，并没有 `process_session`。所以请求长这样：
+  `deleteSession` / `renameSession`，并没有 `process_session`。
+- **`sessionId` 一律放顶层，`content` 里不放**：后端 `go.php` 的派发是
+  `$this->message->$type_method($socket_id, $data['content'], $data['sessionId'] ?? '')`，
+  只有顶层能进 `process_memory` 的第三个参数（`read` 拿它做会话过滤，
+  `renameSession` / `deleteSession` 拿它当目标会话），`content` 里只放 act 自己的参数。
+  所以请求长这样：
   ```json
-  { "type": "memory", "content": { "act": "readSession" } }
-  { "type": "memory", "content": { "act": "deleteSession", "sessionId": "uuid" } }
+  { "type": "memory", "sessionId": "uuid", "content": { "act": "readSession" } }
+  { "type": "memory", "sessionId": "uuid", "content": { "act": "deleteSession" } }
+  { "type": "memory", "sessionId": "uuid", "content": { "act": "renameSession", "session_name": "新名字" } }
+  { "type": "memory", "sessionId": "uuid", "content": { "act": "read", "length": 20, "create_id": 0 } }
   ```
+  `chat` / `stop` 同理（`{ "type":"chat", "sessionId":"…", "messageId":"…", "content":[…] }`）。
+  `type:'setting'` / `type:'system'` 与会话无关，不带 `sessionId`
+  （它们的 `process_*` 是两参数签名，PHP 会忽略多传的那个参数）。
+  前端统一走 `useWebSocketAgent.currentSessionId()` 取这个值。
   后端把 content 展开到了顶层，响应形如 `{ "type":"memory", "act":"readSession", "status":"success",
   "sessions":[{"session_id":"...","session_name":"...","create_time":"..."}] }`。
   前端对 `type: 'session'` 的响应也兼容（`useWebSocketAgent.ts` 里的 `SESSION_REQUEST_TYPE` 可切换）。
-  重命名走的是本地实现（见下），后端接口若也做成 memory 的一个 act，按同样格式加一条即可。
 - **拉取时机**：连接成功后和 `getConfig` / `getModels` / memory read 一起自动发一次 `readSession`；
   面板上的刷新按钮可手动再拉。
 - **新建会话**：`sessionId` 由前端 `makeId()`（UUID）生成，每次 chat 请求都会带上；
   后端收到第一条消息后自动入库，会话名取第一句话的前 8 个字。前端本地标题也按同样的 8 字规则生成。
-- **打开时的落点**：本地会话列表**可以为空**，不会为了「让界面有东西可渲染」凭空造一条空会话——只有
-  `activeSession` 会退回内存兜底（不进列表、不落盘）。连接后 `readSession` 回来时：本地没有任何真实内容
-  （或当前停在兜底会话上）就直接进入后端最近的一条会话（后端按 `create_time DESC` 返回）；
+- **打开窗口时的落点**：会话列表**可以为空**，不会为了「让界面有东西可渲染」凭空造一条空会话——
+  只有 `activeSession` 会退回内存兜底（不进列表、不落盘）。
+  `loadSessions()` 先把落点定在缓存里的第一条，第一份 `readSession` 回来后**再定位到列表第一条**
+  （后端按 `create_time DESC` 返回，即最近一条）。这就是「打开就直接进最近那个会话，不新建」。
+  一旦用户自己动过（发消息 / 新建 / 切换 / 删除 / 改名，`markPlacementDecided()`），
+  自动定位立刻作废：之后的手动刷新、断线重连都不会把用户从正在聊的会话里拽走。
   后端也没有历史就保持空列表并提示「还没有会话」，由用户自己点新建。
-  用户主动点「新建会话」留的空壳带 `keepEmpty` 标记，不会被清掉；一旦发出第一条消息标记即失效。
-  旧版本会把兜底占位写进 `localStorage`，`loadSessions()` 加载时会顺手清掉。
+- **空壳不落盘**：`isUnusedEmptySession()` = 没有任何消息 + 标题还是占位文案 + 没被手动命名过 +
+  不是后端下发的。这类会话（兜底占位、以及用户点了「新建会话」却一句话没说就刷新走的空壳）
+  `saveSessions()` 不写、`loadSessions()` 加载时也会过滤。
+  不这样做的话它会排在列表最前面，看起来就像「一打开窗口又自动新建了一个会话」。
+  在后端下发的或用户主动命名的空会话照常保留。用户主动新建的空壳只在本次打开期间留在内存里。
 - **删除**：先弹确认框，确认后发 `deleteSession`（后端是软删，即 `updateSession(..., status=2)`），
   没连上时只删本地。删掉当前会话就落到最近一条；**全部删光则保持空列表**，不再自动补一条。
   另外 `applyRemoteSessions()` 把后端当权威：本地标着「来自后端」、这次却没返回的会话会被清掉，
@@ -152,10 +168,15 @@ message 事件时主动收尾该轮次——后端对这种 `need_llm = false` �
   由 `useSessions({ defaultTitle })` 注入；第一句话起标题后按前 8 个字。
 - **重命名会话**：列表项 hover 出现铅笔按钮，或者双击标题进入行内编辑；Enter / 失焦提交，
   Esc 取消，空标题或没改动都算放弃（保持原名，不弹错）。
-  - **目前纯前端**：`useSessions.renameSession()` 只改本地并落 `localStorage`，**不发任何 WS 请求**
-    （后端还没有改名接口，`process_memory` 只有 `read` / `delete` / `readSession` / `deleteSession`）。
-    接口确定后只需改 `App.vue` 的 `renameSession()` 一处：补一次 `sendSessionAct(...)`，
-    成功时用后端返回的 `session_name` 覆盖本地，失败回滚。
+  - **本地先生效，再同步后端**：`useSessions.renameSession()` 立刻改本地并落 `localStorage`，
+    界面没有等待感；连上了再发
+    `{ type:'memory', sessionId, content:{ act:'renameSession', session_name } }`
+    （`useWebSocketAgent.renameSession()`：**目标会话 id 在顶层**，`content` 里只有 `session_name`）。
+    离线时只改本地，不发注定失败的请求。
+    后端回 error 就把标题**回滚成改名前**（`restoreSessionTitle()` 连 `titleEdited` 一起还原），
+    避免两边不一致。成功时用后端回传的 `session_name` 对齐。
+  - 后端 `process_memory` 的 `renameSession` 分支读的是第三个参数 `$session_id`（即顶层 sessionId）
+    和 `$data_content['session_name']`，空值会回 `缺少会话ID`。
   - 手动标题会打上 `ChatSession.titleEdited`，之后 `applyRemoteSessions()` 不再用后端 `session_name`
     覆盖它，第一句话也不再触发「前 8 个字」的自动命名。
   - 标题规范化：折叠空白、上限 `MAX_SESSION_TITLE_LENGTH`（40 字）硬截断（不带省略号，保证重复编辑幂等）。
@@ -163,13 +184,44 @@ message 事件时主动收尾该轮次——后端对这种 `need_llm = false` �
 - **本地存储**：`localStorage` 的 `agentbee.sessions.v3`，每个会话各自保留最多 50 条消息，
   最多存 30 个会话，写满时按 quota 自动裁剪。
 - **聊天历史按会话隔离**：`memory read` 请求在**顶层**带 `sessionId`（`useWebSocketAgent.readMemory()`）。
-  后端 `go.php:863` 用它设置 `utils->session_id`，`process_memory` 的 read 再把它传给
-  `Memory::read()`——那里对 `daily`/`misc` 只在 `session_id !== ''` 时才加 `where`。
+  `go.php` 把它作为第三个参数传进 `process_memory`，read 分支再传给
+  `Memory::read(..., $session_id, ...)`——那里对 `daily`/`misc` 只在 `session_id !== ''` 时才加 `where`。
   **漏带这个字段后端就会返回全局历史**，表现就是「新建会话还能看到旧会话的记录」。
   配套行为：切会话 / 新建会话 / 删掉当前会话都会 `resetMemoryHistory()` + 重拉
   （`reloadActiveSessionHistory()`）；连接时先 `readSession`、等会话落点定了再拉历史；
   迟到的响应按发起时的会话 id 丢弃（`memoryRequestSessionId` 比对），
   避免把上一个会话的历史画进新会话。
+
+### 操作结果提示（toast）
+
+删除 / 重命名的**成功与失败**都用右下角的轻提示播报，实现在
+`composables/useToasts.ts`（状态 + 定时器）与 `components/ToastStack.vue`（渲染，Teleport 到 body）。
+
+- **为什么不用 `ConfirmDialog`**：那是要用户决策的模态框，用它播报结果每次都得再点一下「确定」。
+- **停留时长**：success 2.6s / info 3.4s / error 6s，错误留得久一些并且可以手动关掉；同屏最多 3 条，超了挤掉最旧的（连它的定时器一起清）。
+- **语气与图标**：`success` 对勾、`error` 警告（`role="alert"` 让读屏立刻播报）、`info` 信息。
+  配色走主题变量 `--success` / `--danger` / `--accent`，亮暗两套主题都适配。
+- **z-index 130**，高于 `ConfirmDialog` 的 120：删除失败时确认框可能还开着，提示必须压在它上面。
+- 空文案直接丢弃——失败提示常把「后端返回的 error」拼进消息里，取不到文本时不该弹空壳。
+
+各路径的播报：
+
+| 场景 | 语气 | 内容 |
+|---|---|---|
+| 重命名成功 | success | `会话已重命名：<最终名字>`（后端回了 `session_name` 就用后端的） |
+| 重命名失败 | error | `重命名失败：<后端 error>，已还原为原来的标题` |
+| 未连接时重命名 | info | `已在本地重命名（未连接服务器，未同步到服务端）` |
+| 删除成功 | success | `会话已删除：<会话名>` |
+| 删除失败 | error | `删除会话失败：<后端 error>`（**本地保留**该会话，不让它下次刷新复活） |
+| 未连接时删除 | info | `已在本地删除（未连接服务器）：<会话名>` |
+| 删除无回执 | error | `删除没有收到服务端确认，会话已保留。请检查连接后重试。` |
+
+注意删除用的是**独立的超时计时器**（`sessionDeleteTimer`，15s）：不能复用
+`sessionResponseTimer`——那个的守卫是 `sessionLoading`，删除时它一直是 false，计时器会空跑，
+结果是「会话既没删掉、界面上也没有任何解释」。
+
+会话列表读取失败（`readSession` 超时 / 报错）仍然用面板底部那行红字（`SessionPanel` 的 `error` prop），
+因为它描述的是「列表本身不可靠」这种上下文状态，而不是一次性动作的结果。
 
 ### `close` 事件不可信（已修复的历史 bug）
 

@@ -146,16 +146,16 @@ export interface ClientHistoryRequest {
 
 /**
  * 会话 CRUD 目前复用 memory 这个 type：后端 `process_memory` 里
- * 直接 switch 了 read / delete / readSession / deleteSession 四个 act。
+ * 直接 switch 了 read / delete / readSession / deleteSession / renameSession。
  */
 export type ClientMemoryAct = 'read' | 'delete' | ClientSessionAct;
 
 export interface ClientMemoryReadRequest {
   type: 'memory';
   /**
-   * 必须带当前会话 id：后端 `go.php:863` 会用这个**顶层**字段覆盖 `utils->session_id`，
-   * 而 `message.php process_memory` 的 read 分支把这个值传给 `Memory::read()`，
-   * 只有非空时才会给 `agent_memory` 加 `session_id` 过滤。
+   * 必须带当前会话 id：`go.php` 把它作为第三个参数传进 `process_memory`，
+   * read 分支再传给 `Memory::read(..., $session_id, ...)`——
+   * 那里对 `daily`/`misc` 只在非空时才加 `where session_id`。
    * 不带就等于「读全局历史」——新建的会话会看到别的会话的记录。
    */
   sessionId?: string;
@@ -168,17 +168,34 @@ export interface ClientMemoryReadRequest {
 
 export interface ClientMemoryDeleteRequest {
   type: 'memory';
+  /** 当前会话 id，**必须在顶层**（见下），`content` 里不放。 */
+  sessionId?: string;
   content: {
     act: 'delete';
     create_ids: number[];
   };
 }
 
+/**
+ * 会话 CRUD（readSession / deleteSession / renameSession）。
+ *
+ * `sessionId` **一律放顶层**：后端 `go.php` 的派发是
+ * `$this->message->$type_method($socket_id, $data['content'], $data['sessionId'] ?? '')`，
+ * 只有顶层会进 `process_memory` 的第三个参数——`read` 用它做会话过滤，
+ * `renameSession` / `deleteSession` 拿它当目标会话。`content` 里只放 act 自己的参数。
+ */
 export interface ClientMemorySessionRequest {
   type: 'memory';
+  /** readSession 可以不带（服务端会拿到空值）；deleteSession / renameSession 传目标会话 id。 */
+  sessionId?: string;
   content: {
     act: ClientSessionAct;
-    sessionId?: string;
+    /**
+     * 仅 `renameSession` 使用：新的会话名。
+     * 字段名跟后端 `updateSession(session_id, session_name)` 以及
+     * `readSession` 返回的 `session_name` 保持一致，别改成驼峰。
+     */
+    session_name?: string;
   };
 }
 
@@ -216,13 +233,14 @@ export interface ClientSystemRequest {
   };
 }
 
-export type ClientSessionAct = 'readSession' | 'deleteSession';
+export type ClientSessionAct = 'readSession' | 'deleteSession' | 'renameSession';
 
 export interface ClientSessionRequest {
   type: 'session';
+  /** 和 `ClientMemorySessionRequest` 一样：会话 id 一律放顶层，content 里不放。 */
+  sessionId?: string;
   content: {
     act: ClientSessionAct;
-    sessionId?: string;
     [key: string]: unknown;
   };
 }
@@ -264,6 +282,8 @@ export interface ServerMessage {
   create_id?: number;
   message?: string;
   error?: unknown;
+  /** `renameSession` 成功后回传的会话名（后端把 content 展开到了顶层）。 */
+  session_name?: string;
   data?: unknown;
   text?: unknown;
   content?: unknown;
