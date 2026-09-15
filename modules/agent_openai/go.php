@@ -75,7 +75,14 @@ class go extends Factory
      */
     public function initChild(bool $reload = false): void
     {
-        $this->init($reload);
+        $llm_params  = [];
+        $config_file = $this->utils->config->config_dir . DIRECTORY_SEPARATOR . 'WorkerBee.json';
+
+        if (is_file($config_file)) {
+            $llm_params = json_decode(file_get_contents($config_file), true) ?? [];
+        }
+
+        $this->init($reload, $llm_params);
 
         $agent_toolsets = $this->utils->fetchToolset(
             'modules/agent_toolsets',
@@ -293,12 +300,13 @@ class go extends Factory
     }
 
     /**
-     * @param bool $reload
+     * @param bool  $reload
+     * @param array $llm_params
      *
      * @return void
      * @throws \ReflectionException
      */
-    private function init(bool $reload = false): void
+    private function init(bool $reload = false, array $llm_params = []): void
     {
         $this->core->initCore($reload);
 
@@ -307,13 +315,15 @@ class go extends Factory
         }
 
         $this->libOpenAI = libOpenAI::new(
-            $this->utils->agent_config['agent_llm']['api_url'],
-            $this->utils->agent_config['agent_llm']['api_key'],
+            $llm_params['api_url'] ?? $this->utils->agent_config['agent_llm']['api_url'],
+            $llm_params['api_key'] ?? $this->utils->agent_config['agent_llm']['api_key'],
             'AgentBee'
         );
 
-        $this->libOpenAI->setOrgId($this->utils->agent_config['agent_llm']['org_id']);
-        $this->libOpenAI->setTimeout($this->utils->agent_config['agent_llm']['timeout']);
-        $this->libOpenAI->setApiModel($this->utils->agent_config['agent_llm']['model']);
+        $this->libOpenAI->setOrgId($llm_params['org_id'] ?? $this->utils->agent_config['agent_llm']['org_id']);
+        $this->libOpenAI->setTimeout($llm_params['timeout'] ?? $this->utils->agent_config['agent_llm']['timeout']);
+        $this->libOpenAI->setApiModel($llm_params['model'] ?? $this->utils->agent_config['agent_llm']['model']);
+
+        unset($reload, $llm_params);
     }
 }
