@@ -183,6 +183,12 @@ message 事件时主动收尾该轮次——后端对这种 `need_llm = false` �
   - **不动 `updatedAt`**：改名不是会话活动，不该让列表重排、也不该改掉「最后聊天时间」。
 - **本地存储**：`localStorage` 的 `agentbee.sessions.v3`，每个会话各自保留最多 50 条消息，
   最多存 30 个会话，写满时按 quota 自动裁剪。
+- **只有对话内容才会开新会话**：`useSessions.addMessage()` 里只有 `user` / `assistant`
+  才会「列表为空就先建一条」，并且只有它们才 `markPlacementDecided()`。
+  `system` / `error` 是连接日志（`WebSocket connected.` / `Not connected, …`），
+  它们落进内存兜底会话即可——**不能建会话**。
+  否则「token 登录成功」这一步就会凭空冒出一条空会话（连接时列表通常正是空的），
+  而且会把「首次落点」标记用掉，导致随后的 `readSession` 也不再自动定位到最近的真实会话。
 - **聊天历史按会话隔离**：`memory read` 请求在**顶层**带 `sessionId`（`useWebSocketAgent.readMemory()`）。
   `go.php` 把它作为第三个参数传进 `process_memory`，read 分支再传给
   `Memory::read(..., $session_id, ...)`——那里对 `daily`/`misc` 只在 `session_id !== ''` 时才加 `where`。
@@ -222,6 +228,32 @@ message 事件时主动收尾该轮次——后端对这种 `need_llm = false` �
 
 会话列表读取失败（`readSession` 超时 / 报错）仍然用面板底部那行红字（`SessionPanel` 的 `error` prop），
 因为它描述的是「列表本身不可靠」这种上下文状态，而不是一次性动作的结果。
+
+### 移动端适配（会话列表）
+
+移动端的头部（`.sidebar` 这一行）只保留：**会话入口按钮** + 应用名 + 连接状态。
+会话列表整体收进**左侧抽屉**（`components/SessionDrawer.vue`），里面装的还是同一个
+`SessionPanel`——桌面侧栏和移动抽屉共用 `App.vue` 里的 `sessionPanelBindings`，
+不给移动端单独写一份列表，避免「手机上少做了某个操作」。
+
+- **入口位置**：按钮放在 `.brand` 里而不是 `.topbar`。矮屏（横屏手机）下
+  `@container app-viewport (max-height: 420px)` 会把 `.topbar` 整体 `display: none`，
+  入口跟着消失就没法开抽屉了；`.brand` 在任何姿态下都在。
+- **JS / CSS 必须同一个断点**：`App.vue` 的 `MOBILE_MEDIA_QUERY` 就是
+  `(max-width: 820px), (hover: none) and (pointer: coarse)`，与 `base.css` 的媒体查询一字不差。
+  `isMobileLayout` 同时控制入口按钮和抽屉的渲染；转回桌面布局时会自动收起抽屉，
+  不留一个盖住界面的浮层。
+- **层级**：抽屉 `z-index: 110` < `ConfirmDialog` 的 120 < toast 的 130。
+  从抽屉里删除会话时确认框必须盖在抽屉上面。
+- **交互收尾**：点会话 / 点「新建会话」都会收起抽屉（`leaveMobileDrawer()`），
+  移动端还会顺手切回聊天视图；Esc、点遮罩、标题栏的 X 都能关。
+  打开时焦点收进抽屉、关闭时还给触发按钮，Tab 在抽屉内循环。
+- **触屏没有 hover**：桌面端行内按钮是 `opacity: 0` 悬停才出现，抽屉里改成常驻可见，
+  并且触摸目标按 34px（按钮）给了；重命名输入框字号提到 16px
+  （iOS 上聚焦字号 <16px 的输入框会把整页放大）。
+- 删除确认框在移动端改成两列等宽 + `min-height: 44px`；
+  结果提示抬高到输入框上方（`bottom: calc(78px + env(safe-area-inset-bottom))`），别压住发送按钮。
+- 抽屉宽度 `min(84vw, 320px)`，并处理 `env(safe-area-inset-*)`（刘海屏）。
 
 ### `close` 事件不可信（已修复的历史 bug）
 

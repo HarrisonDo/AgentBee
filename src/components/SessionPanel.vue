@@ -6,6 +6,7 @@ import {
   Pencil,
   RefreshCw,
   Trash2,
+  X,
 } from 'lucide-vue-next';
 import { MAX_SESSION_TITLE_LENGTH, normalizeSessionTitle } from '../composables/useSessions';
 import type { ChatSession } from '../protocol/types';
@@ -24,9 +25,15 @@ const props = defineProps<{
   canRequest: boolean;
   /** 会话相关的错误（读取超时 / 删除失败 / 标题为空），为空则不显示。 */
   error?: string;
+  /**
+   * 移动端抽屉里用：标题栏右侧多给一个关闭按钮。
+   * 面板本身不关心宽度，桌面侧栏里不传就不显示。
+   */
+  showClose?: boolean;
 }>();
 
 const emit = defineEmits<{
+  close: [];
   newSession: [];
   refresh: [];
   remove: [string];
@@ -132,6 +139,16 @@ function sessionTitle(session: ChatSession): string {
         >
           <LoaderCircle v-if="loading" class="spin" :size="15" aria-hidden="true" />
           <RefreshCw v-else :size="15" aria-hidden="true" />
+        </button>
+        <button
+          v-if="showClose"
+          type="button"
+          class="icon-button session-panel-tool"
+          :title="labels.closeSessions"
+          :aria-label="labels.closeSessions"
+          @click="emit('close')"
+        >
+          <X :size="16" aria-hidden="true" />
         </button>
       </span>
     </header>

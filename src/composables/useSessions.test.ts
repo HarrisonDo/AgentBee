@@ -507,3 +507,39 @@ describe('opening the window', () => {
     expect(sessions.activeSessionId.value).toBe('second');
   });
 });
+
+describe('connection logs', () => {
+  it('does not spawn a session for a system or error log', () => {
+    const sessions = useSessions({ defaultTitle: () => '新对话' });
+
+    // 登录成功那一刻后端/客户端会推这类日志。列表此时通常是空的。
+    sessions.addMessage('system', 'WebSocket connected.');
+    sessions.addMessage('error', 'Not connected, system request was not sent.');
+
+    // 不该因此冒出一条空会话；消息落进内存兜底就够（界面照样能显示）。
+    expect(sessions.sessions.value).toHaveLength(0);
+    expect(sessions.activeSession.value.messages).toHaveLength(2);
+  });
+
+  it('still opens the most recent session when a log arrives before readSession', () => {
+    const sessions = useSessions({ defaultTitle: () => '新对话' });
+    sessions.addMessage('system', 'WebSocket connected.');
+
+    sessions.applyRemoteSessions([
+      { session_id: 'newest', session_name: '刚聊的', create_time: '2026-09-15 10:00:00' },
+      { session_id: 'older', session_name: '早一点的', create_time: '2026-09-15 09:00:00' },
+    ]);
+
+    // 日志不能把「首次落点」用掉：仍然要定位到最近的一条，且不留下幽灵会话。
+    expect(sessions.sessions.value.map((session) => session.id)).toEqual(['newest', 'older']);
+    expect(sessions.activeSessionId.value).toBe('newest');
+  });
+
+  it('still opens a session for the first user message', () => {
+    const sessions = useSessions();
+    sessions.addMessage('user', '你好');
+
+    expect(sessions.sessions.value).toHaveLength(1);
+    expect(sessions.activeSession.value.title).toBe('你好');
+  });
+});

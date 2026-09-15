@@ -192,11 +192,21 @@ export function useSessions(options: UseSessionsOptions = {}) {
   }
 
   function addMessage(role: MessageRole, content: string, extra: Partial<ChatMessage> = {}): ChatMessage {
-    // 用户已经在这里说话了：之后 readSession 回来不许再自动跳走。
-    markPlacementDecided();
-    // 列表被删空时（空列表是合法状态）先起一条：否则消息会落进内存里的兜底会话，
-    // 既进不了列表、也存不进 localStorage，刷新就丢了。
-    if (!sessions.value.length) createSession();
+    // 只有真正的对话内容才配得上一段新会话（也才算「用户自己决定了落点」）。
+    //
+    // `system` / `error` 是连接日志（"WebSocket connected." / "Not connected, …" 之类）：
+    // 如果它们也能触发新建，那么**登录成功的那一刻**就会凭空冒出一条空会话——
+    // 连接时列表通常正是空的（`pagehide` 会清掉本地历史），于是用户看到的现象就是
+    // 「token 登录后又多了一个新会话」；更糟的是它还会把「首次落点」标记用掉，
+    // 随后 readSession 回来也不会再自动定位到最近的真实会话。
+    // 这类消息落进内存兜底会话即可：不建会话、不落盘。
+    const isConversation = role === 'user' || role === 'assistant';
+    if (isConversation) {
+      markPlacementDecided();
+      // 列表被删空时（空列表是合法状态）先起一条：否则消息会落进内存里的兜底会话，
+      // 既进不了列表、也存不进 localStorage，刷新就丢了。
+      if (!sessions.value.length) createSession();
+    }
     const session = activeSession.value;
     const message: ChatMessage = {
       id: makeId(),

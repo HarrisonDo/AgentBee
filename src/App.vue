@@ -4,8 +4,7 @@ import {
   ArrowDownToLine,
   History,
   LoaderCircle,
-  PanelLeftClose,
-  PanelLeftOpen,
+  MessagesSquare,
   RefreshCw,
   X,
 } from 'lucide-vue-next';
@@ -15,6 +14,7 @@ import Composer from './components/Composer.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
 import ConnectionPanel from './components/ConnectionPanel.vue';
 import SessionPanel from './components/SessionPanel.vue';
+import SessionDrawer from './components/SessionDrawer.vue';
 import ToastStack from './components/ToastStack.vue';
 import LoginWin from './components/LoginWin.vue';
 import SettingsView from './components/SettingsView.vue';
@@ -71,7 +71,6 @@ type VisibleChatItem =
 const chatContainer = ref<HTMLElement | null>(null);
 const chatShell = ref<HTMLElement | null>(null);
 const shouldAutoScroll = ref(true);
-const sidebarCollapsed = ref(readSidebarCollapsed());
 const currentView = ref<'chat' | 'settings'>('chat');
 const showLoginWindow = ref(true);
 const agentConfig = ref<Record<string, unknown>>(readAgentConfig());
@@ -101,7 +100,6 @@ const SUB_AGENT_MAX_WIDTH = 680;
 const CHAT_PANE_MIN_WIDTH = 360;
 const SUB_AGENT_DIVIDER_WIDTH = 8;
 const SUB_AGENT_WIDTH_STORAGE_KEY = 'agentbee.subAgentPaneWidth';
-const SIDEBAR_COLLAPSED_STORAGE_KEY = 'agentbee.sidebarCollapsed';
 const HISTORY_PAGE_SIZE = 50;
 const MEMORY_PAGE_SIZE = 30;
 const MEMORY_LATEST_PAGE_SIZE = 50;
@@ -109,6 +107,9 @@ const MEMORY_RESPONSE_TIMEOUT_MS = 15_000;
 const SESSION_RESPONSE_TIMEOUT_MS = 15_000;
 const LEGACY_MEMORY_CACHE_STORAGE_KEY = 'agentbee.memoryCache.v1';
 localStorage.removeItem(LEGACY_MEMORY_CACHE_STORAGE_KEY);
+// 「收起侧栏」已经去掉，侧栏常驻展开。清掉遗留的键，免得以后重新引入折叠时
+// 从一个陈旧的 `true` 开始（老版本默认就是收起的）。
+localStorage.removeItem('agentbee.sidebarCollapsed');
 const memoryRecords = ref<MemoryRecord[]>([]);
 /**
  * 当前在途 memory 读取请求所属的会话 id。
@@ -150,6 +151,28 @@ const { locale, setLocale, t } = useI18n();
 const { setTheme, theme } = useTheme();
 const toasts = useToasts();
 useAppViewport();
+
+/**
+ * 移动端布局标记。
+ * 字符串必须与 `base.css` 里的媒体查询一致
+ * （`@media (max-width: 820px), (hover: none) and (pointer: coarse)`），
+ * 否则会出现「CSS 认为该收起侧栏、JS 却不渲染抽屉」这种错位。
+ */
+const MOBILE_MEDIA_QUERY = '(max-width: 820px), (hover: none) and (pointer: coarse)';
+/** 顶栏那个「会话」入口按钮和左侧抽屉都只在移动端出现。 */
+const isMobileLayout = ref(false);
+const sessionDrawerOpen = ref(false);
+let mobileMediaQuery: MediaQueryList | null = null;
+
+function syncMobileLayout(matches: boolean) {
+  isMobileLayout.value = matches;
+  // 转回桌面布局时把抽屉收起来，否则会留一个盖住整个界面的浮层。
+  if (!matches) sessionDrawerOpen.value = false;
+}
+
+function onMobileMediaQueryChange(event: MediaQueryListEvent) {
+  syncMobileLayout(event.matches);
+}
 
 const sessions = useSessions({ defaultTitle: () => t.value.untitledSession });
 sessions.loadSessions();
@@ -202,6 +225,21 @@ const activeMeta = computed(() => {
   const url = agent.wsUrl.value.trim() || t.value.noUrl;
   return `${agent.connected.value ? t.value.activeConnected : t.value.activeWaiting} · ${url}`;
 });
+
+/**
+ * `SessionPanel` 的 props 汇总。
+ * 桌面侧栏和移动抽屉用的是**同一个面板**，绑定从这里统一取，
+ * 避免两处各写一份、以后加字段漏掉一个（移动端缺功能往往就是这么来的）。
+ */
+const sessionPanelBindings = computed(() => ({
+  labels: t.value,
+  sessions: sessions.sessions.value,
+  activeSessionId: sessions.activeSessionId.value,
+  loading: sessionLoading.value,
+  streamingSessionIds: agent.streamingSessionIds.value,
+  canRequest: agent.canSend.value,
+  error: sessionError.value,
+}));
 
 const localMainMessages = computed(() => (
   (sessions.activeSession.value?.messages || [])
@@ -597,16 +635,6 @@ function persistSubAgentPaneWidth() {
 function readSubAgentPaneWidth() {
   const savedWidth = Number(localStorage.getItem('agentbee.subAgentPaneWidth'));
   return Number.isFinite(savedWidth) && savedWidth > 0 ? savedWidth : 420;
-}
-
-function toggleSidebar() {
-  sidebarCollapsed.value = !sidebarCollapsed.value;
-  localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(sidebarCollapsed.value));
-}
-
-function readSidebarCollapsed() {
-  const saved = localStorage.getItem('agentbee.sidebarCollapsed');
-  return saved === null ? true : saved === 'true';
 }
 
 let settingsConfigRequested = false;
@@ -1028,11 +1056,34 @@ function createSession() {
   sessionError.value = '';
   // 新会话在服务端还没有任何记录，重拉后历史会是空的，不会带上别的会话的记录。
   reloadActiveSessionHistory();
+  // 移动端：点了「新建会话」就该直接进聊天区，抽屉和设置页都让位。
+  leaveMobileDrawer();
   maybeScrollAfterUpdate();
 }
 
+function openSessionDrawer() {
+  sessionDrawerOpen.value = true;
+}
+
+function closeSessionDrawer() {
+  sessionDrawerOpen.value = false;
+}
+
+/**
+ * 移动端在抽屉里操作完（选会话 / 新建会话）后的收尾：收起抽屉并回到聊天。
+ * 桌面端不动 `currentView`——那边侧栏和聊天区是并列的，点会话不该把设置页关掉。
+ */
+function leaveMobileDrawer() {
+  closeSessionDrawer();
+  if (isMobileLayout.value) currentView.value = 'chat';
+}
+
 function selectSession(sessionId: string) {
-  if (sessionId === sessions.activeSessionId.value) return;
+  if (sessionId === sessions.activeSessionId.value) {
+    // 移动端点的是当前会话：把抽屉收起来看聊天就好（不用重拉历史）。
+    leaveMobileDrawer();
+    return;
+  }
   // 流式输出期间也允许切换：每一轮都记了归属会话，后端推来的内容会落回原会话，
   // 面板上给正在输出的那条打「生成中」标记即可。
   if (!sessions.switchSession(sessionId)) return;
@@ -1041,6 +1092,8 @@ function selectSession(sessionId: string) {
   sessionError.value = '';
   // 历史是按会话过滤的，切过去就得重新拉这个会话自己的记录。
   reloadActiveSessionHistory();
+  // 移动端：选完会话把抽屉收掉，否则还得再点一次返回。
+  leaveMobileDrawer();
   maybeScrollAfterUpdate();
 }
 
@@ -1455,6 +1508,9 @@ function handlePageShow(event: PageTransitionEvent) {
 }
 
 onMounted(() => {
+  mobileMediaQuery = window.matchMedia(MOBILE_MEDIA_QUERY);
+  syncMobileLayout(mobileMediaQuery.matches);
+  mobileMediaQuery.addEventListener('change', onMobileMediaQueryChange);
   chatShellResizeObserver = new ResizeObserver(() => {
     if (!selectedSubAgent.value) return;
     const clampedWidth = clampSubAgentPaneWidth(subAgentPaneWidth.value);
@@ -1473,6 +1529,8 @@ onBeforeUnmount(() => {
   clearMemoryResponseTimer();
   clearSessionResponseTimer();
   clearSessionDeleteTimer();
+  mobileMediaQuery?.removeEventListener('change', onMobileMediaQueryChange);
+  mobileMediaQuery = null;
   window.removeEventListener('pagehide', handlePageHide);
   window.removeEventListener('pageshow', handlePageShow);
   chatShellResizeObserver?.disconnect();
@@ -1676,35 +1734,33 @@ function redactConnectionUrl(value: string): string {
     @update:ws-url="updateWsUrl"
   />
 
-  <div class="app" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+  <div class="app">
     <aside class="sidebar">
       <div class="brand">
+        <!--
+          移动端的会话入口。放在 `.brand`（移动端这一行就是「头部」）而不是 `.topbar`：
+          矮屏（横屏手机）下 `.topbar` 会被容器查询整体隐藏，入口跟着消失就没法开抽屉了。
+        -->
+        <button
+          v-if="isMobileLayout"
+          type="button"
+          class="icon-button brand-session-trigger"
+          :title="t.openSessions"
+          :aria-label="t.openSessions"
+          :aria-expanded="sessionDrawerOpen"
+          @click="openSessionDrawer"
+        >
+          <MessagesSquare :size="18" aria-hidden="true" />
+        </button>
         <div class="brand-copy">
           <h1>AgentBee Web</h1>
           <p>{{ t.tagline }}</p>
-        </div>
-        <div class="brand-controls">
-          <button
-            type="button"
-            class="icon-button"
-            :title="sidebarCollapsed ? t.expandSidebar : t.collapseSidebar"
-            @click="toggleSidebar"
-          >
-            <PanelLeftOpen v-if="sidebarCollapsed" :size="17" aria-hidden="true" />
-            <PanelLeftClose v-else :size="17" aria-hidden="true" />
-          </button>
         </div>
       </div>
 
       <div class="sidebar-body">
         <SessionPanel
-          :labels="t"
-          :sessions="sessions.sessions.value"
-          :active-session-id="sessions.activeSessionId.value"
-          :loading="sessionLoading"
-          :streaming-session-ids="agent.streamingSessionIds.value"
-          :can-request="agent.canSend.value"
-          :error="sessionError"
+          v-bind="sessionPanelBindings"
           @new-session="createSession"
           @refresh="requestSessionRead"
           @select="selectSession"
@@ -1926,6 +1982,24 @@ function redactConnectionUrl(value: string): string {
     @cancel="cancelSessionDelete"
     @confirm="confirmSessionDelete"
   />
+
+  <SessionDrawer
+    v-if="isMobileLayout"
+    :label="t.sessions"
+    :open="sessionDrawerOpen"
+    @close="closeSessionDrawer"
+  >
+    <SessionPanel
+      v-bind="sessionPanelBindings"
+      show-close
+      @close="closeSessionDrawer"
+      @new-session="createSession"
+      @refresh="requestSessionRead"
+      @select="selectSession"
+      @remove="requestSessionDelete"
+      @rename="renameSession"
+    />
+  </SessionDrawer>
 
   <ToastStack
     :toasts="toasts.toasts.value"
