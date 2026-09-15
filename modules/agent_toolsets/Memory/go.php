@@ -48,32 +48,32 @@ class go extends Factory
 
     private const DDL_SESSION = '
         CREATE TABLE IF NOT EXISTS agent_session (
-            session_id   TEXT PRIMARY KEY,
-            session_name TEXT NOT NULL,
-            session_status  INTEGER NOT NULL,
-            create_time  INTEGER NOT NULL
+            session_id     CHAR(36) PRIMARY KEY,
+            session_name   VARCHAR(64) NOT NULL,
+            session_status TINYINT NOT NULL,
+            create_time    INTEGER NOT NULL
         )';
 
     private const DDL_MEMORY = '
         CREATE TABLE IF NOT EXISTS agent_memory (
             create_id  INTEGER PRIMARY KEY,
-            session_id TEXT NOT NULL,
+            session_id CHAR(36) DEFAULT NULL,
             date_key   INTEGER NOT NULL,
             expire_at  INTEGER DEFAULT 0,
-            level      TEXT NOT NULL,
-            role       TEXT NOT NULL,
+            level      VARCHAR(16) NOT NULL,
+            role       VARCHAR(16) NOT NULL,
             content    TEXT NOT NULL,
             tokens     TEXT NOT NULL
         )';
 
     private const DDL_TASK = '
         CREATE TABLE IF NOT EXISTS agent_task (
-            create_id INTEGER PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            run_at    INTEGER NOT NULL,
-            repeat    INTEGER DEFAULT 0,
-            interval  INTEGER DEFAULT 0,
-            prompt    TEXT NOT NULL
+            create_id  INTEGER PRIMARY KEY,
+            session_id CHAR(36) NOT NULL,
+            run_at     INTEGER NOT NULL,
+            repeat     TINYINT DEFAULT 0,
+            interval   INTEGER DEFAULT 0,
+            prompt     TEXT NOT NULL
         )';
 
     private const DDL_INDEXES = [
