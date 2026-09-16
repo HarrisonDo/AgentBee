@@ -20,8 +20,8 @@
 
 declare(strict_types = 1);
 
-const AGENT_VERSION = '1.2.8';
-const AGENT_NAME    = 'AgentBee (蜂小秘)';
+const AGENT_VERSION = '2.0.0';
+const AGENT_NAME    = '蜂小秘 - AgentBee';
 
 const WORKER_MAIN  = 'AgentBee';
 const WORKER_CHILD = 'WorkerBee';
