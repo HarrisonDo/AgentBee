@@ -104,7 +104,7 @@ final class core extends Factory
 
         $context    = json_encode($llm_params + $llm_tools + ['contents' => $history], JSON_FORMAT);
         $compressed = gzdeflate($context, 1);
-        $inputs     = (int)(strlen($compressed) * 1.06);
+        $inputs     = (int)(strlen($compressed) * 1.1);
         $outputs    = ($this->utils->agent_config['agent_llm']['model_ctx'] ?? 131072) - $inputs;
 
         unset($type, $session_id, $worker_name, $llm_params, $llm_tools, $history, $key, $item, $contents, $context, $compressed, $inputs);
