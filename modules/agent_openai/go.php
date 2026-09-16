@@ -120,15 +120,18 @@ class go extends Factory
     }
 
     /**
+     * @param bool $reload
+     *
      * @return array
      * @throws \ReflectionException
      */
-    public function getModels(): array
+    public function getModels(bool $reload = false): array
     {
-        if ([] === $this->utils->model_list) {
+        if ($reload || [] === $this->utils->model_list) {
             $this->utils->model_list = $this->libOpenAI->listModels();
         }
 
+        unset($reload);
         return $this->utils->model_list;
     }
 

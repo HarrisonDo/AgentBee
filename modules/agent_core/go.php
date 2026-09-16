@@ -920,6 +920,7 @@ class go extends Factory
                     case 'saveConfig':
                         $this->init(true);
                         $this->openai->reload();
+                        $this->openai->getModels(true);
                         $this->utils->debug('User: ' . $data['type'] . '->reloaded', 'trace');
                         break;
                 }
