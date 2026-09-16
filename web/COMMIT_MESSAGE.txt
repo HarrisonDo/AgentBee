@@ -1,0 +1,48 @@
+feat: 添加子Agent对话独立显示功能
+
+## 功能说明
+
+- 支持通过 isSubTalk 字段标记子Agent消息
+- 子Agent消息在右侧独立面板显示，不干扰主聊天区
+- 根据 workerName 自动分组和统计子Agent
+- 右侧竖向Tab栏显示所有活跃子Agent
+- 支持展开查看各子Agent的完整对话历史
+
+## 主要更改
+
+### 新增
+- src/components/SubAgentPanel.vue - 子Agent面板组件
+- SUB_AGENT_FEATURE.md - 详细功能文档
+- IMPLEMENTATION.md - 实现说明文档
+
+### 修改
+- src/protocol/types.ts - 添加 isSubTalk 类型定义
+- src/composables/useWebSocketAgent.ts - 处理 isSubTalk 字段
+- src/composables/useI18n.ts - 添加国际化支持
+- src/App.vue - 集成子Agent面板，实现消息过滤和分组
+- README.md - 更新功能列表
+- WS_BACKEND_TEMPLATE.md - 添加子Agent协议说明
+
+## 协议扩展
+
+后端发送子Agent消息示例：
+```json
+{
+  "type": "content",
+  "data": "消息内容",
+  "workerName": "worker_name",
+  "isSubTalk": 1
+}
+```
+
+## 兼容性
+
+- 向后兼容：不带 isSubTalk 字段的消息正常显示
+- 存储兼容：子Agent消息保存在 localStorage
+- 渐进增强：后端可逐步采用此功能
+
+## 测试
+
+- ✅ TypeScript 类型检查通过
+- ✅ Vite 构建成功
+- ✅ 组件正确集成
