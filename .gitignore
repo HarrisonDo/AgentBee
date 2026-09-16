@@ -7,3 +7,4 @@ workspace/
 web/node_modules/
 # macOS
 .DS_Store
+config/ImageMaker copy.json
