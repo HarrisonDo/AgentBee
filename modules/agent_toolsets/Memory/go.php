@@ -445,7 +445,6 @@ class go extends Factory
     /**
      * @param array  $keywords
      * @param string $level
-     * @param string $mode
      * @param int    $date_start
      * @param int    $date_end
      * @param int    $offset
@@ -455,7 +454,7 @@ class go extends Factory
      * @return array|string[]
      * @throws \ReflectionException
      */
-    public function search(array $keywords, string $level = 'all', string $mode = 'or', int $date_start = 0, int $date_end = 0, int $offset = 0, int $length = 20, string $session_id = ''): array
+    public function search(array $keywords, string $level = 'all', int $date_start = 0, int $date_end = 0, int $offset = 0, int $length = 20, string $session_id = ''): array
     {
         if (!in_array($level, self::ALL_LEVELS)) {
             return ['status' => 'error', 'error' => '无效层级：' . $level . '，可用：system/important/daily/misc/all'];
@@ -490,8 +489,8 @@ class go extends Factory
         }
 
         $result = $this->fts_enabled && $use_fts
-            ? $this->searchViaFts($keywords, $level, $mode, $date_start, $date_end, $offset, $length, $session_id)
-            : $this->searchViaLike($keywords, $level, $mode, $date_start, $date_end, $offset, $length, $session_id);
+            ? $this->searchViaFts($keywords, $level, $date_start, $date_end, $offset, $length, $session_id)
+            : $this->searchViaLike($keywords, $level, $date_start, $date_end, $offset, $length, $session_id);
 
         if (isset($result['data'])) {
             foreach ($result['data'] as &$msg) {
@@ -505,7 +504,7 @@ class go extends Factory
 
         $result['status'] = 'success';
 
-        unset($keywords, $level, $mode, $date_start, $date_end, $offset, $length, $session_id, $use_fts, $word, $char);
+        unset($keywords, $level, $date_start, $date_end, $offset, $length, $session_id, $use_fts, $word, $char);
         return $result;
     }
 
@@ -949,7 +948,6 @@ class go extends Factory
     /**
      * @param array  $keywords
      * @param string $level
-     * @param string $mode
      * @param int    $date_start
      * @param int    $date_end
      * @param int    $offset
@@ -959,7 +957,7 @@ class go extends Factory
      * @return array
      * @throws \ReflectionException
      */
-    private function searchViaFts(array $keywords, string $level, string $mode, int $date_start, int $date_end, int $offset, int $length, string $session_id = ''): array
+    private function searchViaFts(array $keywords, string $level, int $date_start, int $date_end, int $offset, int $length, string $session_id = ''): array
     {
         $keywords = array_map([$this, 'buildTokens'], $keywords);
         $keywords = array_filter($keywords, 'strlen');
@@ -986,9 +984,7 @@ class go extends Factory
             }, $keywords
         );
 
-        $kw_string = ('and' === strtolower($mode))
-            ? implode(' AND ', $keywords)
-            : implode(' OR ', $keywords);
+        $kw_string = implode(' AND ', $keywords);
 
         $query = $this->libSQLite
             ->table('agent_memory')
@@ -1030,14 +1026,13 @@ class go extends Factory
         $data  = $query->fetchAll();
         $total = $query->getLastFoundRows();
 
-        unset($keywords, $level, $mode, $date_start, $date_end, $offset, $length, $kw_string, $session_id, $query);
+        unset($keywords, $level, $date_start, $date_end, $offset, $length, $kw_string, $session_id, $query);
         return ['data' => $data, 'total' => $total];
     }
 
     /**
      * @param array  $keywords
      * @param string $level
-     * @param string $mode
      * @param int    $date_start
      * @param int    $date_end
      * @param int    $offset
@@ -1047,7 +1042,7 @@ class go extends Factory
      * @return array
      * @throws \ReflectionException
      */
-    private function searchViaLike(array $keywords, string $level, string $mode, int $date_start, int $date_end, int $offset, int $length, string $session_id = ''): array
+    private function searchViaLike(array $keywords, string $level, int $date_start, int $date_end, int $offset, int $length, string $session_id = ''): array
     {
         $query = $this->libSQLite
             ->table('agent_memory')
@@ -1078,26 +1073,8 @@ class go extends Factory
             $query->where(['date_key', '<=', $date_end]);
         }
 
-        if ([] !== $keywords) {
-            if ('and' === $mode) {
-                foreach ($keywords as $kw) {
-                    $query->where(['content', 'LIKE', '%' . $kw . '%']);
-                }
-            } else {
-                $conditions = [];
-                foreach ($keywords as $idx => $kw) {
-                    if (0 === $idx) {
-                        $conditions[] = ['content', 'LIKE', '%' . $kw . '%'];
-                    } else {
-                        $conditions[] = ['or', 'content', 'LIKE', '%' . $kw . '%'];
-                    }
-                }
-
-                $query->where(...$conditions);
-                unset($conditions);
-            }
-
-            unset($idx, $kw);
+        foreach ($keywords as $kw) {
+            $query->where(['content', 'LIKE', '%' . $kw . '%']);
         }
 
         $query->order(['create_id' => 'ASC'])->limit($offset, $length);
@@ -1105,7 +1082,7 @@ class go extends Factory
         $data   = $query->fetchAll();
         $result = ['data' => $data, 'total' => $query->getLastFoundRows()];
 
-        unset($keywords, $level, $mode, $date_start, $date_end, $offset, $length, $session_id, $query, $data);
+        unset($keywords, $level, $date_start, $date_end, $offset, $length, $session_id, $query, $kw, $data);
         return $result;
     }
 }

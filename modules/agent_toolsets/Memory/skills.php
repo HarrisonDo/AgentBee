@@ -113,7 +113,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'read',
-                'description' => '读取记忆。level指定层级；date(YYYYMMDD)按日读取，不传则取最新；session_id限定会话（system/important不受会话过滤，daily/misc受会话过滤）；offset起始位置，length条数（0=全部）。结果较多时，建议用offset跳跃采样（如取总数1/2、1/3位置），避免只读开头部分，以覆盖更完整的时间段。返回：{status, data: [{level, role, content, create_id, create_time, session_id}], total}或{status, error}。',
+                'description' => '读取记忆。level指定层级；date(YYYYMMDD)按日读取，不传则取最新；session_id限定会话（system/important不受会话过滤，daily/misc受会话过滤）；offset起始位置，length条数（0=全部）。结果较多时，建议用offset跳跃采样（如取总数1/2、1/3位置），避免只读开头部分，以覆盖更完整的时间段，禁止重复读取。返回：{status, data: [{level, role, content, create_id, create_time, session_id}], total}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
@@ -132,13 +132,12 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'search',
-                'description' => '全文搜索记忆。关键词1-5个特征词，mode控制or/and，level指定层级或all全搜。可用session_id限定会话（system/important不受会话过滤，daily/misc受会话过滤）。若total远大于length：可通过设置offset为total的1/2、1/3等位置跳跃采样，或按date_start/date_end分段查询，以覆盖不同时间段。返回：{status, data: [{...}], total}或{status, error}。',
+                'description' => '全文搜索记忆。关键词1-5个特征词（多个关键词之间为AND关系，全部命中）。level指定层级或all全搜。可用session_id限定会话（system/important不受会话过滤，daily/misc受会话过滤）。若total远大于length：可通过设置offset为total的1/2、1/3等位置跳跃采样，或按date_start/date_end分段查询，以覆盖不同时间段，禁止重复搜索。返回：{status, data: [{...}], total}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
-                        'keywords'   => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => '关键词数组（≥2字符）'],
-                        'level'      => ['type' => 'string', 'enum' => ['system', 'important', 'daily', 'misc', 'all'], 'default' => 'all', 'description' => '层级，默认all，除非用户指定'],
-                        'mode'       => ['type' => 'string', 'enum' => ['or', 'and'], 'default' => 'or', 'description' => '关键词匹配模式'],
+                        'keywords'   => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => '关键词数组（≥2字符，多个关键词间为AND）'],
+                        'level'      => ['type' => 'string', 'enum' => ['system', 'important', 'daily', 'misc', 'all'], 'default' => 'all', 'description' => '层级，默认all'],
                         'date_start' => ['type' => 'integer', 'default' => 0, 'description' => '起始日期：YYYYMMDD (0=不限)'],
                         'date_end'   => ['type' => 'integer', 'default' => 0, 'description' => '结束日期：YYYYMMDD (0=不限)'],
                         'offset'     => ['type' => 'integer', 'default' => 0, 'description' => '偏移量'],
