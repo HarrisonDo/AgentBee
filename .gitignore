@@ -2,3 +2,8 @@
 .idea/
 logs/
 workspace/
+
+# 前端（web/）
+web/node_modules/
+# macOS
+.DS_Store
