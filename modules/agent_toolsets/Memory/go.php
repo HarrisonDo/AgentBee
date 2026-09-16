@@ -406,10 +406,12 @@ class go extends Factory
             }
         } else {
             if ('' !== $session_id) {
-                $query->where(['level', 'system']);
-                $query->or(['level', 'important']);
-                $query->or(['level', 'daily'], ['session_id', $session_id]);
-                $query->or(['level', 'misc'], ['session_id', $session_id]);
+                $query->where(
+                    ['level', 'system'],
+                    ['or', 'level', 'important'],
+                    ['or', ['level', 'daily'], ['session_id', $session_id]],
+                    ['or', ['level', 'misc'], ['session_id', $session_id]],
+                );
             }
         }
 
@@ -479,7 +481,7 @@ class go extends Factory
                 break;
             }
 
-            foreach (['@', '(', ')', '{', '}', '[', ']', '*', '^', '?', '+', '-', '~', '&', '|', '!', '<', '>', '=', '%', '_', '#', '$', ',', '.', '/', ';', ':', '"', "'", "`", '\\'] as $char) {
+            foreach (['@', '(', ')', '{', '}', '[', ']', '*', '^', '?', '+', '~', '&', '|', '!', '<', '>', '=', '%', '#', '$', ',', '.', '/', ';', ':', '"', "'", "`", '\\'] as $char) {
                 if (str_contains($word, $char)) {
                     $use_fts = false;
                     break 2;
@@ -586,10 +588,12 @@ class go extends Factory
                     }
                 } else {
                     if ('' !== $session_id) {
-                        $query->where(['level', 'system']);
-                        $query->or(['level', 'important']);
-                        $query->or(['level', 'daily'], ['session_id', $session_id]);
-                        $query->or(['level', 'misc'], ['session_id', $session_id]);
+                        $query->where(
+                            ['level', 'system'],
+                            ['or', 'level', 'important'],
+                            ['or', ['level', 'daily'], ['session_id', $session_id]],
+                            ['or', ['level', 'misc'], ['session_id', $session_id]],
+                        );
                     }
                 }
 
@@ -1000,10 +1004,12 @@ class go extends Factory
             }
         } else {
             if ('' !== $session_id) {
-                $query->where(['agent_memory.level', 'system']);
-                $query->or(['agent_memory.level', 'important']);
-                $query->or(['agent_memory.level', 'daily'], ['agent_memory.session_id', $session_id]);
-                $query->or(['agent_memory.level', 'misc'], ['agent_memory.session_id', $session_id]);
+                $query->where(
+                    ['agent_memory.level', 'system'],
+                    ['or', 'agent_memory.level', 'important'],
+                    ['or', ['agent_memory.level', 'daily'], ['agent_memory.session_id', $session_id]],
+                    ['or', ['agent_memory.level', 'misc'], ['agent_memory.session_id', $session_id]],
+                );
             }
         }
 
@@ -1055,10 +1061,12 @@ class go extends Factory
             }
         } else {
             if ('' !== $session_id) {
-                $query->where(['level', 'system']);
-                $query->or(['level', 'important']);
-                $query->or(['level', 'daily'], ['session_id', $session_id]);
-                $query->or(['level', 'misc'], ['session_id', $session_id]);
+                $query->where(
+                    ['level', 'system'],
+                    ['or', 'level', 'important'],
+                    ['or', ['level', 'daily'], ['session_id', $session_id]],
+                    ['or', ['level', 'misc'], ['session_id', $session_id]],
+                );
             }
         }
 
