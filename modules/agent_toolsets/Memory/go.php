@@ -51,7 +51,8 @@ class go extends Factory
             session_id     CHAR(36) PRIMARY KEY,
             session_name   VARCHAR(64) NOT NULL,
             session_status TINYINT NOT NULL,
-            create_time    INTEGER NOT NULL
+            create_time    INTEGER NOT NULL,
+            last_time      INTEGER NOT NULL DEFAULT 0
         )';
 
     private const DDL_MEMORY = '
@@ -78,7 +79,7 @@ class go extends Factory
 
     private const DDL_INDEXES = [
         'CREATE INDEX IF NOT EXISTS idx_session_status ON agent_session(session_status)',
-        'CREATE INDEX IF NOT EXISTS idx_create_time ON agent_session(create_time)',
+        'CREATE INDEX IF NOT EXISTS idx_last_time ON agent_session(last_time)',
         'CREATE INDEX IF NOT EXISTS idx_mem_date ON agent_memory(date_key)',
         'CREATE INDEX IF NOT EXISTS idx_mem_expire ON agent_memory(expire_at)',
         'CREATE INDEX IF NOT EXISTS idx_mem_level_create ON agent_memory(level, create_id DESC)',
@@ -143,12 +144,15 @@ class go extends Factory
             return ['status' => 'success', 'session_id' => $session_id];
         }
 
+        $now_time = time();
+
         $saved = $this->libSQLite->table('agent_session')
             ->insert([
                 'session_id'     => $session_id,
                 'session_name'   => $session_name,
                 'session_status' => 1,
-                'create_time'    => time(),
+                'create_time'    => $now_time,
+                'last_time'      => $now_time
             ])
             ->execute();
 
@@ -158,7 +162,7 @@ class go extends Factory
 
         $this->session_list[] = $session_id;
 
-        unset($session_id, $session_name);
+        unset($session_id, $session_name, $now_time);
         return $result;
     }
 
@@ -182,7 +186,7 @@ class go extends Factory
             $query->where(['session_status', $session_status]);
         }
 
-        $sessions = $query->order(['create_time' => 'DESC'])->fetchAll();
+        $sessions = $query->order(['last_time' => 'DESC'])->fetchAll();
 
         foreach ($sessions as $id => $session) {
             $sessions[$id]['create_time']    = date('Y-m-d H:i:s', $session['create_time']);
@@ -273,12 +277,13 @@ class go extends Factory
             $date = (int)date('Ymd');
         }
 
+        $now_time  = time();
         $create_id = $this->generateMicroTimestamp('agent_memory');
 
         $expire_at = 'misc' === $level
         && isset($this->utils->agent_config['misc_keep_days'])
         && 0 < $this->utils->agent_config['misc_keep_days']
-            ? (time() + $this->utils->agent_config['misc_keep_days'] * 86400)
+            ? ($now_time + $this->utils->agent_config['misc_keep_days'] * 86400)
             : 0;
 
         if (in_array($level, ['important', 'system'], true)) {
@@ -289,6 +294,11 @@ class go extends Factory
 
         if ('' !== $session_id) {
             $this->saveSession($session_id, mb_substr($content, 0, 16, 'UTF-8'));
+
+            $this->libSQLite->table('agent_session')
+                ->update(['last_time' => $now_time])
+                ->where(['session_id', $session_id])
+                ->execute();
         }
 
         $this->libSQLite->table('agent_memory')
@@ -306,7 +316,7 @@ class go extends Factory
 
         $result = ['status' => 'success', 'create_id' => $create_id];
 
-        unset($level, $role, $content, $date, $session_id, $create_id, $expire_at);
+        unset($level, $role, $content, $date, $session_id, $now_time, $create_id, $expire_at);
         return $result;
     }
 
