@@ -43,6 +43,17 @@ export function useSessions(options: UseSessionsOptions = {}) {
    * 之后再收到 readSession（手动刷新、断线重连）绝不能把用户从他正在聊的会话里踢走。
    */
   let initialPlacementPending = true;
+  /**
+   * 后端上一份 `readSession` 返回的会话顺序（新的在前）。
+   *
+   * **列表顺序以后端为准**：后端按 `create_time DESC` 返回，这个顺序是稳定的
+   * （`agent_session` 表里没有 update_time，所以不会因为「最近说过话」而变化），
+   * 前端不再按本地活动时间重排。本地新建、还没入库的会话不属于任何远端顺序，
+   * 一律排在最前面。
+   */
+  let remoteOrder: string[] = [];
+  /** 是否已经拿到过后端顺序（拿到过就以它为准，空数组也算）。 */
+  let remoteOrderLoaded = false;
 
   /** 用户自己决定了落点（或已经在某个会话里活动过）：放弃首次自动定位。 */
   function markPlacementDecided() {
@@ -178,6 +189,9 @@ export function useSessions(options: UseSessionsOptions = {}) {
     storageDisabled = true;
     clearSaveTimer();
     initialPlacementPending = true;
+    // 本地历史清掉了，后端的顺序也一并作废：下次 readSession 回来重新建立。
+    remoteOrder = [];
+    remoteOrderLoaded = false;
     localStorage.removeItem(LEGACY_STORAGE_KEY);
     localStorage.removeItem(SINGLE_SESSION_STORAGE_KEY);
     localStorage.removeItem(STORAGE_KEY);
@@ -220,8 +234,9 @@ export function useSessions(options: UseSessionsOptions = {}) {
     if (session.keepEmpty) delete session.keepEmpty;
     applyFirstMessageTitle(session, message, resolveDefaultTitle());
     touchSession(session);
-    // 新会话按 updatedAt 排到最前。
-    moveToFront(session.id);
+    // 顺序以后端为准（见 `reorderSessions()`），所以这里**不再**把刚说过话的会话顶到最前；
+    // 只有还没拿到后端顺序时（离线 / 后端没有任何历史）才按本地活动时间重排。
+    if (!remoteOrderLoaded) sortSessions();
     saveSessions();
     return message;
   }
@@ -329,9 +344,13 @@ export function useSessions(options: UseSessionsOptions = {}) {
    * 把后端 `readSession` 的返回合并进本地列表。**服务端是会话是否存在的权威来源**：
    *
    * - 后端有、本地没有 → 新增（本地新建但还没发过消息的会话保留，它还没入库）。
-   * - 本地有、后端也有 → 只补 `remoteName`，不动本地消息；本地已起的标题不覆盖。
+   * - 本地有、后端也有 → 补 `remoteName` 和**标题**（`session_name` 是标题的唯一来源，
+   *   手动改过名的除外），不动本地消息。
    * - 本地标着「来自后端」、后端却没有 → 服务端已删，本地跟着删（否则会复活）。
    * - 本地空占位 → 丢掉（早期版本会把兜底占位存进 localStorage）。
+   *
+   * **顺序也以后端为准**：列表按 `remote` 的数组顺序排（后端 `create_time DESC`），
+   * 本地未入库的新会话排在最前。见 `reorderSessions()`。
    *
    * 落点：**本次打开的第一份 readSession 会直接定位到排序后的第一条**
    * （后端按 `create_time DESC` 返回，即最近一条）；用户自己动过之后（发过消息 /
@@ -379,9 +398,10 @@ export function useSessions(options: UseSessionsOptions = {}) {
       if (existing) {
         if (name && existing.remoteName !== name) {
           existing.remoteName = name;
-          // 本地还没起过标题时直接用后端名称，后端是按第一句话前 8 个字命名的。
-          // 手动改过名的（`titleEdited`）永远以本地为准，后端改名的接口到位前更是如此。
-          if (!existing.titleEdited && isPlaceholderTitle(existing.title)) existing.title = name;
+          // 标题以接口为准：只要不是用户手动改过名（`titleEdited`），就跟随后端的 `session_name`。
+          // 本地按第一句话自动起的名字也会在这里被后端版本替换（两边规则相同：前 8 个字），
+          // 这样「标题从哪来」只有一个答案——WS 返回的那个。
+          if (!existing.titleEdited) existing.title = name;
           changed = true;
         }
         return;
@@ -398,9 +418,26 @@ export function useSessions(options: UseSessionsOptions = {}) {
       changed = true;
     });
 
-    // 没新增会话、也没有要清理的：不用动。
-    if (!changed && !placeholderIds.size && !missingRemoteIds.size) return;
-    sortSessions();
+    // 顺序以后端返回的数组顺序为准（后端 `create_time DESC`）。先把这份顺序记下来：
+    // 无论这次有没有合并出内容变化，它都是列表该有的顺序。
+    const nextOrder = remote
+      .map((item) => String(item.session_id || '').trim())
+      .filter(Boolean);
+    const orderChanged = nextOrder.join('\n') !== remoteOrder.join('\n');
+    remoteOrder = nextOrder;
+    remoteOrderLoaded = true;
+
+    // 没新增会话、也没有要清理的：这时候只有顺序可能变，不需要走下面的落点逻辑。
+    if (!changed && !placeholderIds.size && !missingRemoteIds.size) {
+      if (orderChanged) {
+        reorderSessions();
+        saveSessions();
+      }
+      return;
+    }
+
+    // 顺序：远端会话按接口顺序，本地未入库的排在最前。
+    reorderSessions();
 
     // 丢掉空占位（含历史遗留：早期版本会把兜底占位一起存进 localStorage），
     // 以及服务端已经不存在的本地记录。
@@ -425,6 +462,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     saveSessions();
   }
 
+  /** 纯本地排序：按最后活动时间倒序。只在还没拿到后端顺序时使用。 */
   function sortSessions() {
     sessions.value.sort((left, right) => {
       const leftTime = Date.parse(left.updatedAt) || 0;
@@ -433,11 +471,33 @@ export function useSessions(options: UseSessionsOptions = {}) {
     });
   }
 
-  function moveToFront(sessionId: string) {
-    const index = sessions.value.findIndex((session) => session.id === sessionId);
-    if (index <= 0) return;
-    const [session] = sessions.value.splice(index, 1);
-    sessions.value.unshift(session);
+  /**
+   * 按「后端顺序优先」重排列表（拿到 `readSession` 后调用）。
+   *
+   * - 后端返回过的会话：严格按接口给的数组顺序（`create_time DESC`）。
+   * - 本地新建、还没入库的：排在最前面，彼此按创建时间倒序（它们都是刚建的）。
+   * - 还没拿到过后端顺序（离线 / 后端没有任何历史）：退回纯本地排序。
+   *
+   * 刻意**不**按本地 `updatedAt` 重排：那样一旦在某个会话里说了话就把它顶到最前，
+   * 顺序立刻和接口不一致。顺序只能有一个来源，就是后端。
+   */
+  function reorderSessions() {
+    if (!remoteOrderLoaded) {
+      sortSessions();
+      return;
+    }
+
+    const position = new Map(remoteOrder.map((id, index) => [id, index]));
+    sessions.value.sort((left, right) => {
+      const leftIndex = position.get(left.id);
+      const rightIndex = position.get(right.id);
+      if (leftIndex === undefined && rightIndex === undefined) {
+        return (Date.parse(right.createdAt) || 0) - (Date.parse(left.createdAt) || 0);
+      }
+      if (leftIndex === undefined) return -1;
+      if (rightIndex === undefined) return 1;
+      return leftIndex - rightIndex;
+    });
   }
 
   onBeforeUnmount(() => {
@@ -507,6 +567,12 @@ function applyFirstMessageTitle(session: ChatSession, message: ChatMessage, fall
   if (message.role !== 'user') return;
   // 手动改过名的会话不再自动起名，否则用户刚写的标题会被第一句话顶掉。
   if (session.titleEdited) return;
+  // 标题已经有接口来源了：**以 WS 返回的 `session_name` 为准，不再跟着内容变**。
+  //
+  // 这条守卫是必需的：后端会话在本地是空消息数组（历史要等 `memory read` 回来才填），
+  // 所以「打开一个后端会话 → 立刻发第一句话」时这里只找得到那一条 user 消息，
+  // 没有守卫就会把接口给的标题改写成本地这句的前 8 个字。
+  if (session.remoteName) return;
   const userMessages = session.messages.filter((item) => item.role === 'user');
   // 已经有更早的用户消息就说明标题早就定过了。
   if (userMessages.length > 1) return;
