@@ -39,12 +39,12 @@ class go extends Factory
     public memory $memory;
     public openai $openai;
 
-    public int $wait_until  = 0;
-    public int $keep_pairs  = 2;
-    public int $wait_status = self::STATUS_IDLE;
+    public int $wait_until = 0;
+    public int $keep_pairs = 2;
 
     public bool $ctx_warning = false;
 
+    public array $wait_status   = [];
     public array $last_response = [];
 
     /**
@@ -295,7 +295,7 @@ class go extends Factory
             switch ($message['type']) {
                 case 'stream':
                     if (WORKER_MAIN === $payload['sender']) {
-                        $this->setStatus(self::STATUS_WAIT);
+                        $this->setStatus($payload['sessionId'], self::STATUS_WAIT);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'streaming');
                         $this->utils->debug('WorkerBee: ' . $payload['workerName'] . ' working on streaming', 'debug');
@@ -326,7 +326,7 @@ class go extends Factory
                             );
 
                             if (WORKER_MAIN === $payload['sender']) {
-                                $this->setStatus(self::STATUS_BUSY);
+                                $this->setStatus($payload['sessionId'], self::STATUS_BUSY);
 
                                 $this->openai->talkTo(
                                     $payload['sender'],
@@ -358,7 +358,7 @@ class go extends Factory
 
                         case 'error':
                             if (WORKER_MAIN === $payload['sender']) {
-                                $this->setStatus(self::STATUS_IDLE);
+                                $this->setStatus($payload['sessionId'], self::STATUS_IDLE);
                             } else {
                                 $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
                             }
@@ -428,7 +428,7 @@ class go extends Factory
                 case 'context':
                     // Reset main worker status
                     if (WORKER_MAIN === $payload['sender']) {
-                        $this->setStatus(self::STATUS_IDLE);
+                        $this->setStatus($payload['sessionId'], self::STATUS_IDLE);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
                     }
@@ -529,7 +529,7 @@ class go extends Factory
                     $this->last_response[$payload['sessionId']] = time();
 
                     if (WORKER_MAIN === $payload['sender']) {
-                        $this->setStatus(self::STATUS_IDLE);
+                        $this->setStatus($payload['sessionId'], self::STATUS_IDLE);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
                         $this->utils->debug('WorkerBee: ' . $payload['workerName'] . ' reply completed, ready.', 'trace');
@@ -581,7 +581,7 @@ class go extends Factory
                             $this->utils->debug($payload['workerName'] . ': Tool results collected, proceeding.', 'trace');
 
                             if (WORKER_MAIN === $payload['sender']) {
-                                $this->setStatus(self::STATUS_BUSY);
+                                $this->setStatus($payload['sessionId'], self::STATUS_BUSY);
                                 $worker_idx = $this->utils->getMainIDX();
                             } else {
                                 $worker_info = $this->utils->getChildWorker(WORKER_CHILD, $payload['workerName']);
@@ -629,7 +629,7 @@ class go extends Factory
                                         $payload['sessionId']
                                     );
 
-                                    $this->setStatus(self::STATUS_BUSY);
+                                    $this->setStatus($payload['sessionId'], self::STATUS_BUSY);
 
                                     $this->openai->talkTo(
                                         $payload['sender'],
@@ -776,48 +776,35 @@ class go extends Factory
      */
     public function onHeartbeat(string $socket_id): string
     {
-        $now_time = time();
-
-        if (self::STATUS_IDLE !== $this->wait_status) {
-            if ($this->wait_until > $now_time) {
-                return '';
-            }
-
-            $this->setStatus(self::STATUS_IDLE, true);
-        }
-
+        $now_time     = time();
         $session_list = $this->core->context->getQueueSessionId();
 
         foreach ($session_list as $session_id) {
             if (0 < $this->last_response[$session_id] && $now_time - $this->last_response[$session_id] >= $this->utils->agent_config['reset_interval'] ?? 21600) {
-                $this->setStatus(self::STATUS_IDLE);
+                $this->setStatus($session_id, self::STATUS_IDLE);
                 $this->core->context->removeHistory($session_id, WORKER_MAIN);
             }
-        }
 
-        $task_list = $this->memory->runTask();
+            if (self::STATUS_IDLE !== $this->wait_status[$session_id]) {
+                if ($this->wait_until > $now_time) {
+                    continue;
+                }
 
-        if ([] === $task_list) {
-            return '';
-        }
+                $this->setStatus($session_id, self::STATUS_IDLE, true);
+            }
 
-        $job_list = [];
+            $task_list = $this->memory->runTask($session_id);
 
-        foreach ($task_list as $task) {
-            $job_list[$task['session_id']]   ??= [];
-            $job_list[$task['session_id']][] = $task['task'];
-        }
+            if ([] === $task_list) {
+                continue;
+            }
 
-        $this->utils->debug('ScheduledTask: Running task jobs (' . count($task_list) . ')', 'trace');
+            $this->utils->debug('ScheduledTask: Running ' . count($task_list) . ' task jobs on #' . $session_id, 'trace');
 
-        foreach ($job_list as $session_id => $tasks) {
-            $task_jobs = [
-                'session_id' => $session_id,
-                'time'       => date('Y-m-d H:i:s'),
-                'jobs'       => $task_list
-            ];
-
-            $task_content = '[定时任务]' . "\n" . '会话ID：`' . $session_id . '`' . "\n" . '任务：' . "\n" . json_encode($task_jobs, JSON_FORMAT) . "\n" . '流程：①执行任务并获取结果；②按照任务会话ID，重要存daily，特别重要存important，琐事不存；③简要汇报结果及存储层级；④完成后清理定时任务（忽略结果）。';
+            $task_content = '[定时任务]' . "\n"
+                . '会话ID：`' . $session_id . '`' . "\n\n"
+                . '待执行任务：' . "\n" . implode("\n", $task_list) . "\n\n"
+                . '流程：①执行任务并获取结果；②按任务会话ID，重要存daily，特别重要存important，琐事不存；③简要汇报结果及存储层级；④完成后清理定时任务（忽略结果）。';
 
             $this->core->context->addUserMessage($session_id, WORKER_MAIN, [['type' => 'text', 'content' => $task_content]]);
 
@@ -830,7 +817,7 @@ class go extends Factory
                 $session_id
             );
 
-            $this->setStatus(self::STATUS_BUSY);
+            $this->setStatus($session_id, self::STATUS_BUSY);
 
             $this->openai->talkTo(
                 WORKER_MAIN,
@@ -842,7 +829,7 @@ class go extends Factory
             );
         }
 
-        unset($socket_id, $now_time, $session_list, $session_id, $task_list, $job_list, $task, $tasks, $task_jobs, $task_content, $metadata);
+        unset($socket_id, $now_time, $session_list, $session_id, $task_list, $task_content, $metadata);
         return '';
     }
 
@@ -883,7 +870,7 @@ class go extends Factory
             }
 
             if ('stop' === $data['type']) {
-                $this->setStatus(self::STATUS_IDLE);
+                $this->setStatus($data['sessionId'], self::STATUS_IDLE);
                 $this->utils->debug('User: Abort signal sent. Cancelling task.', 'trace');
                 $this->openai->abort();
                 continue;
@@ -912,7 +899,7 @@ class go extends Factory
                 switch ($result['content']['act']) {
                     // Reset session memory
                     case 'reset':
-                        $this->setStatus(self::STATUS_IDLE);
+                        $this->setStatus($data['sessionId'], self::STATUS_IDLE);
                         $this->core->context->removeHistory($data['sessionId'], WORKER_MAIN);
                         break;
 
@@ -939,7 +926,7 @@ class go extends Factory
 
             $curr_msg[$data['sessionId']] ??= [];
 
-            if (self::STATUS_IDLE === $this->wait_status) {
+            if (self::STATUS_IDLE === ($this->wait_status[$data['sessionId']] ?? self::STATUS_BUSY)) {
                 $curr_msg[$data['sessionId']] = array_merge($curr_msg[$data['sessionId']], $result['content']);
 
                 if ([] === $this->core->context->getHistory($data['sessionId'], WORKER_MAIN)) {
@@ -996,7 +983,7 @@ class go extends Factory
                 $this->core->curr_message_id['messageId'] ?? ''
             );
 
-            $this->setStatus(self::STATUS_BUSY);
+            $this->setStatus($session_id, self::STATUS_BUSY);
 
             $this->openai->talkTo(
                 WORKER_MAIN,
@@ -1027,14 +1014,6 @@ class go extends Factory
             }
         }
 
-        if (self::STATUS_IDLE !== $this->wait_status) {
-            if ($this->wait_until > time()) {
-                return [];
-            }
-
-            $this->setStatus(self::STATUS_IDLE, true);
-        }
-
         $session_list = $this->core->context->getQueueSessionId();
 
         foreach ($session_list as $session_id) {
@@ -1055,7 +1034,7 @@ class go extends Factory
                 $session_id
             );
 
-            $this->setStatus(self::STATUS_BUSY);
+            $this->setStatus($session_id, self::STATUS_BUSY);
 
             $this->openai->talkTo(
                 WORKER_MAIN,
@@ -1087,16 +1066,19 @@ class go extends Factory
     }
 
     /**
-     * @param int  $status
-     * @param bool $timeout
+     * @param string $session_id
+     * @param int    $status
+     * @param bool   $timeout
      *
      * @return void
      */
-    private function setStatus(int $status, bool $timeout = false): void
+    private function setStatus(string $session_id, int $status, bool $timeout = false): void
     {
+        $this->wait_status[$session_id] ??= self::STATUS_IDLE;
+
         if (self::STATUS_IDLE === $status) {
             $this->utils->debug('AgentBee: IDLE (' . (!$timeout ? 'stream ended' : 'response timeout') . ')', 'trace');
-            $this->wait_status = $status;
+            $this->wait_status[$session_id] = $status;
 
             unset($status, $timeout);
             return;
@@ -1104,7 +1086,7 @@ class go extends Factory
 
         $this->wait_until = time() + ($this->utils->agent_config['agent_llm']['timeout']);
 
-        if (($this->wait_status & $status) !== $status) {
+        if (($this->wait_status[$session_id] & $status) !== $status) {
             switch ($status) {
                 case self::STATUS_BUSY:
                     $this->utils->debug('AgentBee: BUSY (waiting for response)', 'trace');
@@ -1114,9 +1096,9 @@ class go extends Factory
                     break;
             }
 
-            $this->wait_status |= $status;
+            $this->wait_status[$session_id] |= $status;
         }
 
-        unset($status, $timeout);
+        unset($session_id, $status, $timeout);
     }
 }

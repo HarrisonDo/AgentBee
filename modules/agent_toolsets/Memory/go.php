@@ -85,6 +85,7 @@ class go extends Factory
         'CREATE INDEX IF NOT EXISTS idx_mem_level_create ON agent_memory(level, create_id DESC)',
         'CREATE INDEX IF NOT EXISTS idx_mem_lvl_date_create ON agent_memory(level, date_key, create_id DESC)',
         'CREATE INDEX IF NOT EXISTS idx_mem_session ON agent_memory(session_id)',
+        'CREATE INDEX IF NOT EXISTS idx_session_id ON agent_task(session_id)',
         'CREATE INDEX IF NOT EXISTS idx_task_runat ON agent_task(run_at)',
     ];
 
@@ -716,40 +717,49 @@ class go extends Factory
     }
 
     /**
+     * @param string $session_id
+     *
      * @return array
      * @throws \ReflectionException
      */
-    public function listTasks(): array
+    public function listTasks(string $session_id): array
     {
-        $tasks = $this->libSQLite->table('agent_task')->select('*')->order(['run_at' => 'ASC'])->fetchAll();
+        $tasks = $this->libSQLite
+            ->table('agent_task')
+            ->select('*')
+            ->where(['session_id', $session_id])
+            ->order(['run_at' => 'ASC'])
+            ->fetchAll();
 
         foreach ($tasks as &$task) {
             $task['run_time']    = date('Y-m-d H:i:s', $task['run_at']);
             $task['create_time'] = date('Y-m-d H:i:s', (int)($task['create_id'] / 1000000));
         }
 
-        unset($task);
+        unset($session_id, $task);
         return ['status' => 'success', 'tasks' => $tasks];
     }
 
     /**
+     * @param string $session_id
+     *
      * @return array
      * @throws \ReflectionException
      */
-    public function runTask(): array
+    public function runTask(string $session_id): array
     {
         $now = time();
 
-        // Fetch due tasks
+        // Fetch session tasks
         $tasks = $this->libSQLite->table('agent_task')
-            ->select('create_id', 'session_id', 'prompt', 'run_at', 'repeat', 'interval')
-            ->where(['run_at', '<=', $now])
+            ->select('create_id', 'prompt', 'run_at', 'repeat', 'interval')
+            ->where(['session_id', $session_id], ['run_at', '<=', $now])
             ->fetchAll();
 
         $result = [];
 
-        foreach ($tasks as $task) {
-            $result[] = ['session_id' => $task['session_id'], 'task' => $task['prompt']];
+        foreach ($tasks as $key => $task) {
+            $result[] = '[任务' . ($key + 1) . '] ' . $task['prompt'];
 
             if ($task['repeat']) {
                 // Recurring task: calculate next run time
@@ -773,7 +783,7 @@ class go extends Factory
             }
         }
 
-        unset($now, $tasks, $task, $next_run);
+        unset($session_id, $now, $tasks, $key, $task, $next_run);
         return $result;
     }
 

@@ -46,7 +46,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'readSession',
-                'description' => '读取会话列表。返回：{status, sessions: [{session_id, session_name, create_time}]}。',
+                'description' => '读取会话列表。返回：{status, sessions: [{session_id, session_name, session_status, create_time}]}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
@@ -84,7 +84,7 @@ class skills
                         'role'       => ['type' => 'string', 'enum' => ['user', 'assistant', 'system', 'tool'], 'description' => '来源角色'],
                         'content'    => ['type' => 'string', 'description' => '记忆内容'],
                         'date'       => ['type' => 'integer', 'default' => 0, 'description' => '日期：YYYYMMDD (0=当天)'],
-                        'session_id' => ['type' => 'string', 'default' => '', 'description' => '会话ID(可选，默认空)']
+                        'session_id' => ['type' => 'string', 'default' => '', 'description' => '会话ID。daily层级必传；system/important层级忽略']
                     ],
                     'required'   => ['level', 'role', 'content']
                 ],
@@ -204,14 +204,28 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'listTasks',
-                'description' => '列出所有任务详情。返回：{status, tasks: [{create_id, run_at, repeat, interval, prompt, run_time, create_time}]}。'
+                'description' => '列出当前会话所有任务详情。返回：{status, tasks: [{create_id, session_id, run_at, repeat, interval, prompt, run_time, create_time}]}。',
+                'parameters'  => [
+                    'type'       => 'object',
+                    'properties' => [
+                        'session_id' => ['type' => 'string', 'description' => '会话ID'],
+                    ],
+                    'required'   => ['session_id']
+                ],
             ],
         ],
         [
             'type'     => 'function',
             'function' => [
                 'name'        => 'runTask',
-                'description' => '执行所有到期任务。返回：{[session_id, task], ...}。',
+                'description' => '获取当前会话所有到期任务。返回：[prompt, ...]。',
+                'parameters'  => [
+                    'type'       => 'object',
+                    'properties' => [
+                        'session_id' => ['type' => 'string', 'description' => '会话ID'],
+                    ],
+                    'required'   => ['session_id']
+                ],
             ],
         ]
     ];
