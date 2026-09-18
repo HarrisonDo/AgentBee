@@ -227,6 +227,17 @@ const activeMeta = computed(() => {
 });
 
 /**
+ * 当前会话的标题，给顶栏 / 移动端头部用。
+ *
+ * 标题的来源只有一个：WS 返回的 `session_name`（见 `useSessions.applyRemoteSessions()`）。
+ * 列表为空时 `activeSession` 是内存里的兜底会话，标题就是 i18n 占位文案。
+ */
+const activeSessionTitle = computed(() => {
+  const title = sessions.activeSession.value.title.trim();
+  return title || t.value.untitledSession;
+});
+
+/**
  * `SessionPanel` 的 props 汇总。
  * 桌面侧栏和移动抽屉用的是**同一个面板**，绑定从这里统一取，
  * 避免两处各写一份、以后加字段漏掉一个（移动端缺功能往往就是这么来的）。
@@ -1752,8 +1763,15 @@ function redactConnectionUrl(value: string): string {
         >
           <MessagesSquare :size="18" aria-hidden="true" />
         </button>
+        <!--
+          移动端这一行就是「头部」，会话列表收在抽屉里，这里是唯一能看出
+          「我现在在哪个会话」的地方——所以品牌名让位给会话标题。
+          桌面端保持品牌名：侧栏下面就是会话列表，标题放顶栏更合适。
+        -->
         <div class="brand-copy">
-          <h1>AgentBee Web</h1>
+          <h1 :title="isMobileLayout ? activeSessionTitle : 'AgentBee Web'">
+            {{ isMobileLayout ? activeSessionTitle : 'AgentBee Web' }}
+          </h1>
           <p>{{ t.tagline }}</p>
         </div>
       </div>
@@ -1784,7 +1802,9 @@ function redactConnectionUrl(value: string): string {
     <main class="main">
       <header class="topbar">
         <div class="topbar-title">
-          <strong>{{ currentView === 'settings' ? t.settings : t.conversation }}</strong>
+          <strong :title="currentView === 'settings' ? t.settings : activeSessionTitle">
+            {{ currentView === 'settings' ? t.settings : activeSessionTitle }}
+          </strong>
           <span>{{ activeMeta }}</span>
         </div>
         <div class="topbar-actions">

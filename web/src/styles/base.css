@@ -333,6 +333,10 @@ body:has(.login-window-backdrop) {
   font-size: 0.98rem;
   font-weight: 700;
   letter-spacing: 0;
+  /* 移动端这里显示的是当前会话标题，可能是任意长的一句话：单行省略。 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .brand p {
