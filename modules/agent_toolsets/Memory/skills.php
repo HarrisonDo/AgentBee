@@ -121,7 +121,7 @@ class skills
                         'date'       => ['type' => 'integer', 'default' => 0, 'description' => '指定日期：YYYYMMDD (0=不限)'],
                         'offset'     => ['type' => 'integer', 'default' => 0, 'description' => '偏移量'],
                         'length'     => ['type' => 'integer', 'default' => 10, 'description' => '条数（0为全部，建议5-20）'],
-                        'session_id' => ['type' => 'string', 'default' => '', 'description' => '会话ID(可选，默认空=不限)'],
+                        'session_id' => ['type' => 'string', 'default' => '', 'description' => '会话ID。all/misc/daily层级必传；system/important层级忽略'],
                         'create_id'  => ['type' => 'integer', 'default' => 0, 'description' => '游标：仅取create_id小于此值的记录(0=不限)']
                     ],
                     'required'   => ['level']
@@ -142,7 +142,7 @@ class skills
                         'date_end'   => ['type' => 'integer', 'default' => 0, 'description' => '结束日期：YYYYMMDD (0=不限)'],
                         'offset'     => ['type' => 'integer', 'default' => 0, 'description' => '偏移量'],
                         'length'     => ['type' => 'integer', 'default' => 20, 'description' => '条数（0=全部，建议10-30）'],
-                        'session_id' => ['type' => 'string', 'default' => '', 'description' => '会话ID(可选，默认空=不限)']
+                        'session_id' => ['type' => 'string', 'default' => '', 'description' => '会话ID。all/misc/daily层级必传；system/important层级忽略']
                     ],
                     'required'   => ['level', 'keywords']
                 ],
