@@ -141,9 +141,9 @@ describe('useSessions', () => {
     expect(ids.filter((id) => id === 'remote-1')).toHaveLength(1);
     // 本地已有会话的消息不能被清掉。
     expect(sessions.activeSession.value.messages).toHaveLength(1);
-    // 本地已经用第一句话起过标题，不覆盖。
+    // 标题以接口为准：后端给了 `session_name` 就用它，本地按第一句话起的名字让位。
     const renamed = sessions.sessions.value.find((session) => session.id === local);
-    expect(renamed?.title).toBe('本地在聊的话题');
+    expect(renamed?.title).toBe('服务端的名字');
   });
 
   it('opens the most recent remote session on first load', () => {
@@ -271,6 +271,88 @@ describe('useSessions', () => {
     expect(second.sessions.value.map((session) => session.id)).toContain(id);
     expect(second.sessions.value.find((session) => session.id === id)?.messages)
       .toHaveLength(1);
+  });
+});
+
+describe('标题的来源', () => {
+  it('does not let the first message rename a session the backend named', () => {
+    const sessions = useSessions({ defaultTitle: () => '新对话' });
+    // 后端会话：本地是空消息数组，标题来自接口。
+    sessions.applyRemoteSessions([
+      { session_id: 's1', session_name: '后端起的名字', create_time: '2026-09-14 10:00:00' },
+    ]);
+    expect(sessions.activeSession.value.title).toBe('后端起的名字');
+
+    // 打开它就发第一句话——这时候历史还没回来，本地只有这一条 user 消息，
+    // 正是「标题被内容改写」的现场。
+    sessions.addMessage('user', '这句话本来会把标题顶掉');
+
+    expect(sessions.activeSession.value.title).toBe('后端起的名字');
+  });
+
+  it('follows the backend name until the user renames the session', () => {
+    const sessions = useSessions({ defaultTitle: () => '新对话' });
+    sessions.applyRemoteSessions([{ session_id: 's1', session_name: '旧名字' }]);
+    sessions.applyRemoteSessions([{ session_id: 's1', session_name: '后端改了名' }]);
+    expect(sessions.sessions.value[0].title).toBe('后端改了名');
+
+    // 手动改过名之后，后端再来什么名字都不动它。
+    sessions.renameSession('s1', '我自己起的');
+    sessions.applyRemoteSessions([{ session_id: 's1', session_name: '后端又想改' }]);
+    expect(sessions.sessions.value[0].title).toBe('我自己起的');
+  });
+});
+
+describe('会话顺序以后端为准', () => {
+  it('renders the list in the order readSession returned', () => {
+    const sessions = useSessions({ defaultTitle: () => '新对话' });
+    sessions.applyRemoteSessions([
+      { session_id: 'b', session_name: '第二个', create_time: '2026-09-14 09:00:00' },
+      { session_id: 'a', session_name: '第一个', create_time: '2026-09-14 10:00:00' },
+    ]);
+
+    // 顺序就是接口给的数组顺序，不按 create_time 重新排。
+    expect(sessions.sessions.value.map((session) => session.id)).toEqual(['b', 'a']);
+  });
+
+  it('does not move a session to the top just because it was used', () => {
+    const sessions = useSessions({ defaultTitle: () => '新对话' });
+    sessions.applyRemoteSessions([
+      { session_id: 'newest', session_name: '最新的', create_time: '2026-09-14 10:00:00' },
+      { session_id: 'older', session_name: '早一点的', create_time: '2026-09-14 09:00:00' },
+    ]);
+
+    sessions.switchSession('older');
+    sessions.addMessage('user', '在这里说一句话');
+
+    expect(sessions.sessions.value.map((session) => session.id)).toEqual(['newest', 'older']);
+  });
+
+  it('puts a locally created session in front of the backend ones', () => {
+    const sessions = useSessions({ defaultTitle: () => '新对话' });
+    sessions.applyRemoteSessions([
+      { session_id: 'r1', session_name: '后端会话', create_time: '2026-09-14 10:00:00' },
+    ]);
+
+    const created = sessions.createSession();
+
+    expect(sessions.sessions.value.map((session) => session.id)).toEqual([created.id, 'r1']);
+  });
+
+  it('re-follows the backend when the order changes on a later refresh', () => {
+    const sessions = useSessions({ defaultTitle: () => '新对话' });
+    sessions.applyRemoteSessions([
+      { session_id: 'x', session_name: '甲' },
+      { session_id: 'y', session_name: '乙' },
+    ]);
+    expect(sessions.sessions.value.map((session) => session.id)).toEqual(['x', 'y']);
+
+    // 内容没变化、只有顺序变了：也要跟着走。
+    sessions.applyRemoteSessions([
+      { session_id: 'y', session_name: '乙' },
+      { session_id: 'x', session_name: '甲' },
+    ]);
+    expect(sessions.sessions.value.map((session) => session.id)).toEqual(['y', 'x']);
   });
 });
 
