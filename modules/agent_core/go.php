@@ -927,21 +927,22 @@ class go extends Factory
                 $this->core->sendMessage($socket_id, ['type' => 'error', 'error' => implode("\n", $result['errors'])]);
             }
 
+            if (0 === $this->core->context->countHistory($data['sessionId'], WORKER_MAIN)) {
+                array_unshift(
+                    $result['content'],
+                    [
+                        'type'    => 'text',
+                        'content' => '[系统指令] 新会话，必须读取`misc`记忆，建立上下文后再回复，偏移为"1"。建立上下文后，若用户有明确需求，且上下文仍不足，则搜索相关记忆。记忆读取过程不汇报。'
+                    ]
+                );
+            }
+
             $curr_msg[$data['sessionId']] ??= [];
 
-            if (self::STATUS_IDLE === ($this->wait_status[$data['sessionId']] ?? self::STATUS_BUSY)) {
+            if (!isset($this->wait_status[$data['sessionId']]) || self::STATUS_IDLE === $this->wait_status[$data['sessionId']]) {
                 $curr_msg[$data['sessionId']] = array_merge($curr_msg[$data['sessionId']], $result['content']);
-
-                if ([] === $this->core->context->getHistory($data['sessionId'], WORKER_MAIN)) {
-                    array_unshift(
-                        $curr_msg[$data['sessionId']], [
-                            'type'    => 'text',
-                            'content' => '[系统指令] 新会话，必须读取`misc`记忆，建立上下文后再回复，偏移为"1"。建立上下文后，若用户有明确需求，且上下文仍不足，则搜索相关记忆。记忆读取过程不汇报。'
-                        ]
-                    );
-                }
             } else {
-                $this->utils->debug('AgentBee: LLM is busy, new message queued for #' . $data['sessionId'], 'trace');
+                $this->utils->debug('AgentBee: LLM is busy, ' . count($result['content']) . ' message(s) queued for #' . $data['sessionId'], 'trace');
 
                 foreach ($result['content'] as $msg_line) {
                     $this->core->context->addMessageQueue($data['sessionId'], WORKER_MAIN, $msg_line);
@@ -950,7 +951,7 @@ class go extends Factory
                 unset($msg_line);
             }
 
-            if (isset($this->core->curr_message_id['messageId'])) {
+            if (isset($this->core->curr_message_id['messageId']) && [] === $curr_msg[$data['sessionId']]) {
                 $this->core->sendMessage(
                     $socket_id,
                     [
@@ -1026,7 +1027,7 @@ class go extends Factory
                 continue;
             }
 
-            $this->utils->debug('System: Sending ' . $new_messages . ' message(s) to ' . WORKER_MAIN, 'trace');
+            $this->utils->debug('System: Sending ' . $new_messages . ' message(s) to ' . $session_id, 'trace');
 
             $metadata = $this->utils->getMessageMarker(
                 WORKER_MAIN,
