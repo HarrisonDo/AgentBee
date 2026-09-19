@@ -940,6 +940,7 @@ class go extends Factory
             }
 
             $curr_msg[$data['sessionId']] ??= [];
+            $this->core->context->addSessionList($data['sessionId']);
 
             if (!isset($this->wait_status[$data['sessionId']]) || self::STATUS_IDLE === $this->wait_status[$data['sessionId']]) {
                 $curr_msg[$data['sessionId']] = array_merge($curr_msg[$data['sessionId']], $result['content']);
