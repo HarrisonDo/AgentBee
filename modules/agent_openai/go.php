@@ -143,10 +143,10 @@ class go extends Factory
      * @param string $cmd
      * @param array  $metadata
      *
-     * @return void
-     * @throws \Exception
+     * @return bool
+     * @throws \ReflectionException
      */
-    public function talkTo(string $type, string $system, string $receiver, int $proc_idx, string $cmd, array $metadata): void
+    public function talkTo(string $type, string $system, string $receiver, int $proc_idx, string $cmd, array $metadata): bool
     {
         $this->core->context->message_resend[$metadata['sessionId']] ??= false;
 
@@ -178,9 +178,11 @@ class go extends Factory
             $this->core->error->exceptionHandler($throwable, false, false);
             $this->utils->debug('Status: #' . $metadata['sessionId'] . ' busy: ' . $throwable->getMessage(), 'trace');
             unset($throwable);
+            return false;
         }
 
         unset($type, $system, $receiver, $proc_idx, $cmd, $metadata);
+        return true;
     }
 
     /**

@@ -324,9 +324,7 @@ class go extends Factory
                             );
 
                             if (WORKER_MAIN === $payload['sender']) {
-                                $this->setStatus($payload['sessionId'], self::STATUS_BUSY);
-
-                                $this->openai->talkTo(
+                                $sent = $this->openai->talkTo(
                                     $payload['sender'],
                                     $this->getSystemPrompt($payload['sessionId']),
                                     WORKER_MAIN,
@@ -334,13 +332,17 @@ class go extends Factory
                                     'talk',
                                     $metadata + ['socket_id' => $payload['socket_id']]
                                 );
+
+                                if ($sent) {
+                                    $this->setStatus($payload['sessionId'], self::STATUS_BUSY);
+                                }
                             } else {
                                 $worker_info = $this->utils->getChildWorker(WORKER_CHILD, $payload['workerName']);
 
                                 if (isset($worker_info['proc_idx'])) {
                                     $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'busy');
 
-                                    $this->openai->talkTo(
+                                    $sent = $this->openai->talkTo(
                                         $payload['sender'],
                                         $this->getSystemPrompt($payload['sessionId']),
                                         $payload['workerName'],
@@ -351,7 +353,7 @@ class go extends Factory
                                 }
                             }
 
-                            unset($llm_params, $tool_count, $history_count);
+                            unset($llm_params, $tool_count, $history_count, $sent);
                             break;
 
                         case 'error':
@@ -579,7 +581,6 @@ class go extends Factory
                             $this->utils->debug($payload['workerName'] . ': Tool results collected for #' . $payload['sessionId'] . ', proceeding.', 'trace');
 
                             if (WORKER_MAIN === $payload['sender']) {
-                                $this->setStatus($payload['sessionId'], self::STATUS_BUSY);
                                 $worker_idx = $this->utils->getMainIDX();
                             } else {
                                 $worker_info = $this->utils->getChildWorker(WORKER_CHILD, $payload['workerName']);
@@ -605,7 +606,7 @@ class go extends Factory
                                 0 === $new_messages ? $payload['messageId'] : ''
                             );
 
-                            $this->openai->talkTo(
+                            $sent = $this->openai->talkTo(
                                 $payload['sender'],
                                 $this->getSystemPrompt($payload['sessionId']),
                                 $payload['workerName'],
@@ -613,6 +614,12 @@ class go extends Factory
                                 'talk',
                                 $metadata + ['socket_id' => $payload['socket_id']]
                             );
+
+                            if (WORKER_MAIN === $payload['sender'] && $sent) {
+                                $this->setStatus($payload['sessionId'], self::STATUS_BUSY);
+                            }
+
+                            unset($worker_idx, $sent);
                             break;
 
                         case 'end':
@@ -627,9 +634,7 @@ class go extends Factory
                                         $payload['sessionId']
                                     );
 
-                                    $this->setStatus($payload['sessionId'], self::STATUS_BUSY);
-
-                                    $this->openai->talkTo(
+                                    $sent = $this->openai->talkTo(
                                         $payload['sender'],
                                         $this->getSystemPrompt($payload['sessionId']),
                                         $payload['workerName'],
@@ -637,6 +642,12 @@ class go extends Factory
                                         'talk',
                                         $metadata + ['socket_id' => $payload['socket_id']]
                                     );
+
+                                    if ($sent) {
+                                        $this->setStatus($payload['sessionId'], self::STATUS_BUSY);
+                                    }
+
+                                    unset($sent);
                                 } else {
                                     if ($remain_tokens > ($this->utils->agent_config['agent_llm']['params']['max_tokens'] ?? 12288)) {
                                         $this->ctx_warning = false;
@@ -697,7 +708,7 @@ class go extends Factory
                                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'busy');
                                         $this->utils->debug('WorkerBee: ' . $payload['workerName'] . ' receiving ' . $new_messages . ' message(s).', 'trace');
 
-                                        $this->openai->talkTo(
+                                        $sent = $this->openai->talkTo(
                                             $payload['sender'],
                                             $this->getSystemPrompt($payload['sessionId']),
                                             $payload['workerName'],
@@ -705,6 +716,8 @@ class go extends Factory
                                             'talk',
                                             $metadata + ['socket_id' => $payload['socket_id']]
                                         );
+
+                                        unset($sent);
                                     } elseif ($remain_tokens < 8192) {
                                         $this->utils->debug('WorkerBee: ' . $payload['workerName'] . ' completion tokens too low (' . $remain_tokens . '/' . $this->utils->agent_config['agent_llm']['model_ctx'] . ')', 'trace');
 
@@ -822,9 +835,7 @@ class go extends Factory
                 $session_id
             );
 
-            $this->setStatus($session_id, self::STATUS_BUSY);
-
-            $this->openai->talkTo(
+            $sent = $this->openai->talkTo(
                 WORKER_MAIN,
                 $this->getSystemPrompt($session_id),
                 WORKER_MAIN,
@@ -832,9 +843,13 @@ class go extends Factory
                 'talk',
                 $metadata + ['socket_id' => $socket_id]
             );
+
+            if ($sent) {
+                $this->setStatus($session_id, self::STATUS_BUSY);
+            }
         }
 
-        unset($socket_id, $now_time, $session_list, $session_id, $active_time, $task_list, $task_content, $metadata);
+        unset($socket_id, $now_time, $session_list, $session_id, $active_time, $task_list, $task_content, $metadata, $sent);
         return '';
     }
 
@@ -990,9 +1005,7 @@ class go extends Factory
                 $this->core->curr_message_id['messageId'] ?? ''
             );
 
-            $this->setStatus($session_id, self::STATUS_BUSY);
-
-            $this->openai->talkTo(
+            $sent = $this->openai->talkTo(
                 WORKER_MAIN,
                 $this->getSystemPrompt($session_id),
                 WORKER_MAIN,
@@ -1000,9 +1013,13 @@ class go extends Factory
                 'talk',
                 $message_metadata + ['socket_id' => $socket_id]
             );
+
+            if ($sent) {
+                $this->setStatus($session_id, self::STATUS_BUSY);
+            }
         }
 
-        unset($socket_id, $message, $is_binary, $curr_msg, $user_msg, $last_key, $key, $line, $data, $type_method, $result, $session_id, $message_list, $message_metadata, $count_msg);
+        unset($socket_id, $message, $is_binary, $curr_msg, $user_msg, $last_key, $key, $line, $data, $type_method, $result, $session_id, $message_list, $message_metadata, $sent);
     }
 
     /**
@@ -1029,6 +1046,10 @@ class go extends Factory
                 $this->core->context->removeSessionList($session_id);
             }
 
+            if (self::STATUS_IDLE !== $this->wait_status[$session_id]) {
+                continue;
+            }
+
             $new_messages = $this->core->context->refreshHistory($session_id, WORKER_MAIN);
 
             if (0 === $new_messages) {
@@ -1046,9 +1067,7 @@ class go extends Factory
                 $session_id
             );
 
-            $this->setStatus($session_id, self::STATUS_BUSY);
-
-            $this->openai->talkTo(
+            $sent = $this->openai->talkTo(
                 WORKER_MAIN,
                 $this->getSystemPrompt($session_id),
                 WORKER_MAIN,
@@ -1057,10 +1076,12 @@ class go extends Factory
                 $metadata + ['socket_id' => $socket_id]
             );
 
-            unset($new_messages, $metadata);
+            if ($sent) {
+                $this->setStatus($session_id, self::STATUS_BUSY);
+            }
         }
 
-        unset($socket_id, $buffer, $now_time, $session_list, $session_id, $active_time);
+        unset($socket_id, $buffer, $now_time, $session_list, $session_id, $active_time, $new_messages, $metadata, $sent);
         return [];
     }
 
