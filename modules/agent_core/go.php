@@ -540,7 +540,7 @@ class go extends Factory
 
                     for ($i = 0; $i < 3; ++$i) {
                         $remain_tokens = $this->core->getMaxTokens($payload['sender'], $payload['sessionId'], $payload['workerName'], $llm_params);
-                        $this->utils->debug('System: API Token remains ' . $remain_tokens . '.', 'trace');
+                        $this->utils->debug('System: Token remains ' . $remain_tokens . ' for #' . $payload['sessionId'] . '.', 'trace');
 
                         if (256 < $remain_tokens) {
                             $this->keep_pairs = 2;
@@ -578,7 +578,7 @@ class go extends Factory
 
                     switch ($payload_type) {
                         case 'tools':
-                            $this->utils->debug($payload['workerName'] . ': Tool results collected, proceeding.', 'trace');
+                            $this->utils->debug($payload['workerName'] . ': Tool results collected for #' . $payload['sessionId'] . ', proceeding.', 'trace');
 
                             if (WORKER_MAIN === $payload['sender']) {
                                 $this->setStatus($payload['sessionId'], self::STATUS_BUSY);
@@ -1082,7 +1082,7 @@ class go extends Factory
         $this->wait_status[$session_id] ??= self::STATUS_IDLE;
 
         if (self::STATUS_IDLE === $status) {
-            $this->utils->debug('AgentBee: IDLE (' . (!$timeout ? 'stream ended' : 'response timeout') . ')', 'trace');
+            $this->utils->debug('Status: #' . $session_id . ' IDLE (' . (!$timeout ? 'stream ended' : 'response timeout') . ')', 'trace');
             $this->wait_status[$session_id] = $status;
 
             unset($status, $timeout);
@@ -1094,10 +1094,10 @@ class go extends Factory
         if (($this->wait_status[$session_id] & $status) !== $status) {
             switch ($status) {
                 case self::STATUS_BUSY:
-                    $this->utils->debug('AgentBee: BUSY (waiting for response)', 'trace');
+                    $this->utils->debug('Status: #' . $session_id . ' BUSY (waiting for response)', 'trace');
                     break;
                 case self::STATUS_WAIT:
-                    $this->utils->debug('AgentBee: WAIT (receiving stream data)', 'trace');
+                    $this->utils->debug('Status: #' . $session_id . ' WAIT (receiving stream data)', 'trace');
                     break;
             }
 
