@@ -176,7 +176,7 @@ class go extends Factory
         } catch (\Throwable $throwable) {
             $this->core->context->message_resend[$metadata['sessionId']] = true;
             $this->core->error->exceptionHandler($throwable, false, false);
-            $this->utils->debug('System: process #' . $proc_idx . ' busy: ' . $throwable->getMessage(), 'trace');
+            $this->utils->debug('Status: #' . $metadata['sessionId'] . ' busy: ' . $throwable->getMessage(), 'trace');
             unset($throwable);
         }
 

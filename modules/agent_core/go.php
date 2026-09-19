@@ -53,11 +53,8 @@ class go extends Factory
      */
     public function __construct()
     {
-        $this->core  = core::new();
-        $this->utils = utils::new();
-
-        $this->init();
-
+        $this->core    = core::new();
+        $this->utils   = utils::new();
         $this->memory  = memory::new();
         $this->openai  = openai::new();
         $this->message = message::new();
@@ -192,6 +189,7 @@ class go extends Factory
         $this->utils->debug('Set memory limit to: ' . $memory_limit, 'trace');
         $this->utils->debug('Ready to start ' . AGENT_NAME . ' v' . AGENT_VERSION, 'trace');
 
+        $this->init();
         $this->runProcWorker($this->utils->getMainIDX(), WORKER_MAIN, WORKER_MAIN, [$this, 'streamWorkerHandler']);
 
         $agent_toolsets = $this->utils->fetchToolset('modules/agent_toolsets');
