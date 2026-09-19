@@ -39,11 +39,11 @@ class go extends Factory
     public memory $memory;
     public openai $openai;
 
-    public int $wait_until = 0;
     public int $keep_pairs = 2;
 
     public bool $ctx_warning = false;
 
+    public array $wait_until    = [];
     public array $wait_status   = [];
     public array $last_response = [];
 
@@ -780,13 +780,16 @@ class go extends Factory
         $session_list = $this->core->context->getQueueSessionId();
 
         foreach ($session_list as $session_id) {
-            if (0 < $this->last_response[$session_id] && $now_time - $this->last_response[$session_id] >= $this->utils->agent_config['reset_interval'] ?? 21600) {
-                $this->setStatus($session_id, self::STATUS_IDLE);
+            if (
+                0 < $this->last_response[$session_id]
+                && $now_time - $this->last_response[$session_id] >= $this->utils->agent_config['reset_interval'] ?? 21600
+            ) {
                 $this->core->context->removeHistory($session_id, WORKER_MAIN);
+                $this->setStatus($session_id, self::STATUS_IDLE);
             }
 
             if (self::STATUS_IDLE !== $this->wait_status[$session_id]) {
-                if ($this->wait_until > $now_time) {
+                if ($this->wait_until[$session_id] > $now_time) {
                     continue;
                 }
 
@@ -1074,6 +1077,7 @@ class go extends Factory
      */
     private function setStatus(string $session_id, int $status, bool $timeout = false): void
     {
+        $this->wait_until[$session_id]  ??= 0;
         $this->wait_status[$session_id] ??= self::STATUS_IDLE;
 
         if (self::STATUS_IDLE === $status) {
@@ -1084,7 +1088,7 @@ class go extends Factory
             return;
         }
 
-        $this->wait_until = time() + ($this->utils->agent_config['agent_llm']['timeout']);
+        $this->wait_until[$session_id] = time() + ($this->utils->agent_config['agent_llm']['timeout']);
 
         if (($this->wait_status[$session_id] & $status) !== $status) {
             switch ($status) {
