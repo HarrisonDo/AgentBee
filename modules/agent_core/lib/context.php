@@ -34,9 +34,8 @@ class context extends Factory
     public array $tools   = [];
     public array $history = [];
 
-    public array $message_queue = [];
-
-    public bool $message_retry = false;
+    public array $message_queue  = [];
+    public array $message_resend = [];
 
     /**
      * @throws \ReflectionException
@@ -301,7 +300,7 @@ class context extends Factory
             $this->addUserMessage($session_id, $worker_name, $messages);
         }
 
-        if ($this->message_retry) {
+        if ($this->message_resend[$session_id] ?? false) {
             $count_messages = 1;
         }
 
