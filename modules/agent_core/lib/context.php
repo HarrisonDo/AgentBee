@@ -34,6 +34,7 @@ class context extends Factory
     public array $tools   = [];
     public array $history = [];
 
+    public array $session_list   = [];
     public array $message_queue  = [];
     public array $message_resend = [];
 
@@ -208,9 +209,29 @@ class context extends Factory
     /**
      * @return array
      */
-    public function getQueueSessionId(): array
+    public function getSessionList(): array
     {
-        return [] !== $this->message_queue ? array_keys($this->message_queue) : [];
+        return $this->session_list;
+    }
+
+    /**
+     * @param string $session_id
+     *
+     * @return void
+     */
+    public function addSessionList(string $session_id): void
+    {
+        $this->session_list[$session_id] = time();
+    }
+
+    /**
+     * @param string $session_id
+     *
+     * @return void
+     */
+    public function removeSessionList(string $session_id): void
+    {
+        unset($this->session_list[$session_id]);
     }
 
     /**

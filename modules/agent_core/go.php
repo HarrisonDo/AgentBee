@@ -775,15 +775,19 @@ class go extends Factory
     public function onHeartbeat(string $socket_id): string
     {
         $now_time     = time();
-        $session_list = $this->core->context->getQueueSessionId();
+        $session_list = $this->core->context->getSessionList();
 
-        foreach ($session_list as $session_id) {
+        foreach ($session_list as $session_id => $active_time) {
             if (
                 0 < $this->last_response[$session_id]
-                && $now_time - $this->last_response[$session_id] >= $this->utils->agent_config['reset_interval'] ?? 21600
+                && $now_time - $this->last_response[$session_id] >= $this->utils->agent_config['reset_interval']
             ) {
                 $this->core->context->removeHistory($session_id, WORKER_MAIN);
                 $this->setStatus($session_id, self::STATUS_IDLE);
+            }
+
+            if ($now_time - $active_time >= $this->utils->agent_config['reset_interval']) {
+                $this->core->context->removeSessionList($session_id);
             }
 
             if (self::STATUS_IDLE !== $this->wait_status[$session_id]) {
@@ -830,7 +834,7 @@ class go extends Factory
             );
         }
 
-        unset($socket_id, $now_time, $session_list, $session_id, $task_list, $task_content, $metadata);
+        unset($socket_id, $now_time, $session_list, $session_id, $active_time, $task_list, $task_content, $metadata);
         return '';
     }
 
@@ -1016,9 +1020,14 @@ class go extends Factory
             }
         }
 
-        $session_list = $this->core->context->getQueueSessionId();
+        $now_time     = time();
+        $session_list = $this->core->context->getSessionList();
 
-        foreach ($session_list as $session_id) {
+        foreach ($session_list as $session_id => $active_time) {
+            if ($now_time - $active_time >= $this->utils->agent_config['reset_interval']) {
+                $this->core->context->removeSessionList($session_id);
+            }
+
             $new_messages = $this->core->context->refreshHistory($session_id, WORKER_MAIN);
 
             if (0 === $new_messages) {
@@ -1050,7 +1059,7 @@ class go extends Factory
             unset($new_messages, $metadata);
         }
 
-        unset($socket_id, $buffer, $session_list, $session_id);
+        unset($socket_id, $buffer, $now_time, $session_list, $session_id, $active_time);
         return [];
     }
 

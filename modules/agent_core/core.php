@@ -64,10 +64,6 @@ final class core extends Factory
         $this->socketMgr = SocketMgr::new(WORKER_MAIN);
 
         $this->utils->agent_config = $this->utils->config->get(true, $reload);
-
-        if (!isset($this->utils->agent_config['workspace_path']) || '' === $this->utils->agent_config['workspace_path']) {
-            $this->utils->agent_config['workspace_path'] = $this->app->root_path . DIRECTORY_SEPARATOR . 'workspace';
-        }
     }
 
     /**

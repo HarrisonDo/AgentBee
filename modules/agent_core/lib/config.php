@@ -28,6 +28,7 @@ use Nervsys\Ext\libKeygen;
 
 class config extends Factory
 {
+    public App      $app;
     public libCrypt $libCrypt;
 
     public array $config = [];
@@ -43,9 +44,10 @@ class config extends Factory
      */
     public function __construct()
     {
+        $this->app      = App::new();
         $this->libCrypt = libCrypt::new()->bindKeygen(libKeygen::new());
 
-        $this->config_dir    = App::new()->root_path . DIRECTORY_SEPARATOR . 'config';
+        $this->config_dir    = $this->app->root_path . DIRECTORY_SEPARATOR . 'config';
         $this->conf_system   = $this->config_dir . DIRECTORY_SEPARATOR . 'AgentBee.json';
         $this->hardware_hash = OSMgr::new()->getHwHash();
     }
@@ -66,6 +68,14 @@ class config extends Factory
             $config_data = is_file($this->conf_system)
                 ? json_decode(file_get_contents($this->conf_system), true) ?? $this->getDefault()
                 : $this->getDefault();
+
+            if (!isset($config_data['workspace_path']) || '' === $config_data['workspace_path']) {
+                $config_data['workspace_path'] = $this->app->root_path . DIRECTORY_SEPARATOR . 'workspace';
+            }
+
+            if (!isset($config_data['reset_interval']) || 0 === (int)$config_data['reset_interval']) {
+                $config_data['reset_interval'] = 21600;
+            }
 
             $config_data['agent_llm']['hw_hash'] ??= '';
 
@@ -190,7 +200,7 @@ class config extends Factory
             'misc_keep_days' => 365,
             'sandbox_mode'   => false,
             'workspace_url'  => '',
-            'workspace_path' => App::new()->root_path . DIRECTORY_SEPARATOR . 'workspace',
+            'workspace_path' => $this->app->root_path . DIRECTORY_SEPARATOR . 'workspace',
             'reset_interval' => 21600,
             'memory_limit'   => '4G',
             'agent_debug'    => 'trace'
