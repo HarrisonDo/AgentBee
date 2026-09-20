@@ -74,7 +74,7 @@ class handler extends Factory
             [['type' => 'text', 'content' => '[用户要求] ' . $init_prompt]]
         );
 
-        $metadata = $agent_core->utils->getMessageMarker(
+        $metadata = $agent_core->utils->getMarker(
             WORKER_CHILD,
             $payload_data['worker_name'],
             $payload_data['worker_role'],
@@ -168,7 +168,7 @@ class handler extends Factory
             [['type' => 'text', 'content' => $payload_data['content']]]
         );
 
-        $metadata = $agent_core->utils->getMessageMarker(
+        $metadata = $agent_core->utils->getMarker(
             WORKER_CHILD,
             $worker_info['worker_name'],
             $worker_info['worker_role'],
@@ -266,7 +266,7 @@ class handler extends Factory
      */
     private function sendMessage(agent_core $agent_core, string $session_id, array $worker_info, array $payload_data): void
     {
-        $worker_message = $agent_core->utils->getMessageMarker(
+        $worker_message = $agent_core->utils->getMarker(
                 WORKER_MAIN,
                 WORKER_MAIN,
                 'Assistant',

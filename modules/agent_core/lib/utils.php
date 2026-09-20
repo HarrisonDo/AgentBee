@@ -30,6 +30,10 @@ use Nervsys\Ext\libImage;
 
 class utils extends Factory
 {
+    const STATUS_IDLE = 4;
+    const STATUS_WAIT = 2;
+    const STATUS_BUSY = 1;
+
     public App       $app;
     public OSMgr     $OSMgr;
     public ProcMgr   $procMgr;
@@ -44,6 +48,9 @@ class utils extends Factory
     public string $pid_file_path;
 
     public string $memory_buffer = '';
+
+    public array $wait_until  = [];
+    public array $wait_status = [];
 
     public array $model_list      = [];
     public array $program_list    = [];
@@ -309,45 +316,6 @@ class utils extends Factory
     }
 
     /**
-     * @param string $sender
-     * @param string $worker_name
-     * @param string $worker_role
-     * @param string $window_name
-     * @param int    $is_sub_talk
-     * @param string $session_id
-     * @param string $message_id
-     *
-     * @return array
-     */
-    public function getMessageMarker(
-        string $sender,
-        string $worker_name,
-        string $worker_role,
-        string $window_name,
-        int    $is_sub_talk,
-        string $session_id,
-        string $message_id = ''
-    ): array
-    {
-        if ('' === $message_id) {
-            $message_id = hash('md5', uniqid(microtime(), true));
-        }
-
-        $marker = [
-            'sender'     => $sender,
-            'isSubTalk'  => $is_sub_talk,
-            'workerName' => $worker_name,
-            'workerRole' => $worker_role,
-            'sessionId'  => $session_id,
-            'messageId'  => $message_id,
-            'WindowName' => $window_name
-        ];
-
-        unset($sender, $worker_name, $worker_role, $window_name, $message_id, $is_sub_talk);
-        return $marker;
-    }
-
-    /**
      * @return array
      */
     public function fetchPrograms(): array
@@ -518,6 +486,45 @@ class utils extends Factory
 
         unset($dirname, $skills, $dir_list, $item, $md_file, $md_meta, $value, $full_path);
         return $prompt;
+    }
+
+    /**
+     * @param string $sender
+     * @param string $worker_name
+     * @param string $worker_role
+     * @param string $window_name
+     * @param int    $is_sub_talk
+     * @param string $session_id
+     * @param string $message_id
+     *
+     * @return array
+     */
+    public function getMarker(
+        string $sender,
+        string $worker_name,
+        string $worker_role,
+        string $window_name,
+        int    $is_sub_talk,
+        string $session_id,
+        string $message_id = ''
+    ): array
+    {
+        if ('' === $message_id) {
+            $message_id = hash('md5', uniqid(microtime(), true));
+        }
+
+        $marker = [
+            'sender'     => $sender,
+            'isSubTalk'  => $is_sub_talk,
+            'workerName' => $worker_name,
+            'workerRole' => $worker_role,
+            'sessionId'  => $session_id,
+            'messageId'  => $message_id,
+            'WindowName' => $window_name
+        ];
+
+        unset($sender, $worker_name, $worker_role, $window_name, $message_id, $is_sub_talk);
+        return $marker;
     }
 
     /**
@@ -821,6 +828,44 @@ class utils extends Factory
 
         unset($binary, $header, $magics, $magic, $type);
         return $result;
+    }
+
+    /**
+     * @param string $session_id
+     * @param int    $status
+     * @param bool   $timeout
+     *
+     * @return void
+     */
+    public function setStatus(string $session_id, int $status, bool $timeout = false): void
+    {
+        $this->wait_until[$session_id]  ??= 0;
+        $this->wait_status[$session_id] ??= self::STATUS_IDLE;
+
+        if (self::STATUS_IDLE === $status) {
+            $this->debug('Status: #' . $session_id . ' IDLE (' . (!$timeout ? 'stream ended' : 'response timeout') . ')', 'trace');
+            $this->wait_status[$session_id] = $status;
+
+            unset($status, $timeout);
+            return;
+        }
+
+        $this->wait_until[$session_id] = time() + ($this->agent_config['agent_llm']['timeout']);
+
+        if (($this->wait_status[$session_id] & $status) !== $status) {
+            switch ($status) {
+                case self::STATUS_BUSY:
+                    $this->debug('Status: #' . $session_id . ' BUSY (waiting for response)', 'trace');
+                    break;
+                case self::STATUS_WAIT:
+                    $this->debug('Status: #' . $session_id . ' WAIT (receiving stream data)', 'trace');
+                    break;
+            }
+
+            $this->wait_status[$session_id] |= $status;
+        }
+
+        unset($session_id, $status, $timeout);
     }
 
     /**

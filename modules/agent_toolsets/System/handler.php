@@ -81,7 +81,7 @@ class handler extends Factory
         );
 
         if ($payload_data['rendering']) {
-            $message = $agent_core->utils->getMessageMarker(
+            $message = $agent_core->utils->getMarker(
                 WORKER_MAIN,
                 WORKER_MAIN,
                 'Assistant',

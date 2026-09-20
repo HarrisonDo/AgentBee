@@ -195,7 +195,7 @@ class handler extends Factory
     {
         if (isset($response['data']) && true === $response['success']) {
             $saved_files = [];
-            $message     = $agent_core->utils->getMessageMarker(
+            $message     = $agent_core->utils->getMarker(
                 WORKER_MAIN,
                 WORKER_MAIN,
                 'Assistant',

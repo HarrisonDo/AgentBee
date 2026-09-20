@@ -36,7 +36,7 @@ class context extends Factory
 
     public array $session_list   = [];
     public array $message_queue  = [];
-    public array $message_resend = [];
+    public array $message_onsend = [];
 
     /**
      * @throws \ReflectionException
@@ -321,7 +321,7 @@ class context extends Factory
             $this->addUserMessage($session_id, $worker_name, $messages);
         }
 
-        if ($this->message_resend[$session_id] ?? false) {
+        if ($this->message_onsend[$session_id] ?? false) {
             $count_messages = 1;
         }
 
@@ -480,6 +480,18 @@ class context extends Factory
 
         unset($session_id, $worker_name, $keep_normal, $max_tool_pairs, $history, $messages, $total_normal, $total_tools, $message, $is_tool_calls, $first_user, $index, $groups, $results, $valid_groups, $normal_indices, $group_index, $call_ids, $group_results, $call_id, $start, $selected_groups, $selected_results, $kept_normal, $new_history);
         return $result;
+    }
+
+    /**
+     * @param string $session_id
+     * @param bool   $on_send
+     *
+     * @return void
+     */
+    public function messageOnSend(string $session_id, bool $on_send = true): void
+    {
+        $this->message_onsend[$session_id] = $on_send;
+        unset($session_id, $on_send);
     }
 
     /**

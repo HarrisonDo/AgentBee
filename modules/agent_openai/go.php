@@ -148,7 +148,7 @@ class go extends Factory
      */
     public function talkTo(string $type, string $system, string $receiver, int $proc_idx, string $cmd, array $metadata): bool
     {
-        $this->core->context->message_resend[$metadata['sessionId']] ??= false;
+        $this->core->context->messageOnSend($metadata['sessionId'], false);
 
         if (WORKER_MAIN === $type) {
             $main_pid = $this->utils->getChildWorker(WORKER_MAIN, WORKER_MAIN, 'worker_pid');
@@ -172,9 +172,13 @@ class go extends Factory
                 ], JSON_FORMAT)
             );
 
-            $this->core->context->message_resend[$metadata['sessionId']] = false;
+            if (WORKER_MAIN === $type) {
+                $this->utils->setStatus($metadata['sessionId'], utils::STATUS_BUSY);
+            }
+
+            $this->core->context->messageOnSend($metadata['sessionId'], false);
         } catch (\Throwable $throwable) {
-            $this->core->context->message_resend[$metadata['sessionId']] = true;
+            $this->core->context->messageOnSend($metadata['sessionId'], true);
             $this->core->error->exceptionHandler($throwable, false, false);
             $this->utils->debug('Status: #' . $metadata['sessionId'] . ' busy: ' . $throwable->getMessage(), 'trace');
             unset($throwable);
