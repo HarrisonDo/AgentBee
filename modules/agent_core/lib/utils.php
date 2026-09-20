@@ -693,7 +693,7 @@ class utils extends Factory
         $prompts[] = '  - `tool`：工具直接结果，未经助手加工。';
         $prompts[] = '  用户事实即使由助手归纳，role仍为`user`；系统配置/规则用`system`。';
 
-        $prompts[] = '- **会话ID**：系统提供，禁止主动新建（用户明确要求除外）。`daily`/`misc`读写必传原值，`system`/`important`不传。';
+        $prompts[] = '- **会话ID**：系统提供。`daily`/`misc`读写必传原值，`system`/`important`不传。';
 
         $prompts[] = '- **写入**：关键内容主动保存，按层级定义归类，内容详细事实化；已有优先更新，避免重复新建。闲聊/浅显/工具过程不存。写`daily`/`misc`必传会话ID。';
 

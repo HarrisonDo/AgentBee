@@ -148,7 +148,7 @@ class go extends Factory
         $now_time = time();
 
         $saved = $this->libSQLite->table('agent_session')
-            ->insert([
+            ->replace([
                 'session_id'     => $session_id,
                 'session_name'   => $session_name,
                 'session_status' => 1,

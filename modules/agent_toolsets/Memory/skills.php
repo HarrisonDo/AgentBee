@@ -31,7 +31,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'saveSession',
-                'description' => '新建会话。**系统自动新建，禁止主动调用**，仅当用户明确提出"新建会话"并提供会话名称时才可调用。返回：{status, session_id}或{status, error}。',
+                'description' => '新建会话。仅当用户明确提出"新建会话"并提供会话名称时才可调用。返回：{status, session_id}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
