@@ -39,7 +39,6 @@ class go extends Factory
 
     public bool $ctx_warning = false;
 
-    public array $wait_status   = [];
     public array $last_response = [];
 
     /**
@@ -787,7 +786,7 @@ class go extends Factory
                 $this->core->context->removeSessionList($session_id);
             }
 
-            if (utils::STATUS_IDLE !== $this->wait_status[$session_id]) {
+            if (utils::STATUS_IDLE !== $this->utils->wait_status[$session_id]) {
                 if ($this->utils->wait_until[$session_id] > $now_time) {
                     continue;
                 }
@@ -938,7 +937,7 @@ class go extends Factory
             $curr_msg[$data['sessionId']] ??= [];
             $this->core->context->addSessionList($data['sessionId']);
 
-            if (!isset($this->wait_status[$data['sessionId']]) || utils::STATUS_IDLE === $this->wait_status[$data['sessionId']]) {
+            if (!isset($this->utils->wait_status[$data['sessionId']]) || utils::STATUS_IDLE === $this->utils->wait_status[$data['sessionId']]) {
                 $curr_msg[$data['sessionId']] = array_merge($curr_msg[$data['sessionId']], $result['content']);
             } else {
                 $this->utils->debug('AgentBee: LLM is busy, ' . count($result['content']) . ' message(s) queued for #' . $data['sessionId'], 'trace');
@@ -1024,7 +1023,7 @@ class go extends Factory
                 $this->core->context->removeSessionList($session_id);
             }
 
-            if (utils::STATUS_IDLE !== $this->wait_status[$session_id]) {
+            if (utils::STATUS_IDLE !== $this->utils->wait_status[$session_id]) {
                 continue;
             }
 
