@@ -136,21 +136,30 @@ class go extends Factory
     }
 
     /**
-     * @param string $type
-     * @param string $system
+     * @param string $worker
      * @param string $receiver
+     * @param string $session_id
      * @param int    $proc_idx
-     * @param string $cmd
+     * @param string $system_prompt
+     * @param string $command
      * @param array  $metadata
      *
      * @return bool
      * @throws \ReflectionException
      */
-    public function talkTo(string $type, string $system, string $receiver, int $proc_idx, string $cmd, array $metadata): bool
+    public function talkTo(
+        string $worker,
+        string $receiver,
+        string $session_id,
+        int    $proc_idx,
+        string $system_prompt,
+        string $command,
+        array  $metadata
+    ): bool
     {
-        $this->core->context->messageOnSend($metadata['sessionId'], false);
+        $this->core->context->messageOnSend($session_id, false);
 
-        if (WORKER_MAIN === $type) {
+        if (WORKER_MAIN === $worker) {
             $main_pid = $this->utils->getChildWorker(WORKER_MAIN, WORKER_MAIN, 'worker_pid');
 
             if (is_int($main_pid)) {
@@ -164,28 +173,28 @@ class go extends Factory
             $this->utils->procMgr->writeProc(
                 $proc_idx,
                 json_encode([
-                    'cmd'        => $cmd,
-                    'system'     => $system,
-                    'history'    => $this->core->context->getHistory($metadata['sessionId'], $receiver),
+                    'cmd'        => $command,
+                    'system'     => $system_prompt,
+                    'history'    => $this->core->context->getHistory($session_id, $receiver),
                     'metadata'   => $metadata,
-                    'llm_params' => $this->utils->getChildWorker($type, $receiver, 'llm_params')
+                    'llm_params' => $this->utils->getChildWorker($worker, $receiver, 'llm_params')
                 ], JSON_FORMAT)
             );
 
-            if (WORKER_MAIN === $type) {
-                $this->utils->setStatus($metadata['sessionId'], utils::STATUS_BUSY);
+            if (WORKER_MAIN === $worker) {
+                $this->utils->setStatus($session_id, utils::STATUS_BUSY);
             }
 
-            $this->core->context->messageOnSend($metadata['sessionId'], false);
+            $this->core->context->messageOnSend($session_id, false);
         } catch (\Throwable $throwable) {
-            $this->core->context->messageOnSend($metadata['sessionId'], true);
+            $this->core->context->messageOnSend($session_id, true);
             $this->core->error->exceptionHandler($throwable, false, false);
-            $this->utils->debug('Status: #' . $metadata['sessionId'] . ' busy: ' . $throwable->getMessage(), 'trace');
+            $this->utils->debug('Status: #' . $session_id . ' busy: ' . $throwable->getMessage(), 'trace');
             unset($throwable);
             return false;
         }
 
-        unset($type, $system, $receiver, $proc_idx, $cmd, $metadata);
+        unset($worker, $receiver, $session_id, $proc_idx, $system_prompt, $command, $metadata);
         return true;
     }
 

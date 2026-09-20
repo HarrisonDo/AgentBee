@@ -85,12 +85,13 @@ class handler extends Factory
 
         $agent_core->openai->talkTo(
             WORKER_CHILD,
+            $payload_data['worker_name'],
+            $this->session_id,
+            $proc_idx,
             $agent_core->utils->getChildPrompt(
                 $payload_data['worker_name'],
                 $payload_data['worker_role']
             ),
-            $payload_data['worker_name'],
-            $proc_idx,
             'start',
             $metadata + ['socket_id' => $payload_data['socket_id']]
         );
@@ -174,17 +175,18 @@ class handler extends Factory
             $worker_info['worker_role'],
             $worker_info['worker_name'],
             1,
-            hash('md5', $payload_data['worker_name'])
+            $this->session_id
         );
 
         $agent_core->openai->talkTo(
             WORKER_CHILD,
+            $worker_info['worker_name'],
+            $this->session_id,
+            $worker_info['proc_idx'],
             $agent_core->utils->getChildPrompt(
                 $worker_info['worker_name'],
                 $worker_info['worker_role'],
             ),
-            $worker_info['worker_name'],
-            $worker_info['proc_idx'],
             'talk',
             $metadata + ['socket_id' => $payload_data['socket_id']]
         );

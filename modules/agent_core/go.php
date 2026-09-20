@@ -321,9 +321,10 @@ class go extends Factory
                             if (WORKER_MAIN === $payload['sender']) {
                                 $this->openai->talkTo(
                                     $payload['sender'],
-                                    $this->getSystemPrompt($payload['sessionId']),
                                     WORKER_MAIN,
+                                    $payload['sessionId'],
                                     $this->utils->getMainIDX(),
+                                    $this->getSystemPrompt($payload['sessionId']),
                                     'talk',
                                     $metadata + ['socket_id' => $payload['socket_id']]
                                 );
@@ -335,9 +336,10 @@ class go extends Factory
 
                                     $this->openai->talkTo(
                                         $payload['sender'],
-                                        $this->getSystemPrompt($payload['sessionId']),
                                         $payload['workerName'],
+                                        $payload['sessionId'],
                                         $worker_info['proc_idx'],
+                                        $this->getSystemPrompt($payload['sessionId']),
                                         'talk',
                                         $metadata + ['socket_id' => $payload['socket_id']]
                                     );
@@ -599,9 +601,10 @@ class go extends Factory
 
                             $this->openai->talkTo(
                                 $payload['sender'],
-                                $this->getSystemPrompt($payload['sessionId']),
                                 $payload['workerName'],
+                                $payload['sessionId'],
                                 $worker_idx,
+                                $this->getSystemPrompt($payload['sessionId']),
                                 'talk',
                                 $metadata + ['socket_id' => $payload['socket_id']]
                             );
@@ -623,9 +626,10 @@ class go extends Factory
 
                                     $this->openai->talkTo(
                                         $payload['sender'],
-                                        $this->getSystemPrompt($payload['sessionId']),
                                         $payload['workerName'],
+                                        $payload['sessionId'],
                                         $this->utils->getMainIDX(),
+                                        $this->getSystemPrompt($payload['sessionId']),
                                         'talk',
                                         $metadata + ['socket_id' => $payload['socket_id']]
                                     );
@@ -691,9 +695,10 @@ class go extends Factory
 
                                         $this->openai->talkTo(
                                             $payload['sender'],
-                                            $this->getSystemPrompt($payload['sessionId']),
                                             $payload['workerName'],
+                                            $payload['sessionId'],
                                             $worker_info['proc_idx'],
+                                            $this->getSystemPrompt($payload['sessionId']),
                                             'talk',
                                             $metadata + ['socket_id' => $payload['socket_id']]
                                         );
@@ -816,9 +821,10 @@ class go extends Factory
 
             $this->openai->talkTo(
                 WORKER_MAIN,
-                $this->getSystemPrompt($session_id),
                 WORKER_MAIN,
+                $session_id,
                 $this->utils->getMainIDX(),
+                $this->getSystemPrompt($session_id),
                 'talk',
                 $metadata + ['socket_id' => $socket_id]
             );
@@ -982,9 +988,10 @@ class go extends Factory
 
             $this->openai->talkTo(
                 WORKER_MAIN,
-                $this->getSystemPrompt($session_id),
                 WORKER_MAIN,
+                $session_id,
                 $this->utils->getMainIDX(),
+                $this->getSystemPrompt($session_id),
                 'talk',
                 $message_metadata + ['socket_id' => $socket_id]
             );
@@ -1040,9 +1047,10 @@ class go extends Factory
 
             $this->openai->talkTo(
                 WORKER_MAIN,
-                $this->getSystemPrompt($session_id),
                 WORKER_MAIN,
+                $session_id,
                 $this->utils->getMainIDX(),
+                $this->getSystemPrompt($session_id),
                 'talk',
                 $metadata + ['socket_id' => $socket_id]
             );
