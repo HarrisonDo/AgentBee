@@ -574,6 +574,7 @@ class go extends Factory
 
                             if (WORKER_MAIN === $payload['sender']) {
                                 $worker_idx = $this->utils->getMainIDX();
+                                $message_id = $this->core->curr_message_id[$payload['sessionId']] ?? '';
                             } else {
                                 $worker_info = $this->utils->getChildWorker(WORKER_CHILD, $payload['workerName']);
 
@@ -584,6 +585,7 @@ class go extends Factory
 
                                 $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'calling_tools');
                                 $worker_idx = $worker_info['proc_idx'];
+                                $message_id = $payload['messageId'];
 
                                 unset($worker_info);
                             }
@@ -595,7 +597,7 @@ class go extends Factory
                                 $payload['workerName'],
                                 $payload['isSubTalk'],
                                 $payload['sessionId'],
-                                0 === $new_messages ? $payload['messageId'] : ''
+                                $message_id
                             );
 
                             $this->openai->talkTo(
@@ -608,7 +610,7 @@ class go extends Factory
                                 $metadata + ['socket_id' => $payload['socket_id']]
                             );
 
-                            unset($worker_idx);
+                            unset($worker_idx, $message_id);
                             break;
 
                         case 'end':
@@ -620,7 +622,8 @@ class go extends Factory
                                         $payload['workerRole'],
                                         $payload['workerName'],
                                         $payload['isSubTalk'],
-                                        $payload['sessionId']
+                                        $payload['sessionId'],
+                                        $this->core->curr_message_id[$payload['sessionId']] ?? ''
                                     );
 
                                     $this->openai->talkTo(
@@ -949,18 +952,18 @@ class go extends Factory
                 unset($msg_line);
             }
 
-            if (isset($this->core->curr_message_id['messageId']) && [] === $curr_msg[$data['sessionId']]) {
+            if (isset($this->core->curr_message_id[$data['sessionId']]) && null !== $this->core->curr_message_id[$data['sessionId']]) {
                 $this->core->sendMessage(
                     $socket_id,
                     [
                         'type'      => 'close',
-                        'sessionId' => $this->core->curr_message_id['sessionId'],
-                        'messageId' => $this->core->curr_message_id['messageId']
+                        'sessionId' => $data['sessionId'],
+                        'messageId' => $this->core->curr_message_id[$data['sessionId']]
                     ]
                 );
             }
 
-            $this->core->curr_message_id = ['sessionId' => $data['sessionId'], 'messageId' => $data['messageId']];
+            $this->core->curr_message_id[$data['sessionId']] = $data['messageId'];
         }
 
         foreach ($curr_msg as $session_id => $message_list) {
@@ -982,7 +985,7 @@ class go extends Factory
                 AGENT_NAME,
                 0,
                 $session_id,
-                $this->core->curr_message_id['messageId'] ?? ''
+                $this->core->curr_message_id[$session_id] ?? ''
             );
 
             $this->openai->talkTo(
@@ -1041,7 +1044,8 @@ class go extends Factory
                 'Assistant',
                 AGENT_NAME,
                 0,
-                $session_id
+                $session_id,
+                $this->core->curr_message_id[$session_id] ?? ''
             );
 
             $this->openai->talkTo(

@@ -211,10 +211,10 @@ final class core extends Factory
                 if (!$success) {
                     $this->utils->message_buffers[] = $this->flush_buffers;
                 } elseif (
-                    isset($this->curr_message_id['messageId'])
-                    && $this->flush_buffers['messageId'] === $this->curr_message_id['messageId']
+                    isset($this->curr_message_id[$message['sessionId']])
+                    && $this->curr_message_id[$message['sessionId']] === $this->flush_buffers['messageId']
                 ) {
-                    $this->curr_message_id = [];
+                    $this->curr_message_id[$message['sessionId']] = null;
                 }
 
                 $this->flush_time_at = $microtime;
