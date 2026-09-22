@@ -232,7 +232,7 @@ final class core extends Factory
 
                 if (!$success) {
                     $this->utils->message_buffers[] = $this->flush_buffers;
-                } elseif (isset($this->curr_message_id[$message['sessionId']])) {
+                } elseif (isset($message['sessionId']) && isset($this->curr_message_id[$message['sessionId']])) {
                     $this->sendClose($socket_id, $message['sessionId']);
                     $this->curr_message_id[$message['sessionId']] = null;
                 }
@@ -257,7 +257,7 @@ final class core extends Factory
 
         if (!$success) {
             $this->utils->message_buffers[] = $message;
-        } elseif (isset($this->curr_message_id[$message['sessionId']])) {
+        } elseif (isset($message['sessionId']) && isset($this->curr_message_id[$message['sessionId']])) {
             $this->sendClose($socket_id, $message['sessionId']);
             $this->curr_message_id[$message['sessionId']] = null;
         }

@@ -952,7 +952,7 @@ class go extends Factory
                 unset($msg_line);
             }
 
-            if (isset($this->core->curr_message_id[$data['sessionId']])) {
+            if (isset($data['sessionId']) && isset($this->core->curr_message_id[$data['sessionId']])) {
                 $this->core->sendClose($socket_id, $data['sessionId']);
             }
 
