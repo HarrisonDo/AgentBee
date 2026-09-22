@@ -574,7 +574,6 @@ class go extends Factory
 
                             if (WORKER_MAIN === $payload['sender']) {
                                 $worker_idx = $this->utils->getMainIDX();
-                                $message_id = $this->core->curr_message_id[$payload['sessionId']] ?? '';
                             } else {
                                 $worker_info = $this->utils->getChildWorker(WORKER_CHILD, $payload['workerName']);
 
@@ -585,7 +584,6 @@ class go extends Factory
 
                                 $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'calling_tools');
                                 $worker_idx = $worker_info['proc_idx'];
-                                $message_id = $payload['messageId'];
 
                                 unset($worker_info);
                             }
@@ -597,7 +595,7 @@ class go extends Factory
                                 $payload['workerName'],
                                 $payload['isSubTalk'],
                                 $payload['sessionId'],
-                                $message_id
+                                $payload['messageId']
                             );
 
                             $this->openai->talkTo(
@@ -610,7 +608,7 @@ class go extends Factory
                                 $metadata + ['socket_id' => $payload['socket_id']]
                             );
 
-                            unset($worker_idx, $message_id);
+                            unset($worker_idx);
                             break;
 
                         case 'end':
