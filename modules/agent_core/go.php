@@ -952,15 +952,8 @@ class go extends Factory
                 unset($msg_line);
             }
 
-            if (isset($this->core->curr_message_id[$data['sessionId']]) && null !== $this->core->curr_message_id[$data['sessionId']]) {
-                $this->core->sendMessage(
-                    $socket_id,
-                    [
-                        'type'      => 'close',
-                        'sessionId' => $data['sessionId'],
-                        'messageId' => $this->core->curr_message_id[$data['sessionId']]
-                    ]
-                );
+            if (isset($this->core->curr_message_id[$data['sessionId']])) {
+                $this->core->sendClose($socket_id, $data['sessionId']);
             }
 
             $this->core->curr_message_id[$data['sessionId']] = $data['messageId'];

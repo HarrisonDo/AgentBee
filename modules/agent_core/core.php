@@ -178,6 +178,28 @@ final class core extends Factory
 
     /**
      * @param string $socket_id
+     * @param string $session_id
+     *
+     * @return void
+     * @throws \Random\RandomException
+     * @throws \ReflectionException
+     */
+    public function sendClose(string $socket_id, string $session_id): void
+    {
+        $message = [
+            'type'      => 'close',
+            'sessionId' => $session_id,
+            'messageId' => $this->curr_message_id[$session_id]
+        ];
+
+        $buffers = ['create_id' => (int)(microtime(true) * 1000000)] + $message;
+        $this->socketMgr->sendMessage($socket_id, $this->socketMgr->wsEncode(json_encode($buffers, JSON_FORMAT)));
+
+        unset($socket_id, $session_id, $message, $buffers);
+    }
+
+    /**
+     * @param string $socket_id
      * @param array  $message
      *
      * @return void
@@ -210,10 +232,8 @@ final class core extends Factory
 
                 if (!$success) {
                     $this->utils->message_buffers[] = $this->flush_buffers;
-                } elseif (
-                    isset($this->curr_message_id[$message['sessionId']])
-                    && $this->curr_message_id[$message['sessionId']] === $this->flush_buffers['messageId']
-                ) {
+                } elseif (isset($this->curr_message_id[$message['sessionId']])) {
+                    $this->sendClose($socket_id, $message['sessionId']);
                     $this->curr_message_id[$message['sessionId']] = null;
                 }
 
@@ -237,6 +257,9 @@ final class core extends Factory
 
         if (!$success) {
             $this->utils->message_buffers[] = $message;
+        } elseif (isset($this->curr_message_id[$message['sessionId']])) {
+            $this->sendClose($socket_id, $message['sessionId']);
+            $this->curr_message_id[$message['sessionId']] = null;
         }
 
         unset($socket_id, $message, $microtime, $buffers, $success);
