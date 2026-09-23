@@ -776,7 +776,8 @@ class go extends Factory
 
         foreach ($session_list as $session_id => $active_time) {
             if (
-                0 < $this->last_response[$session_id]
+                isset($this->last_response[$session_id])
+                && 0 < $this->last_response[$session_id]
                 && $now_time - $this->last_response[$session_id] >= $this->utils->agent_config['reset_interval']
             ) {
                 $this->core->context->removeHistory($session_id, WORKER_MAIN);
