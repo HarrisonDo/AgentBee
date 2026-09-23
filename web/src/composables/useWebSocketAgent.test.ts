@@ -554,3 +554,71 @@ describe('session delete requests', () => {
     });
   });
 });
+describe('session isolation for broadcast events', () => {
+  it.each(['sessionId', 'session_id'])('routes foreign turns using %s without changing the active conversation', (field) => {
+    const { assistantOf, createSession, emit, sendUserText, session } = setupAgent();
+    sendUserText('local question');
+    const second = createSession('session-2');
+    const before = session.messages.length;
+    const route = { [field]: second.id, messageId: 'broadcast-turn' };
+    emit({ ...route, type: 'content', data: 'remote answer' });
+    emit({ ...route, type: 'think', data: 'remote thought' });
+    emit({ ...route, type: 'tool_result', data: { content: 'ok' } });
+    emit({ ...route, type: 'end' });
+    expect(assistantOf('broadcast-turn', second.id)).toMatchObject({
+      content: 'remote answer', think: 'remote thought', status: 'done',
+    });
+    expect(assistantOf('broadcast-turn', second.id)?.toolEvents).toHaveLength(1);
+    expect(session.messages).toHaveLength(before);
+    emit({ ...route, type: 'error', error: 'remote failure' });
+    expect(second.messages.some((item) => item.role === 'error')).toBe(true);
+    expect(session.messages).toHaveLength(before);
+  });
+
+  it('drops unknown sessions and unowned message IDs', () => {
+    const { assistantOf, emit, sendUserText, session } = setupAgent();
+    const localId = sendUserText('local');
+    const before = session.messages.length;
+    for (const route of [
+      { sessionId: 'missing', messageId: 'foreign' },
+      { messageId: 'unknown' },
+      { sessionId: 'missing', messageId: localId },
+    ]) {
+      emit({ ...route, type: 'content', data: 'wrong' });
+      emit({ ...route, type: 'error', error: 'wrong' });
+      emit({ ...route, type: 'end' });
+    }
+    expect(session.messages).toHaveLength(before);
+    expect(assistantOf(localId)?.content).toBe('');
+    expect(assistantOf(localId)?.status).toBe('loading');
+  });
+
+  it('resolves missing message IDs only within the declared session', () => {
+    const { agent, assistantOf, createSession, emit, sendUserText, switchTo } = setupAgent();
+    const first = sendUserText('first');
+    switchTo(createSession('session-2').id);
+    const second = sendUserText('second');
+    emit({ type: 'content', data: 'ambiguous' });
+    emit({ type: 'end' });
+    expect(agent.hasPendingTurns.value).toBe(true);
+    emit({ type: 'content', sessionId: 'session-1', data: 'first answer' });
+    emit({ type: 'end', sessionId: 'session-1' });
+    expect(assistantOf(first, 'session-1')?.content).toBe('first answer');
+    expect(assistantOf(second)?.content).toBe('');
+    expect(assistantOf(second)?.status).toBe('loading');
+  });
+
+  it('rejects conflicting session IDs and keeps late events in their original session', () => {
+    const { assistantOf, createSession, emit, sendUserText, switchTo } = setupAgent();
+    const messageId = sendUserText('first');
+    createSession('session-2');
+    emit({ type: 'content', sessionId: 'session-2', messageId, data: 'wrong' });
+    emit({ type: 'content', sessionId: 'session-1', messageId, data: 'answer' });
+    emit({ type: 'end', sessionId: 'session-1', messageId });
+    switchTo('session-2');
+    emit({ type: 'content', messageId, data: ' late' });
+    emit({ type: 'end', messageId });
+    expect(assistantOf(messageId, 'session-1')?.content).toBe('answer late');
+    expect(assistantOf(messageId, 'session-2')).toBeUndefined();
+  });
+});

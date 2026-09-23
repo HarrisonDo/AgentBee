@@ -265,6 +265,7 @@ export type ClientMessage =
   | ClientSessionRequest;
 
 export interface ServerMessage {
+  session_id?: string;
   type?: ServerEventType | string;
   act?: string;
   event?: string;

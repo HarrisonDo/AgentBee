@@ -104,6 +104,8 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   const isOnline = ref(navigator.onLine);
   const pendingTurns = ref(new Map<string, PendingTurn>());
   const socket = ref<WebSocket | null>(null);
+  // 保留已结束轮次的归属，迟到事件也不能回退到当前会话。
+  const turnSessionIds = new Map<string, string>();
   const noResponseTimers = new Map<string, number>();
   const pendingStreamUpdates = new Map<string, PendingStreamUpdate>();
   let streamFlushTimer: number | null = null;
@@ -595,6 +597,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     clearAllNoResponseTimers();
     discardPendingStreamUpdates();
     pendingTurns.value.clear();
+    turnSessionIds.clear();
   }
 
   function sendJson(payload: ClientMessage) {
@@ -604,13 +607,15 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   function handleServerMessage(raw: string) {
     const parsed = parseServerMessage(raw);
     if (typeof parsed === 'string') {
-      queueAssistantContent(null, parsed);
+      // 在收包时绑定唯一在途轮次，不能等缓冲刷新时再猜归属。
+      if (pendingTurns.value.size !== 1) return;
+      queueAssistantContent(getLatestPendingMessageId(), parsed);
       return;
     }
 
     const msg = parsed as ServerMessage;
     const type = getServerType(msg);
-    const messageId = getMessageId(msg);
+    let messageId = getMessageId(msg);
 
     if (type === 'setting') {
       const { act, content } = unwrapActContent(msg);
@@ -637,6 +642,31 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       return;
     }
     if (type === 'history') return;
+    // 广播事件按服务端 session 路由；无 session 的旧协议只能认已知轮次。
+    const sessionId = (msg.sessionId || msg.session_id || '').trim();
+    if (sessionId) {
+      const target = options.getSessionById
+        ? options.getSessionById(sessionId)
+        : options.activeSession()?.id === sessionId ? options.activeSession() : null;
+      if (!target) return;
+      if (!messageId) {
+        const candidates = Array.from(pendingTurns.value.entries())
+          .filter(([, turn]) => turn.sessionId === sessionId);
+        if (candidates.length !== 1) return;
+        messageId = candidates[0][0];
+      }
+      const knownSessionId = pendingTurns.value.get(messageId)?.sessionId
+        || turnSessionIds.get(messageId);
+      if (knownSessionId && knownSessionId !== sessionId) return;
+      turnSessionIds.set(messageId, sessionId);
+    } else {
+      if (!messageId) {
+        if (pendingTurns.value.size !== 1) return;
+        messageId = getLatestPendingMessageId();
+      }
+      if (!messageId || (!pendingTurns.value.has(messageId) && !turnSessionIds.has(messageId))) return;
+    }
+
     if (['content', 'assistant', 'message'].includes(type)) {
       queueAssistantContent(messageId, normalizePayload(msg), msg);
       // `/reset` 由后端以 need_llm=false 的 message 事件答复，后面不会再有 end，
@@ -654,7 +684,11 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     if (type === 'image') return appendAssistantImage(messageId, msg);
     if (['file', 'html', 'document'].includes(type)) return appendAssistantFile(messageId, msg);
     if (type === 'error') {
-      options.addMessage('error', normalizeServerError(msg) || normalizePayload(msg) || 'Server returned an error.');
+      const target = resolveTurnSession(messageId).session;
+      target?.messages.push({
+        id: makeId(), role: 'error', time: nowTime(),
+        content: normalizeServerError(msg) || normalizePayload(msg) || 'Server returned an error.',
+      });
       return finishAssistantMessage(messageId, 'error', msg);
     }
     if (['end', 'done', 'finish'].includes(type)) return finishAssistantMessage(messageId, 'done', msg);
@@ -725,7 +759,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   }
 
   function ensureAssistantMessage(messageId: string | null, msg?: ServerMessage) {
-    const resolvedMessageId = messageId || getLatestPendingMessageId();
+    const resolvedMessageId = messageId || (pendingTurns.value.size === 1 ? getLatestPendingMessageId() : null);
     // 既没有 messageId 也没有在等待的轮次：这段内容没有归属。
     // 早先用 makeId() 兜底会凭空造一个空 assistant 气泡，并把它永久留在 pendingTurns 里。
     if (!resolvedMessageId) return null;
@@ -755,6 +789,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       session.messages.push(assistant);
     }
 
+    turnSessionIds.set(resolvedMessageId, session.id);
     pendingTurns.value.set(resolvedMessageId, { assistantId: assistant.id, sessionId: session.id });
     return { session, assistant, messageId: resolvedMessageId };
   }
@@ -1057,19 +1092,22 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
    * 解析一个 messageId 属于哪个会话。
    * 优先用该轮发起时记录的 sessionId——这样流式输出期间切到别的会话，
    * 后续 content/end 仍会落回原会话，而不是写进用户刚切过去的那一个。
-   * 只有在没有记录（服务端主动推的零散内容）时才退回当前会话。
+   * 服务端广播先登记归属；没有可靠归属时丢弃，禁止退回当前会话。
    */
   function resolveTurnSession(messageId: string | null): {
     messageId: string | null;
     session: ChatSession | null;
   } {
-    const resolvedMessageId = messageId || getLatestPendingMessageId();
-    if (!resolvedMessageId) return { messageId: null, session: options.activeSession() };
-    const turn = pendingTurns.value.get(resolvedMessageId);
-    if (turn?.sessionId && options.getSessionById) {
-      return { messageId: resolvedMessageId, session: options.getSessionById(turn.sessionId) };
-    }
-    return { messageId: resolvedMessageId, session: options.activeSession() };
+    const resolvedMessageId = messageId || (pendingTurns.value.size === 1 ? getLatestPendingMessageId() : null);
+    if (!resolvedMessageId) return { messageId: null, session: null };
+    const sessionId = pendingTurns.value.get(resolvedMessageId)?.sessionId
+      || turnSessionIds.get(resolvedMessageId);
+    const session = sessionId
+      ? options.getSessionById
+        ? options.getSessionById(sessionId)
+        : options.activeSession()?.id === sessionId ? options.activeSession() : null
+      : null;
+    return { messageId: resolvedMessageId, session };
   }
 
   function applySenderMeta(message: ChatMessage, msg?: ServerMessage) {

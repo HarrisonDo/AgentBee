@@ -1060,8 +1060,8 @@ body:has(.login-window-backdrop) {
 
 .scroll-bottom-floating {
   position: absolute;
-  left: 50%;
-  bottom: 16px;
+  right: 3px;
+  bottom: 3px;
   z-index: 5;
   width: 34px;
   height: 34px;
@@ -2934,11 +2934,12 @@ body:has(.login-window-backdrop) {
   }
 
   .topbar {
-    align-items: center;
-    flex-direction: row;
-    min-height: 44px;
-    padding: 7px 10px;
-    gap: 8px;
+    display: none;
+    /*align-items: center;*/
+    /*flex-direction: row;*/
+    /*min-height: 44px;*/
+    /*padding: 7px 10px;*/
+    /*gap: 8px;*/
   }
 
   .topbar-title strong {
