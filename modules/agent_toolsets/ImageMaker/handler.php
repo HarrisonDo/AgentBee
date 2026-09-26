@@ -26,8 +26,10 @@ use Nervsys\Ext\libOpenAI;
 
 class handler extends Factory
 {
+    private string $prompt;
     private string $save_path;
-    private array  $config = [];
+
+    private array $config = [];
 
     /**
      * @param agent_core $agent_core
@@ -84,6 +86,8 @@ class handler extends Factory
      */
     public function create(array $payload_data, agent_core $agent_core): array
     {
+        $this->prompt = $payload_data['prompt'];
+
         $config = $this->loadConfig($agent_core);
         $openai = libOpenAI::new($config['base_url'], $config['api_key'], '/ImageCreator');
         $result = $openai->createImage(
@@ -117,6 +121,8 @@ class handler extends Factory
      */
     public function edit(array $payload_data, agent_core $agent_core): array
     {
+        $this->prompt = $payload_data['prompt'];
+
         $config  = $this->loadConfig($agent_core);
         $openai  = libOpenAI::new($config['base_url'], $config['api_key'], '/ImageEditor');
         $options = [
@@ -209,7 +215,7 @@ class handler extends Factory
                     $socket_id,
                     $message,
                     'data:image/' . $response['output_format'] . ';base64,' . $value['b64_json'],
-                    $value['revised_prompt']
+                    $value['revised_prompt'] ?? $this->prompt,
                 );
 
                 $image_binary = base64_decode($value['b64_json']);
