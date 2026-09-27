@@ -29,6 +29,7 @@ class handler extends Factory
     private string $prompt;
     private string $format;
     private string $save_path;
+    private string $message_id;
 
     private array $config = [];
 
@@ -40,6 +41,8 @@ class handler extends Factory
      */
     private function loadConfig(agent_core $agent_core): array
     {
+        $this->message_id = hash('md5', uniqid(microtime() . true));
+
         if ([] !== $this->config) {
             return $this->config;
         }
@@ -90,9 +93,9 @@ class handler extends Factory
         $this->prompt = $payload_data['prompt'];
         $this->format = $payload_data['output_format'];
 
-        $config = $this->loadConfig($agent_core);
-        $openai = libOpenAI::new($config['base_url'], $config['api_key'], '/ImageCreator');
-        $result = $openai->createImage(
+        $config   = $this->loadConfig($agent_core);
+        $openai   = libOpenAI::new($config['base_url'], $config['api_key'], '/ImageCreator');
+        $response = $openai->createImage(
             $payload_data['prompt'],
             $config['model_id'],
             [
@@ -106,9 +109,9 @@ class handler extends Factory
             ]
         );
 
-        $result = $this->handleResponse($agent_core, $payload_data['socket_id'], $payload_data['process_name'], $result);
+        $result = $this->handleResponse($agent_core, $payload_data['socket_id'], $payload_data['session_id'], $payload_data['process_name'], $response);
 
-        unset($payload_data, $agent_core, $config, $openai);
+        unset($payload_data, $agent_core, $config, $openai, $response);
         return $result;
     }
 
@@ -140,7 +143,7 @@ class handler extends Factory
 
         if (isset($config['type']) && 'file' === $config['type']) {
             // File upload
-            $result = $openai->editImage(
+            $response = $openai->editImage(
                 $payload_data['edit_images'],
                 $payload_data['prompt'],
                 $config['model_id'],
@@ -177,22 +180,23 @@ class handler extends Factory
                 throw new \RuntimeException('No image files uploaded.');
             }
 
-            $payload = ['prompt' => $payload_data['prompt'], 'model' => $config['model_id']];
-            $payload = array_merge($payload, $options, $files);
-            $result  = $openai->sendRequest('/images/edits', $payload);
+            $payload  = ['prompt' => $payload_data['prompt'], 'model' => $config['model_id']];
+            $payload  = array_merge($payload, $options, $files);
+            $response = $openai->sendRequest('/images/edits', $payload);
 
             unset($files, $image_path, $image_binary, $image_type, $payload);
         }
 
-        $result = $this->handleResponse($agent_core, $payload_data['socket_id'], $payload_data['process_name'], $result);
+        $result = $this->handleResponse($agent_core, $payload_data['socket_id'], $payload_data['session_id'], $payload_data['process_name'], $response);
 
-        unset($payload_data, $agent_core, $config, $openai, $options);
+        unset($payload_data, $agent_core, $config, $openai, $options, $response);
         return $result;
     }
 
     /**
      * @param agent_core $agent_core
      * @param string     $socket_id
+     * @param string     $session_id
      * @param string     $process_name
      * @param array      $response
      *
@@ -200,37 +204,38 @@ class handler extends Factory
      * @throws \Random\RandomException
      * @throws \ReflectionException
      */
-    private function handleResponse(agent_core $agent_core, string $socket_id, string $process_name, array $response): array
+    private function handleResponse(agent_core $agent_core, string $socket_id, string $session_id, string $process_name, array $response): array
     {
         if (isset($response['data']) && true === $response['success']) {
-            $saved_files = [];
-            $message     = $agent_core->utils->getMarker(
+            $saved_files   = [];
+            $output_format = $response['output_format'] ?? $this->format;
+
+            $message = $agent_core->utils->getMarker(
                 WORKER_MAIN,
                 WORKER_MAIN,
                 'Assistant',
                 $process_name,
                 0,
-                hash('md5', uniqid(microtime(), true))
+                $session_id,
+                $this->message_id
             );
-
-            $response['output_format'] ??= $this->format;
 
             foreach ($response['data'] as $value) {
                 $agent_core->core->sendImageMessage(
                     $socket_id,
                     $message,
-                    'data:image/' . $response['output_format'] . ';base64,' . $value['b64_json'],
-                    $value['revised_prompt'] ?? $this->prompt,
+                    'data:image/' . $output_format . ';base64,' . $value['b64_json'],
+                    $this->prompt,
                 );
 
                 $image_binary = base64_decode($value['b64_json']);
                 if (false !== $image_binary) {
-                    if ('jpeg' === $response['output_format']) {
-                        $response['output_format'] = 'jpg';
+                    if ('jpeg' === $output_format) {
+                        $output_format = 'jpg';
                     }
 
                     $micro_sec   = substr(microtime(), 2, 8);
-                    $file_name   = date('Y-m-d') . '_' . $micro_sec . '.' . $response['output_format'];
+                    $file_name   = date('Y-m-d') . '_' . $micro_sec . '.' . $output_format;
                     $file_path   = $this->save_path . $file_name;
                     $save_result = file_put_contents($file_path, $image_binary);
 
@@ -246,11 +251,11 @@ class handler extends Factory
 
             $response = [
                 'status'      => 'success',
-                'message'     => '图片已生成，保存路径：' . $this->save_path,
+                'message'     => '图片已生成并渲染到前端，无需再次读取展示。路径：' . $this->save_path,
                 'saved_files' => $saved_files,
             ];
 
-            unset($saved_files, $message, $value);
+            unset($saved_files, $output_format, $message, $value);
         } elseif (isset($response['error'])) {
             $response['status'] = 'error';
         } else {
@@ -258,7 +263,7 @@ class handler extends Factory
             $response['error']  = '图片生成失败，原因未知。告知用户，禁止重试。';
         }
 
-        unset($agent_core, $socket_id, $process_name);
+        unset($agent_core, $socket_id, $session_id, $process_name);
         return $response;
     }
 }
