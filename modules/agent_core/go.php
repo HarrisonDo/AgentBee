@@ -820,6 +820,7 @@ class go extends Factory
                 $session_id
             );
 
+            $this->openai->resume();
             $this->openai->talkTo(
                 WORKER_MAIN,
                 WORKER_MAIN,
@@ -863,6 +864,7 @@ class go extends Factory
         $user_msg = str_contains($message, "\n") ? explode("\n", $message) : [$message];
         $user_msg = array_filter($user_msg, 'strlen');
         $last_key = array_key_last($user_msg);
+        $main_pid = $this->utils->getMainIDX();
 
         foreach ($user_msg as $key => $line) {
             $data = json_decode($line, true);
@@ -964,11 +966,10 @@ class go extends Factory
             }
 
             $this->utils->debug('User: Sending ' . (count($message_list)) . ' message(s) to #' . $session_id, 'trace');
+            $this->runProcWorker($main_pid, WORKER_MAIN, WORKER_MAIN, [$this, 'streamWorkerHandler']);
 
             $this->core->context->refreshHistory($session_id, WORKER_MAIN);
             $this->core->context->addUserMessage($session_id, WORKER_MAIN, $message_list);
-
-            $this->runProcWorker($this->utils->getMainIDX(), WORKER_MAIN, WORKER_MAIN, [$this, 'streamWorkerHandler']);
 
             $message_metadata = $this->utils->getMarker(
                 WORKER_MAIN,
@@ -980,18 +981,19 @@ class go extends Factory
                 $this->core->curr_message_id[$session_id] ?? ''
             );
 
+            $this->openai->resume();
             $this->openai->talkTo(
                 WORKER_MAIN,
                 WORKER_MAIN,
                 $session_id,
-                $this->utils->getMainIDX(),
+                $main_pid,
                 $this->getSystemPrompt($session_id),
                 'talk',
                 $message_metadata + ['socket_id' => $socket_id]
             );
         }
 
-        unset($socket_id, $message, $is_binary, $curr_msg, $user_msg, $last_key, $key, $line, $data, $type_method, $result, $session_id, $message_list, $message_metadata);
+        unset($socket_id, $message, $is_binary, $curr_msg, $user_msg, $last_key, $main_pid, $key, $line, $data, $type_method, $result, $session_id, $message_list, $message_metadata);
     }
 
     /**

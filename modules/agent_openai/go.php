@@ -159,16 +159,6 @@ class go extends Factory
     {
         $this->core->context->messageOnSend($session_id, false);
 
-        if (WORKER_MAIN === $worker) {
-            $main_pid = $this->utils->getChildWorker(WORKER_MAIN, WORKER_MAIN, 'worker_pid');
-
-            if (is_int($main_pid)) {
-                $this->libOpenAI->resumeStream($main_pid);
-            }
-
-            unset($main_pid);
-        }
-
         try {
             $this->utils->procMgr->writeProc(
                 $proc_idx,
@@ -213,6 +203,22 @@ class go extends Factory
 
         if (is_int($main_pid)) {
             $this->libOpenAI->abortStream($main_pid);
+        }
+
+        unset($main_pid);
+    }
+
+    /**
+     * Resume current LLM request (for procWorker).
+     *
+     * @return void
+     */
+    public function resume(): void
+    {
+        $main_pid = $this->utils->getChildWorker(WORKER_MAIN, WORKER_MAIN, 'worker_pid');
+
+        if (is_int($main_pid)) {
+            $this->libOpenAI->resumeStream($main_pid);
         }
 
         unset($main_pid);
