@@ -446,19 +446,21 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   function stopCurrent() {
     if (!canSend.value) return;
     // 优先停当前会话正在跑的那一轮；当前会话没有在跑的，就停最近发起的那一轮。
-    const messageId = getActiveSessionPendingMessageId() || getLatestPendingMessageId();
-    const { session } = resolveTurnSession(messageId);
+    const session = options.activeSession();
+    if (!session) return false;
+    const messageId = makeId();
+
     sendJson({ type: 'stop', sessionId: session ? session.id : null, messageId });
-    if (session) {
-      // 提示写进被停止的那个会话，而不是用户此刻正在看的会话。
-      session.messages.push({
-        id: makeId(),
+
+    // 提示写进被停止的那个会话，而不是用户此刻正在看的会话。
+    session.messages.push({
+        id: messageId,
         role: 'system',
         content: 'Stop request sent.',
         time: nowTime(),
-      });
-      options.touchSession(session);
-    }
+    });
+    options.touchSession(session);
+
     finishAssistantMessage(messageId, 'stopped');
   }
 
