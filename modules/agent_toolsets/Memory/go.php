@@ -407,7 +407,7 @@ class go extends Factory
 
         $query = $this->libSQLite
             ->table('agent_memory')
-            ->select('level', 'role', 'content', 'create_id', 'session_id');
+            ->select('level', 'role', 'content', 'date_key AS date', 'create_id', 'session_id');
 
         if ('all' !== $level) {
             $query->where(['level', $level]);
@@ -1010,7 +1010,7 @@ class go extends Factory
             ->table('agent_memory')
             ->join('agent_memory_fts', 'INNER')
             ->on(['agent_memory.create_id', '=', 'agent_memory_fts.rowid'])
-            ->select('agent_memory.level', 'agent_memory.role', 'agent_memory.content', 'agent_memory.create_id', 'agent_memory.session_id');
+            ->select('agent_memory.level', 'agent_memory.role', 'agent_memory.content', 'agent_memory.date_key AS date', 'agent_memory.create_id', 'agent_memory.session_id');
 
         if ('all' !== $level) {
             $query->where(['agent_memory.level', $level]);
@@ -1066,7 +1066,7 @@ class go extends Factory
     {
         $query = $this->libSQLite
             ->table('agent_memory')
-            ->select('level', 'role', 'content', 'create_id', 'session_id');
+            ->select('level', 'role', 'content', 'date_key AS date', 'create_id', 'session_id');
 
         if ('all' !== $level) {
             $query->where(['level', $level]);

@@ -46,7 +46,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'readSession',
-                'description' => '读取会话列表。返回：{status, sessions: [{session_id, session_name, session_status, create_time}]}。',
+                'description' => '读取会话列表，获取会话ID和名称。用户提及历史会话/切换话题/查阅其他会话记忆时调用。返回：{status, sessions: [{session_id, session_name, session_status, create_time}]}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
@@ -113,7 +113,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'read',
-                'description' => '读取记忆。参数：level指定层级；date(YYYYMMDD)按日读取，0=不限；session_id限定会话；offset起始位置，length条数(0=全部)；create_id游标，仅取小于此值的记录。结果较多时，用offset跳跃采样(如总数1/2、1/3位置)，勿只读开头，以覆盖更完整的时间段。禁止重复读取。返回：{status, data: [{level, role, content, create_id, create_time, session_id}], total}或{status, error}。',
+                'description' => '读取记忆。参数：level指定层级；date(YYYYMMDD)按日读取，0=不限；session_id限定会话；offset起始位置，length条数(0=全部)；create_id游标，仅取小于此值的记录。结果较多时，用offset跳跃采样(如总数1/2、1/3位置)，勿只读开头，以覆盖更完整的时间段。禁止重复读取。返回：{status, data: [{level, role, content, date, create_id, create_time, session_id}], total}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
@@ -132,7 +132,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'search',
-                'description' => '全文搜索记忆。参数：keywords关键词1-5个(多个为AND，全部命中)；level指定层级，默认all；date_start/date_end限定日期范围(0=不限)；session_id限定会话；offset起始位置，length条数(0=全部)。结果较多时，用offset跳跃采样(如总数1/2、1/3位置)，或按日期分段查询，勿只取开头，以覆盖不同时间段。禁止重复搜索。返回：{status, data: [{level, role, content, create_id, create_time, session_id}], total}或{status, error}。',
+                'description' => '全文搜索记忆。参数：keywords关键词1-5个(多个为AND，全部命中)；level指定层级，默认all；date_start/date_end限定日期范围(0=不限)；session_id限定会话；offset起始位置，length条数(0=全部)。结果较多时，用offset跳跃采样(如总数1/2、1/3位置)，或按日期分段查询，勿只取开头，以覆盖不同时间段。禁止重复搜索。返回：{status, data: [{level, role, content, date, create_id, create_time, session_id}], total}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
