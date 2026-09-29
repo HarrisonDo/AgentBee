@@ -98,15 +98,21 @@ When attachments are uploaded, the frontend reads every attachment as raw Base64
 }
 ```
 
-### Stop Request
+### Abort Request
+
+中止某个会话正在跑的那一轮。`sessionId` 在**顶层且必填**：服务端拿它中止
+该会话正在跑的任务，并把这个会话的状态置回 IDLE。
 
 ```json
 {
-  "type": "stop",
+  "type": "abort",
   "sessionId": "browser-local-session-id",
   "messageId": "question-message-id"
 }
 ```
+
+> 前端不再发 `"type": "stop"`，一律发 `abort`：服务端需要按 `abort` 分支处理。
+> `messageId` 只给前端认领本地那一轮用，服务端可以不读。
 
 ## Server To Client
 

@@ -162,6 +162,8 @@ message 事件时主动收尾该轮次——后端对这种 `need_llm = false` �
   所以切走之后，后端推来的 content/end 仍会写回发起这一轮的会话，而不是当前正在看的那个。
   会话列表中正在输出的那条会显示转圈标记（`streamingSessionIds`）。
   「停止」优先停当前会话正在跑的那一轮；当前会话没有在跑的，就停最近发起的那一轮，提示写进被停的那个会话。
+  发出去的报文是 `{ type: 'abort', sessionId, messageId }`（`sessionId` 顶层必填，
+  服务端按这个 sessionId 中止该会话并把它置回 IDLE）。
   注意：后端一轮只服务一个 `curr_message_id`，在 A 还在输出时又去 B 发消息，
   后端可能按「放弃上一轮」的语义把 A 那一轮 close 掉（前端会保守保留已流出的内容）。
 - **会话标题**：默认占位文案走 i18n（`untitledSession`，zh「新对话」/ en「New conversation」），
