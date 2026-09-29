@@ -350,8 +350,14 @@ class go extends Factory
             'AgentBee'
         );
 
+        $this->libOpenAI->setTimeout(
+            $llm_params['timeout'] ?? $this->utils->agent_config['agent_llm']['timeout'],
+            10,
+            1,
+            120
+        );
+
         $this->libOpenAI->setOrgId($llm_params['org_id'] ?? $this->utils->agent_config['agent_llm']['org_id']);
-        $this->libOpenAI->setTimeout($llm_params['timeout'] ?? $this->utils->agent_config['agent_llm']['timeout']);
         $this->libOpenAI->setApiModel($llm_params['model'] ?? $this->utils->agent_config['agent_llm']['model']);
 
         unset($reload, $llm_params);
