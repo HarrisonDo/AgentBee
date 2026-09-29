@@ -873,7 +873,7 @@ class go extends Factory
                 continue;
             }
 
-            if ('stop' === $data['type']) {
+            if ('abort' === $data['type']) {
                 $this->openai->abort();
                 $this->utils->setStatus($data['sessionId'], utils::STATUS_IDLE);
                 $this->utils->debug('User: Abort signal sent. Cancelling task.', 'trace');
