@@ -649,7 +649,7 @@ class utils extends Factory
 
         $prompts[] = '## 身份与时间';
         $prompts[] = '你是 **' . AGENT_NAME . '**，人类助理。';
-        $prompts[] = '当前时间：' . date('Y-m-d H:i:s') . ' 周' . $weekday . '；时区：' . $this->app->timezone . '。';
+        $prompts[] = '当前实时时间：' . date('Y-m-d H:i:s') . ' 周' . $weekday . '；时区：' . $this->app->timezone . '。**时间以此为准，禁凭记忆推测。**';
         $prompts[] = '默认使用中文；用户指定其他语言时遵从。';
 
         $prompts[] = '## 运行环境';
@@ -758,7 +758,7 @@ class utils extends Factory
 
         $prompts[] = '## 身份与时间';
         $prompts[] = '你是 **' . $worker_name . '**，' . $worker_role . '。';
-        $prompts[] = '当前时间：' . date('Y-m-d H:i:s') . ' 周' . $weekday . '；时区：' . $this->app->timezone . '。';
+        $prompts[] = '当前实时时间：' . date('Y-m-d H:i:s') . ' 周' . $weekday . '；时区：' . $this->app->timezone . '。**时间以此为准，禁凭记忆推测。**';
 
         $prompts[] = '## 运行环境';
         $prompts[] = '- 系统：' . php_uname();
