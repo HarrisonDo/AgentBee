@@ -2836,8 +2836,15 @@ body:has(.login-window-backdrop) {
     left: 0;
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
-    height: 100vh;
+    /* 兜底用 100% 而不是 100vh：固定定位元素的百分比按**布局视口**解析，
+       而 vh 在移动端取的是「地址栏收起」时那个更高的值——正好会把输入框顶到
+       可视区外面。 */
+    height: 100%;
     height: var(--app-height, 100dvh);
+    /* 双保险（见 useAppViewport）：--app-height 万一是过期的可视视口高度，
+       也不许 .app 比「布局视口减去偏移」还高。高出去的话输入框就落在可视区外，
+       浏览器会为了把它拉回来不停滚动页面，而固定定位的容器根本不动。 */
+    max-height: calc(100% - var(--app-offset-top, 0px));
     min-height: 0;
     padding: 0;
   }

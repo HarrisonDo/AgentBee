@@ -207,9 +207,16 @@ export interface MemoryRecord {
   role: MessageRole;
 }
 
-export interface ClientStopRequest {
-  type: 'stop';
-  sessionId: string | null;
+/**
+ * 中止某个会话正在跑的那一轮。
+ *
+ * `sessionId` **必须在顶层且非空**：后端拿到它做 `openai->abort()` +
+ * `setStatus(sessionId, IDLE)`，给 null 会把 IDLE 写到错的会话上。
+ */
+export interface ClientAbortRequest {
+  type: 'abort';
+  sessionId: string;
+  /** 前端用来认领本地那一轮；后端不看这个字段。 */
   messageId: string | null;
 }
 
@@ -259,7 +266,7 @@ export type ClientMessage =
   | ClientMemoryReadRequest
   | ClientMemoryDeleteRequest
   | ClientMemorySessionRequest
-  | ClientStopRequest
+  | ClientAbortRequest
   | ClientSettingRequest
   | ClientSystemRequest
   | ClientSessionRequest;

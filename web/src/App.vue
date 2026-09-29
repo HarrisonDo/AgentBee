@@ -146,6 +146,16 @@ let resizeStartX = 0;
 let resizeStartWidth = 0;
 let resizePointerId: number | null = null;
 let chatShellResizeObserver: ResizeObserver | null = null;
+/**
+ * 聊天区高度变化（软键盘弹出/收起、输入框长高）后，把「贴着底部」的用户贴回底部。
+ *
+ * 容器变矮时浏览器不会替用户补滚动：视口一变，视图就被留在离底部几百像素的地方。
+ * 移动端发送消息时键盘正好一收一放，两次高度变化叠加起来，看起来就是「页面自己
+ * 往上跑」。这里只在用户本来就贴着底部（`shouldAutoScroll`）时才动手，用户手动
+ * 往上翻过就绝不抢他的滚动位置。
+ */
+let chatAreaResizeObserver: ResizeObserver | null = null;
+let chatAreaHeight = 0;
 
 const { locale, setLocale, t } = useI18n();
 const { setTheme, theme } = useTheme();
@@ -352,6 +362,24 @@ watch(subAgents, (agents) => {
 watch(chatShell, (nextShell, previousShell) => {
   if (previousShell) chatShellResizeObserver?.unobserve(previousShell);
   if (nextShell) chatShellResizeObserver?.observe(nextShell);
+});
+
+function onChatAreaResize() {
+  const element = chatContainer.value;
+  if (!element) return;
+  const height = element.clientHeight;
+  if (height === chatAreaHeight) return;
+  chatAreaHeight = height;
+  if (shouldAutoScroll.value) scrollToBottom();
+}
+
+watch(chatContainer, (nextContainer, previousContainer) => {
+  if (previousContainer) chatAreaResizeObserver?.unobserve(previousContainer);
+  chatAreaHeight = 0;
+  if (nextContainer) {
+    chatAreaHeight = nextContainer.clientHeight;
+    chatAreaResizeObserver?.observe(nextContainer);
+  }
 });
 
 function onSend(
@@ -1531,6 +1559,11 @@ onMounted(() => {
     }
   });
   if (chatShell.value) chatShellResizeObserver.observe(chatShell.value);
+  chatAreaResizeObserver = new ResizeObserver(onChatAreaResize);
+  if (chatContainer.value) {
+    chatAreaHeight = chatContainer.value.clientHeight;
+    chatAreaResizeObserver.observe(chatContainer.value);
+  }
   window.addEventListener('pagehide', handlePageHide);
   window.addEventListener('pageshow', handlePageShow);
   scrollToLatestAfterRender();
@@ -1546,6 +1579,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('pageshow', handlePageShow);
   chatShellResizeObserver?.disconnect();
   chatShellResizeObserver = null;
+  chatAreaResizeObserver?.disconnect();
+  chatAreaResizeObserver = null;
 });
 
 function readAgentConfig(): Record<string, unknown> {

@@ -267,8 +267,8 @@ describe('switching sessions while a turn is streaming', () => {
     switchTo(createSession('session-2').id);
     agent.stopCurrent();
 
-    const stopPayload = JSON.parse(sockets[0].sent[sockets[0].sent.length - 1]);
-    expect(stopPayload).toMatchObject({ type: 'stop', sessionId: 'session-1', messageId });
+    const abortPayload = JSON.parse(sockets[0].sent[sockets[0].sent.length - 1]);
+    expect(abortPayload).toMatchObject({ type: 'abort', sessionId: 'session-1', messageId });
     expect(assistantOf(messageId, 'session-1')?.status).toBe('stopped');
   });
 
