@@ -334,7 +334,7 @@ class message extends Factory
                 }
 
                 // 2.2 Process plain text files
-                if (!$this->fileIsAllowed($data['file']['filename']) || str_contains($binary, "\0")) {
+                if (!$this->fileIsText($data['file']['filename']) || str_contains($binary, "\0")) {
                     $errors[] = $data['file']['filename'] . '：文件格式不支持';
                     continue;
                 }
@@ -402,69 +402,39 @@ class message extends Factory
     }
 
     /**
-     * Check if a file name has an allowed text file extension.
+     * Check plain text file extension
      *
      * @param string $filename
      *
      * @return bool
      */
-    private function fileIsAllowed(string $filename): bool
+    private function fileIsText(string $filename): bool
     {
         $whitelist = [
-            // ----- 纯文本与日志 -----
-            'txt', 'text', 'log', 'out', 'err', 'cfg', 'conf', 'ini', 'env',
-            'gitignore', 'dockerfile', 'editorconfig', 'htaccess', 'htpasswd',
-            'bashrc', 'zshrc', 'profile', 'vimrc', 'screenrc', 'tmux.conf',
-            'inf', 'reg', 'url', 'desktop', 'directory', 'm3u', 'm3u8', 'pls',
-            'cue', 'srt', 'vtt', 'ass', 'ssa', 'sub', 'idx',
+            // 文本
+            'txt', 'log', 'md', 'rst', 'csv', 'tsv', 'diff', 'patch', 'markdown',
 
-            // ----- 标记语言与文档 -----
-            'md', 'markdown', 'rst', 'adoc', 'asciidoc', 'tex', 'latex', 'bib', 'rtf',
-            'pod', 'wiki', 'mediawiki', 'html', 'htm', 'xhtml', 'xml', 'xsl', 'xslt',
-            'dtd', 'svg', 'rss', 'atom', 'json', 'jsonl', 'json5', 'yaml', 'yml',
-            'toml', 'plist', 'csv', 'tsv', 'psv', 'dif', 'diff', 'patch',
+            // 网页
+            'html', 'htm', 'xhtml', 'xml', 'svg',
+            'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx',
+            'css', 'scss', 'sass', 'less', 'vue', 'svelte',
 
-            // ----- 脚本与编程语言源码 -----
-            'sh', 'bash', 'zsh', 'fish', 'ksh', 'bat', 'cmd', 'ps1', 'psd1', 'psm1',
-            'vbs', 'vba', 'js', 'javascript', 'ts', 'tsx', 'jsx', 'mjs', 'cjs',
-            'php', 'php3', 'php4', 'php5', 'phpt', 'phtml', 'py', 'python', 'pyw',
-            'pyi', 'r', 'rmd', 'pl', 'pm', 't', 'raku', 'rb', 'ru', 'go', 'rs',
-            'swift', 'c', 'cpp', 'cc', 'cxx', 'h', 'hpp', 'hxx', 'inl', 'ipp',
-            'java', 'kt', 'kts', 'groovy', 'scala', 'clj', 'cljs', 'edn', 'coffee',
-            'lua', 'erl', 'hrl', 'ex', 'exs', 'elm', 'hs', 'lhs', 'ml', 'mli',
-            'nim', 'cr', 'zig', 'd', 'v', 'f90', 'f95', 'f03', 'f08', 'for', 'f',
-            'pas', 'pp', 'm', 'mm',
+            // 配置
+            'ini', 'env', 'cfg', 'cnf', 'conf', 'json', 'jsonl', 'yml', 'yaml', 'toml', 'properties',
 
-            // ----- Web 模板与前端组件 -----
-            'vue', 'svelte', 'astro', 'njk', 'liquid', 'twig', 'hbs', 'mustache',
-            'ejs', 'pug', 'jade', 'haml', 'slm', 'slim', 'erb', 'rhtml', 'jsp',
-            'asp', 'aspx', 'cshtml', 'vbhtml', 'volt', 'smarty', 'tpl', 'latte',
-            'blade.php',
+            // 系统脚本
+            'sh', 'bash', 'zsh', 'bat', 'cmd', 'ps1',
 
-            // ----- 配置文件（补充常见工具链）-----
-            'config', 'properties', 'prop', 'pkl', 'hcl', 'tf', 'tfvars', 'nomad',
-            'service', 'socket', 'target', 'link', 'prettierrc', 'eslintrc',
-            'babelrc', 'stylelintrc', 'htmlhintrc', 'pylintrc', 'flake8',
-            'mypy.ini', 'pytest.ini', 'tox.ini', 'clang-format', 'clang-tidy',
-            'cmake', 'makefile', 'gnumakefile', 'containerfile', 'nginx.conf',
-            'apache.conf', 'httpd.conf', 'php.ini', 'my.cnf', 'pg_hba.conf',
-            'redis.conf', 'mongod.conf', 'logrotate.d', 'crontab', 'systemd',
+            // 编程源码
+            'php', 'py', 'r', 'rb', 'go', 'rs', 'swift', 'cs', 'dart',
+            'java', 'kt', 'kts', 'scala', 'groovy', 'lua',
+            'c', 'cpp', 'cc', 'cxx', 'h', 'hpp',
 
-            // ----- 数据库与查询 -----
-            'sql', 'psql', 'mysql', 'sqlite', 'ddl', 'dml', 'plsql', 'pgsql', 'cql',
-            'hql', 'graphql',
+            // 数据库
+            'sql', 'graphql',
 
-            // ----- 科学计算与数据交换（保留常见格式）-----
-            'mat', 'jl', 'ipynb',
-
-            // ----- 版本控制与忽略文件 -----
-            'gitattributes', 'gitmodules', 'gitkeep', 'mailmap', 'dockerignore',
-            'npmignore', 'eslintignore', 'prettierignore', 'stylelintignore',
-            'jshintignore', 'cvsignore', 'hgignore', 'svnignore', 'bzrignore',
-            'cfignore', 'slugignore',
-
-            // ----- 其他日常或开发中可能遇到的格式 -----
-            'bib', 'ris', 'rdf', 'ical', 'ics', 'vcard', 'vcf', 'eml'
+            // 字幕
+            'srt', 'vtt', 'ass', 'ssa', 'lrc', 'sub', 'idx',
         ];
 
         $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
