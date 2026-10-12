@@ -25,14 +25,20 @@ use Nervsys\Core\Factory;
 
 class message extends Factory
 {
-    public utils $utils;
+    public utils  $utils;
+    public config $config;
+
+    public string $upload_path;
 
     /**
      * @throws \ReflectionException
      */
     public function __construct()
     {
-        $this->utils = utils::new();
+        $this->utils  = utils::new();
+        $this->config = config::new();
+
+        $this->upload_path = rtrim($this->config->config['workspace_path'], '\\/') . DIRECTORY_SEPARATOR . 'UploadFiles';
     }
 
     /**
@@ -49,7 +55,7 @@ class message extends Factory
 
         switch ($act) {
             case 'getConfig':
-                $current = config::new()->get(false);
+                $current = $this->config->get(false);
                 $content = [
                     'status'  => 'success',
                     'act'     => $act,
@@ -60,7 +66,7 @@ class message extends Factory
                 break;
 
             case 'saveConfig':
-                $config_hash = config::new()->save($data_content['data']);
+                $config_hash = $this->config->save($data_content['data']);
                 $content     = [
                     'status'  => 'success',
                     'act'     => $act,
@@ -71,7 +77,7 @@ class message extends Factory
                 break;
 
             case 'getDefaultConfig':
-                $defaults = config::new()->getDefault();
+                $defaults = $this->config->getDefault();
                 $content  = [
                     'status'  => 'success',
                     'act'     => $act,
@@ -280,6 +286,7 @@ class message extends Factory
         $content = [];
         $errors  = [];
         $saves   = [];
+        $files   = [];
         $reset   = false;
 
         foreach ($data_content as $data) {
@@ -313,7 +320,7 @@ class message extends Factory
 
                 $binary = base64_decode($data['file']['content']);
 
-                // 2.1 Process images
+                // 2.1 Process image files
                 if ('' !== $this->utils->getImageType($binary)) {
                     if (!$this->imageIsAllowed($data['file']['filename'])) {
                         $errors[] = $data['file']['filename'] . '：图片格式不支持';
@@ -333,35 +340,75 @@ class message extends Factory
                     continue;
                 }
 
-                // 2.2 Process plain text files
-                if (!$this->fileIsText($data['file']['filename']) || str_contains($binary, "\0")) {
-                    $errors[] = $data['file']['filename'] . '：文件格式不支持';
-                    continue;
-                }
+                // 2.2 Process plain-text files
+                if ($this->fileIsText($data['file']['filename']) && !str_contains($binary, "\0")) {
+                    try {
+                        $detected  = mb_detect_encoding($binary, ['GB18030', 'UTF-8', 'BIG-5', 'ASCII'], true);
+                        $file_text = iconv($detected ?: 'UTF-8', 'UTF-8//IGNORE', $binary) ?: '';
 
-                try {
-                    $detected  = mb_detect_encoding($binary, ['GB18030', 'UTF-8', 'BIG-5', 'ASCII'], true);
-                    $file_text = iconv($detected ?: 'UTF-8', 'UTF-8//IGNORE', $binary) ?: '';
+                        if ('' === $file_text) {
+                            throw new \RuntimeException('文本提取失败');
+                        }
 
-                    if ('' === $file_text) {
-                        throw new \RuntimeException('文本提取失败');
+                        $content[] = [
+                            'type'    => 'text',
+                            'content' => '--- 文件信息 ---' . "\n"
+                                . '文件名: ' . $data['file']['filename'] . "\n"
+                                . 'MIME类型: ' . $data['file']['mimeType'] . "\n"
+                                . '--- 文件内容（开始） ---' . "\n"
+                                . $file_text . "\n"
+                                . '--- 文件内容（结束） ---'
+                        ];
+                    } catch (\Throwable $throwable) {
+                        $errors[] = $data['file']['filename'] . '：' . $throwable->getMessage();
+                        unset($throwable);
                     }
 
-                    $content[] = [
-                        'type'    => 'text',
-                        'content' => '--- 文件信息 ---' . "\n"
-                            . '文件名: ' . $data['file']['filename'] . "\n"
-                            . 'MIME类型: ' . $data['file']['mimeType'] . "\n"
-                            . '--- 文件内容（开始） ---' . "\n"
-                            . $file_text . "\n"
-                            . '--- 文件内容（结束） ---'
-                    ];
-                } catch (\Throwable $throwable) {
-                    $errors[] = $data['file']['filename'] . '：' . $throwable->getMessage();
-                    unset($throwable);
                     continue;
                 }
+
+                // 2.3 Process other type of files
+                $upload_path = $this->upload_path . DIRECTORY_SEPARATOR . date('Ymd');
+
+                if (!is_dir($upload_path)) {
+                    try {
+                        mkdir($upload_path, 0777, true);
+                    } catch (\Throwable) {
+                    }
+                }
+
+                $file_path  = $upload_path . DIRECTORY_SEPARATOR . $data['file']['filename'];
+                $save_bytes = file_put_contents($file_path, $binary);
+
+                if (false === $save_bytes || 0 === $save_bytes) {
+                    continue;
+                }
+
+                $files[] = [
+                    'filename' => $data['file']['filename'],
+                    'filepath' => $file_path
+                ];
             }
+        }
+
+        if ([] !== $files) {
+            $file_list = '';
+
+            foreach ($files as $i => $file) {
+                $file_list .= ($i + 1) . '. 文件名: ' . $file['filename'] . "\n"
+                    . '   文件路径: ' . $file['filepath'] . "\n";
+            }
+
+            $content[] = [
+                'type'    => 'text',
+                'content' => '--- 文件信息 ---' . "\n"
+                    . '共 ' . count($files) . ' 个文件：' . "\n"
+                    . $file_list
+                    . '--- 任务说明 ---' . "\n"
+                    . '用户上传了以上文件，请根据各文件类型调用合适工具读取内容，并按用户要求进行分析。若未找到合适工具，请告知用户；若用户未提出具体要求，请主动询问其意图。'
+            ];
+
+            unset($file_list, $i, $file);
         }
 
         if ([] !== $content) {
@@ -382,7 +429,7 @@ class message extends Factory
             ];
         }
 
-        unset($socket_id, $data_content, $content, $errors, $saves, $reset, $data, $text, $binary, $data_url, $detected, $file_text);
+        unset($socket_id, $data_content, $content, $errors, $saves, $files, $reset, $data, $text, $binary, $data_url, $detected, $file_text, $upload_path, $file_path);
         return $result;
     }
 
