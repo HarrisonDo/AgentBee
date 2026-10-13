@@ -140,7 +140,7 @@ class handler extends Factory
                 break;
             }
 
-            usleep(50000);
+            usleep(100000);
         }
 
         if ('' === $browser_addr) {
