@@ -28,11 +28,11 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'start',
-                'description' => '启动浏览器实例（单例模式，已存在则复用，通过标签页进行操作）。默认有头模式，无头需用户明确。返回：{message}。',
+                'description' => '启动浏览器实例（单例模式，已存在则复用，通过标签页进行操作）。默认无头模式，有头需用户明确。返回：{message}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
-                        'headless' => ['type' => 'boolean', 'default' => false, 'description' => '无头模式（默认false）'],
+                        'headless' => ['type' => 'boolean', 'default' => true, 'description' => '无头模式（默认true）'],
                     ],
                 ],
             ],

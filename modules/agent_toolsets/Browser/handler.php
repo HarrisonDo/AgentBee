@@ -109,7 +109,7 @@ class handler extends Factory
 
         $start_args = self::START_ARGS;
 
-        if ($payload_data['params']['headless'] ?? false) {
+        if ($payload_data['params']['headless'] ?? true) {
             $start_args[] = '--disable-gpu';
             $start_args[] = '--headless=new';
         }

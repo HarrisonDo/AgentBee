@@ -29,7 +29,7 @@ class go extends Factory
      *
      * @return array
      */
-    public function start(bool $headless = false): array
+    public function start(bool $headless = true): array
     {
         return [
             'async'   => false,
