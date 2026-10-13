@@ -35,7 +35,6 @@ const isComposing = ref(false);
 const submissionPending = ref(false);
 const isDraggingFile = ref(false);
 const COMPOSITION_ENTER_GUARD_MS = 100;
-const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 40 * 1024 * 1024;
 let ignoreEnterUntil = 0;
 let textareaResizeObserver: ResizeObserver | null = null;
@@ -189,7 +188,12 @@ async function onFileChange(event: Event) {
   input.value = '';
 }
 
-/** 收单入口：文件选择器和拖拽放入共用同一套体积校验与读取逻辑。 */
+/**
+ * 收单入口：文件选择器和拖拽放入共用同一套校验与读取逻辑。
+ *
+ * 单文件不再设上限（后端没有大小限制，图片会 resize、文本会解析）；
+ * 只留一条**总量**兜底，避免一次性把几百 MB 塞进 base64 和 localStorage。
+ */
 async function addFiles(files: File[]) {
   if (!files.length) return;
 
@@ -197,13 +201,6 @@ async function addFiles(files: File[]) {
   let nextTotalSize = attachments.value.reduce((sum, attachment) => sum + attachment.size, 0);
   const acceptedFiles: File[] = [];
   files.forEach((file) => {
-    if (file.size > MAX_ATTACHMENT_BYTES) {
-      uploadWarnings.value.push(formatLabel(
-        props.labels.fileTooLargeDetail,
-        { limit: formatSize(MAX_ATTACHMENT_BYTES), name: file.name },
-      ));
-      return;
-    }
     if (nextTotalSize + file.size > MAX_TOTAL_ATTACHMENT_BYTES) {
       uploadWarnings.value.push(formatLabel(
         props.labels.fileTotalTooLarge,
