@@ -175,9 +175,14 @@
   `closeAssistantMessage` / 无响应超时都通过 `resolveTurnSession()` 按记录的 sessionId 找回原会话。
   所以切走之后，后端推来的 content/end 仍会写回发起这一轮的会话，而不是当前正在看的那个。
   会话列表中正在输出的那条会显示转圈标记（`streamingSessionIds`）。
-  「停止」优先停当前会话正在跑的那一轮；当前会话没有在跑的，就停最近发起的那一轮，提示写进被停的那个会话。
+  「停止」优先停当前会话正在跑的那一轮；当前会话没有在跑的，就停最近发起的那一轮，
+  请求本身会在被停的那个会话里记一条系统日志（"Stop request sent."）。
   发出去的报文是 `{ type: 'abort', sessionId, messageId }`（`sessionId` 顶层必填，
-  服务端按这个 sessionId 中止该会话并把它置回 IDLE）。
+  服务端按这个 sessionId 中止该会话；真正中止之后才回一条 `abort` 事件，前端按 `close` 的语义收尾）。
+  **界面提示**：被中止的那条 assistant 气泡按 `status: 'stopped'` 渲染——
+  有内容时正文照常显示、末尾缀一条「已停止生成」（`ChatMessage` 的 `.message-stopped`）；
+  没内容时气泡里只显示这一条，而不是原来那句「未收到回复，对话已结束」。
+  用户点停止和后端自己 abort 走的是同一条渲染路径，都能在消息上看到结果。
   注意：后端一轮只服务一个 `curr_message_id`，在 A 还在输出时又去 B 发消息，
   后端可能按「放弃上一轮」的语义把 A 那一轮 close 掉（前端会保守保留已流出的内容）。
 - **会话标题**：默认占位文案走 i18n（`untitledSession`，zh「新对话」/ en「New conversation」），
