@@ -1973,6 +1973,18 @@ body:has(.login-window-backdrop) {
   color: var(--faint);
 }
 
+/* 「已停止生成」：跟着被中止的那条消息走——有内容时缀在正文末尾，
+   没内容时它就是气泡里唯一的一行。 */
+.message-stopped {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 22px;
+  margin-top: 8px;
+  color: var(--faint);
+  font-size: 0.8rem;
+}
+
 .codex-fold {
   display: grid;
   gap: 7px;

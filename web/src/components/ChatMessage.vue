@@ -80,6 +80,17 @@ const endedWithoutResponse = computed(() => (
   !hasAssistantOutput.value
 ));
 
+/**
+ * 这一轮是被中止收尾的（用户点了停止，或后端自己 abort）。
+ * 有内容时内容照常渲染、末尾补一条「已停止生成」；没内容时把默认那句
+ * 「未收到回复，对话已结束」换成「已停止生成」——否则明明是用户自己停的，
+ * 界面却在说「未收到回复」。
+ */
+const wasStopped = computed(() => (
+  props.message.role === 'assistant' &&
+  props.message.status === 'stopped'
+));
+
 const renderedMarkdown = computed(() => {
   const markdown = props.message.content || '';
   if (props.message.status !== 'loading') {
@@ -468,7 +479,7 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
       </div>
 
       <div v-else-if="endedWithoutResponse" class="message-ended">
-        {{ labels.noResponseEnded }}
+        {{ wasStopped ? labels.generationStopped : labels.noResponseEnded }}
       </div>
 
       <div
@@ -499,6 +510,11 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
         </div>
       </div>
       <div v-else class="markdown-body plain">{{ message.content }}</div>
+
+      <!-- 有内容又被中止的：内容照常渲染，末尾补一条说明（没内容的情况上面那条已经显示了）。 -->
+      <div v-if="wasStopped && !endedWithoutResponse" class="message-stopped">
+        {{ labels.generationStopped }}
+      </div>
     </div>
 
     <div v-if="message.role === 'user'" class="user-message-actions">
