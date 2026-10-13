@@ -370,6 +370,11 @@ class go extends Factory
                             unset($this->utils->stream_buffers[$ext_id], $error);
                             break;
 
+                        case 'abort':
+                            $this->core->sendMessage($message['socket_id'], $payload);
+                            $this->utils->setStatus($payload['sessionId'], utils::STATUS_IDLE);
+                            break;
+
                         default:
                             $this->core->sendMessage($message['socket_id'], $payload);
                             break;
@@ -883,7 +888,6 @@ class go extends Factory
 
             if ('abort' === $data['type']) {
                 $this->openai->abort();
-                $this->utils->setStatus($data['sessionId'], utils::STATUS_IDLE);
                 $this->utils->debug('User: Abort signal sent. Cancelling task.', 'trace');
                 continue;
             }
