@@ -911,7 +911,10 @@ class go extends Factory
                 switch ($result['content']['act']) {
                     // Reset session memory
                     case 'reset':
+                        $this->openai->reload();
+                        $this->openai->getModels(true);
                         $this->utils->setStatus($data['sessionId'], utils::STATUS_IDLE);
+                        $this->core->context->messageOnSend($data['sessionId'], false);
                         $this->core->context->removeHistory($data['sessionId'], WORKER_MAIN);
                         break;
 
