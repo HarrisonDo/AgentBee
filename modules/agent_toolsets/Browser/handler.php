@@ -1509,7 +1509,7 @@ class handler extends Factory
                     ];
                 }
 
-                $saved_path = $this->saveScreenshot($msg_data['result']['data'], $payload_data['params']['save_path'], $agent_core);
+                $saved_path = $this->saveScreenshot($msg_data['result']['data'], $payload_data['params']['filename'], $agent_core);
 
                 if ('' === $saved_path) {
                     return [
