@@ -312,3 +312,50 @@ describe('记忆类工具的结果不收成产物', () => {
     expect(files.map((file) => file.path)).toEqual([path]);
   });
 });
+
+describe('裸文件名不算路径', () => {
+  it('只有 filename 的结果不生成入口（System-readImage 的形状）', () => {
+    const files = extractContentArtifacts({
+      content: '',
+      toolEvents: [toolResult(JSON.stringify({
+        status: 'success',
+        message: '[系统提醒] 图片已加载，按需使用',
+        filename: 'img_1.png',
+        mime_type: 'image/png',
+        width: 1206,
+        height: 1440,
+      }), 'System-readImage')],
+    });
+    expect(files).toEqual([]);
+  });
+
+  it('readDocx 的 file 是裸名，只有 images 里的绝对路径算数', () => {
+    const absolute = '/Users/me/ws/OfficeTemp/docx_read_x/img_1.png';
+    const files = extractContentArtifacts({
+      content: '',
+      toolEvents: [toolResult(JSON.stringify({
+        status: 'success',
+        file: 'Fact创刊人问卷.docx',
+        images: [{ path: absolute, width: 1206, height: 1440 }],
+        images_temp_dir: '/Users/me/ws/OfficeTemp/docx_read_x',
+      }), 'OfficeSuite-readDocx')],
+    });
+    expect(files.map((file) => file.path)).toEqual([absolute]);
+  });
+
+  it('正文里顺口提到的裸文件名也不给入口', () => {
+    const files = extractContentArtifacts({
+      content: '文件里只有 1 张图片：img_1.png。',
+      toolEvents: [],
+    });
+    expect(files).toEqual([]);
+  });
+
+  it('带目录的相对路径照旧收', () => {
+    const files = extractContentArtifacts({
+      content: '产物：workspace/reports/demo.html',
+      toolEvents: [],
+    });
+    expect(files.map((file) => file.name)).toEqual(['demo.html']);
+  });
+});

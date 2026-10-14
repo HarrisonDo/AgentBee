@@ -55,6 +55,19 @@ const TOOL_PATH_KEYS = new Set([
   'saved_files', 'files', 'file', 'filename', 'file_name',
 ]);
 
+/**
+ * 必须带目录部分，光一个文件名不算路径。
+ *
+ * `PATH_EXPRESSION` 的前缀是可选的，所以 `img_1.png` 这种**只有文件名**的字符串也能通过
+ * ——但它没有位置信息，拼出来的 URL 是垃圾（`file:///img_1.png`）。后端确实会发这种字段：
+ * `System-readImage` 的返回里只有 `filename`，`OfficeSuite-readDocx` 的 `file` 是
+ * `basename($path)`，两个都会被 `TOOL_PATH_KEYS` 收走，于是同一个文件多出一个点了没用的入口
+ * （正文里顺口提到的文件名同理）。
+ */
+function hasDirectoryPart(value: string): boolean {
+  return /[\\/]/.test(value);
+}
+
 /** 分数越高越适合自动打开。 */
 export function artifactRank(file: ChatFile): number {
   const mime = (file.mimeType || '').toLowerCase();
@@ -216,6 +229,7 @@ function collectPathArtifacts(text: string, found: ChatFile[]) {
     const value = match[0];
     const at = match.index ?? 0;
     if (isPartOfUrl(text, at)) continue;
+    if (!hasDirectoryPart(value)) continue;
     if (!PATH_EXPRESSION.test(value)) continue;
 
     const key = value.replace(/\\/g, '/').toLowerCase();
@@ -314,6 +328,7 @@ function walkToolData(value: unknown, found: ChatFile[], seen: Set<string>, dept
     if (!TOOL_PATH_KEYS.has(key.toLowerCase())) return;
 
     const candidate = entry.replace(/\\/g, '/').trim();
+    if (!hasDirectoryPart(candidate)) return;
     if (!PATH_EXPRESSION.test(candidate)) return;
 
     const dedupeKey = candidate.toLowerCase();
