@@ -282,11 +282,11 @@ class skills
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
-                        'save_path' => ['type' => 'string', 'description' => '保存路径（含文件名）'],
-                        'format'    => ['type' => 'string', 'enum' => ['jpeg', 'png'], 'default' => 'jpeg', 'description' => '图片格式'],
-                        'quality'   => ['type' => 'integer', 'default' => 80, 'minimum' => 1, 'maximum' => 100, 'description' => '画质（仅 jpeg）'],
+                        'filename' => ['type' => 'string', 'description' => '截屏文件名（含扩展名，不含路径）'],
+                        'format'   => ['type' => 'string', 'enum' => ['jpeg', 'png'], 'default' => 'jpeg', 'description' => '图片格式'],
+                        'quality'  => ['type' => 'integer', 'default' => 80, 'minimum' => 1, 'maximum' => 100, 'description' => '画质（仅 jpeg）'],
                     ],
-                    'required'   => ['save_path'],
+                    'required'   => ['filename'],
                 ],
             ],
         ],

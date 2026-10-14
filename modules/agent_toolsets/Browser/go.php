@@ -308,13 +308,13 @@ class go extends Factory
     }
 
     /**
-     * @param string $save_path
+     * @param string $filename
      * @param string $format
      * @param int    $quality
      *
      * @return array
      */
-    public function screenshot(string $save_path, string $format = 'jpeg', int $quality = 80): array
+    public function screenshot(string $filename, string $format = 'jpeg', int $quality = 80): array
     {
         if (!in_array($format, ['jpeg', 'png'], true)) {
             $format = 'jpeg';
@@ -323,7 +323,7 @@ class go extends Factory
         return [
             'async'   => false,
             'action'  => __FUNCTION__,
-            'params'  => ['save_path' => $save_path, 'format' => $format, 'quality' => $quality],
+            'params'  => ['filename' => $filename, 'format' => $format, 'quality' => $quality],
             'handler' => handler::class,
         ];
     }

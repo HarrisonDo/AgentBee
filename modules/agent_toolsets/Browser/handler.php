@@ -836,12 +836,12 @@ class handler extends Factory
 
     /**
      * @param string     $img_base64
-     * @param string     $file_path
+     * @param string     $filename
      * @param agent_core $agent_core
      *
      * @return string
      */
-    public function saveScreenshot(string $img_base64, string $file_path, agent_core $agent_core): string
+    public function saveScreenshot(string $img_base64, string $filename, agent_core $agent_core): string
     {
         $image_data = base64_decode($img_base64);
 
@@ -849,17 +849,21 @@ class handler extends Factory
             return '';
         }
 
-        $file_path = $agent_core->utils->securePath($file_path);
-        $dir_path  = dirname($file_path);
+        $save_path = rtrim($agent_core->utils->agent_config['workspace_path'], '/\\')
+            . DIRECTORY_SEPARATOR . 'BrowserScreenshot'
+            . DIRECTORY_SEPARATOR . date('Ymd');
 
-        if (!is_dir($dir_path) && !mkdir($dir_path, 0755, true)) {
+        if (!is_dir($save_path) && !mkdir($save_path, 0777, true)) {
             return '';
         }
 
-        $save = file_put_contents($file_path, $image_data);
+        $save_path .= DIRECTORY_SEPARATOR . $filename;
+        $save_path = $agent_core->utils->securePath($save_path);
 
-        unset($img_base64, $agent_core, $image_data, $dir_path);
-        return false !== $save ? $file_path : '';
+        $save = file_put_contents($save_path, $image_data);
+
+        unset($img_base64, $filename, $agent_core, $image_data);
+        return false !== $save ? $save_path : '';
     }
 
     /**
