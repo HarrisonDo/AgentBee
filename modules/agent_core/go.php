@@ -52,6 +52,8 @@ class go extends Factory
         $this->memory  = memory::new();
         $this->openai  = openai::new();
         $this->message = message::new();
+
+        $this->core->app->setLocale($this->utils->agent_config['agent_server']['locale'] ?? 'zh_CN.UTF-8');
     }
 
     /**

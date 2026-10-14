@@ -159,6 +159,7 @@ class config extends Factory
             'agent_server'   => [
                 'host'          => '127.0.0.1',
                 'port'          => 8686,
+                'locale'        => 'zh_CN.UTF-8',
                 'ws_token'      => '',
                 'ping_interval' => 60,
             ],
