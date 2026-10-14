@@ -20,7 +20,7 @@
 
 declare(strict_types = 1);
 
-const AGENT_VERSION = '2.0.0';
+const AGENT_VERSION = '2.0.22';
 const AGENT_NAME    = '蜂小秘 - AgentBee';
 
 const WORKER_MAIN  = 'Agent';
