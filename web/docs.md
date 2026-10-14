@@ -71,7 +71,11 @@
 - 正文里的 **```md 围栏块**，以及 ≥400 字且含 2 个以上标题的**长 Markdown 回复**
 - 正文里出现的**文件路径**（相对路径 / 绝对路径 / Windows 盘符）
 - 正文里的 **http(s) 文件链接**（如 `workspace_url` 拼出的 `https://…/pelican_bike.html`）
-- `tool_result` 里的 `saved_files` / `file_path` / `path` 等字段
+- `tool_result` 里的 `saved_files` / `file_path` / `path` 等字段 —— **但记忆类工具
+  （工具名 `Memory-*`）的结果不收**：它装的是历史（包括历史 tool_result 里的路径），
+  不是本轮的产物。不收的话 `Memory-read` 会把上一轮 docx 抽图的旧临时目录路径一起带出来，
+  和本轮新路径同名不同目录（`docxHandler` 每次读 docx 都新建 `docx_read_<uniqid>`），
+  聊天区就会冒出两个一模一样的「在侧栏预览文件 img_1.png」，其中一个还随时可能 404。
 
 实现位置：`src/utils/artifacts.ts`（识别与排序）、`src/utils/fileUrl.ts`（路径 → URL 解析）。
 预览入口只属于 **assistant 消息**的产物：用户自己贴的链接/路径不给按钮。

@@ -270,12 +270,26 @@ function fileNameFromUrl(url: string): string {
   }
 }
 
+/**
+ * 记忆类工具（工具名形如 `Memory-read`，见后端 `utils.php` 的
+ * `$toolset . '-' . $method`）。
+ *
+ * 它们的结果里装的是**历史**——包括历史消息里的 tool_result 和其中的文件路径，
+ * 而不是本轮的产物。收进来会冒出指向旧临时目录的入口：实测 `Memory-read` 会把
+ * 上一轮 docx 抽图的路径一起带出来，和本轮新路径同名不同目录，于是聊天区出现
+ * 两个一模一样的「在侧栏预览文件 img_1.png」，其中一个随时可能 404。
+ * 前端本来就是这个原则：`contentArtifacts` 不看 `isRemoteHistory` 的消息，
+ * `pickInlinePreviewArtifact` 也不收纯路径。
+ */
+const MEMORY_TOOL_NAME = /^memory[-_]/i;
+
 function collectToolEventArtifacts(toolEvents: ToolEvent[] | undefined, found: ChatFile[]) {
   if (!toolEvents?.length) return;
   const seen = new Set<string>();
 
   toolEvents.forEach((event) => {
     if (event.kind !== 'tool_result') return;
+    if (MEMORY_TOOL_NAME.test((event.name || '').trim())) return;
     const parsed = parseJsonMaybe(event.data);
     if (parsed === null) return;
     walkToolData(parsed, found, seen, 0);

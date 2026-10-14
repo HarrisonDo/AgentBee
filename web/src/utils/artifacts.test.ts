@@ -9,12 +9,12 @@ import {
   pickPrimaryArtifact,
 } from './artifacts';
 
-function toolResult(data: string): ToolEvent {
+function toolResult(data: string, name = 'ImageMaker'): ToolEvent {
   return {
     id: 'tool-1',
     kind: 'tool_result',
-    name: 'ImageMaker',
-    summary: 'ImageMaker',
+    name,
+    summary: name,
     data,
     time: '',
   };
@@ -280,5 +280,35 @@ describe('extractMessageArtifacts', () => {
       .toBeGreaterThan(artifactRank({ ...base, name: 'a.md', mimeType: 'text/markdown', content: '# a' }));
     expect(artifactRank({ ...base, name: 'a.md', mimeType: 'text/markdown', content: '# a' }))
       .toBeGreaterThan(artifactRank({ ...base, name: 'a.csv', mimeType: 'text/csv', content: 'a,b' }));
+  });
+});
+
+describe('记忆类工具的结果不收成产物', () => {
+  it('Memory-read 里翻出来的历史路径不算本轮的产物', () => {
+    const oldPath = '/Users/me/ws/OfficeTemp/docx_read_old/img_1.png';
+    const newPath = '/Users/me/ws/OfficeTemp/docx_read_new/img_1.png';
+    const files = extractContentArtifacts({
+      content: '',
+      toolEvents: [
+        // 记忆里存着上一轮 readDocx 的结果，file_path 是旧临时目录
+        toolResult(
+          JSON.stringify({ messages: [{ role: 'assistant', tool_result: { file_path: oldPath } }] }),
+          'Memory-read',
+        ),
+        // 本轮又读了一次，落在新临时目录，文件名相同
+        toolResult(JSON.stringify({ saved_files: [{ file_path: newPath }] }), 'OfficeSuite-readDocx'),
+      ],
+    });
+    // 只该剩本轮那一个，否则聊天区会出现两个同名的「在侧栏预览文件」
+    expect(files.map((file) => file.path)).toEqual([newPath]);
+  });
+
+  it('其它工具的结果照旧收', () => {
+    const path = '/Users/me/ws/OfficeTemp/img_1.png';
+    const files = extractContentArtifacts({
+      content: '',
+      toolEvents: [toolResult(JSON.stringify({ file_path: path }), 'System-readImage')],
+    });
+    expect(files.map((file) => file.path)).toEqual([path]);
   });
 });
