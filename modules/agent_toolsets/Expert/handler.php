@@ -266,14 +266,14 @@ class handler extends Factory
     {
         $worker_message = $agent_core->utils->getMarker(
                 WORKER_MAIN,
-                WORKER_MAIN,
+                AGENT_NAME,
                 'Assistant',
                 $worker_info['worker_name'],
                 1,
                 $session_id
             ) + [
                 'type' => 'content',
-                'data' => AGENT_NAME . ': ' . $payload_data['content']
+                'data' => $payload_data['content']
             ];
 
         $agent_core->core->sendMessage($worker_info['socket_id'], $worker_message);

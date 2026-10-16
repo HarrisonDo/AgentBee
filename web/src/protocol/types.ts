@@ -31,6 +31,7 @@ export interface ChatMessage {
   time: string;
   attachments?: ChatAttachment[];
   messageId?: string;
+  sender?: string;
   senderName?: string;
   senderRole?: string;
   WindowName?: string;
@@ -280,6 +281,7 @@ export interface ServerMessage {
   role?: string;
   sessionId?: string;
   messageId?: string;
+  sender?: string;
   workerName?: string;
   workerRole?: string;
   WindowName?: string;
