@@ -1128,6 +1128,9 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
 
   function applySenderMeta(message: ChatMessage, msg?: ServerMessage) {
     if (!msg) return;
+    if (typeof msg.sender === 'string' && msg.sender.trim()) {
+      message.sender = msg.sender.trim();
+    }
     if (typeof msg.workerName === 'string' && msg.workerName.trim()) {
       message.senderName = msg.workerName.trim();
     }
