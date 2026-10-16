@@ -2208,11 +2208,13 @@ body:has(.login-window-backdrop) {
   font-size: 0.78rem;
 }
 
-.markdown-body > :first-child {
+.markdown-body > :first-child,
+.markdown-body > :first-child > :first-child {
   margin-top: 0;
 }
 
-.markdown-body > :last-child {
+.markdown-body > :last-child,
+.markdown-body > :last-child > :last-child {
   margin-bottom: 0;
 }
 
