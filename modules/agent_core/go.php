@@ -546,7 +546,7 @@ class go extends Factory
                     if (isset($worker_info['proc_idx'])) {
                         for ($i = 0; $i < 3; ++$i) {
                             $remain_tokens = $this->core->getMaxTokens($payload['sender'], $payload['sessionId'], $payload['workerName'], $llm_params);
-                            $this->utils->debug('System: Token remains ' . $remain_tokens . ' for #' . $payload['sessionId'] . '.', 'trace');
+                            $this->utils->debug($payload['sender'] . ': Token remains ' . $remain_tokens . ' for #' . $payload['sessionId'] . '.', 'trace');
 
                             // Skip when token > 1024
                             if (1024 < $remain_tokens) {
