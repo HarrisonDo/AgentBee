@@ -27,7 +27,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'invite',
-                'description' => '邀请协作者共同处理任务（专家顾问、相关人士、普通人员等）。须提供完整任务背景，对方回复“已就绪”后交流，用于辩论/协作。异步进行，按需沟通至完成。返回{message}。',
+                'description' => '邀请协作者进行一对一协作（专家顾问、相关人士、普通人员等）。须提供完整任务背景，对方回复“已就绪”后开始交流。异步沟通至任务完成。返回{message}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
