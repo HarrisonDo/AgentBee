@@ -56,9 +56,8 @@ class stream extends Factory
 
         $stream_data = json_encode(
             [
-                'type'      => $message_type,
-                'payload'   => $payload_data,
-                'socket_id' => $payload_metadata['socket_id'],
+                'type'    => $message_type,
+                'payload' => $payload_data
             ], JSON_FORMAT
         );
 

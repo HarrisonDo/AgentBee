@@ -347,7 +347,6 @@ class completions extends stream
                             'content' => $exec_result['call_result'],
                         ];
                     } else {
-                        $result_data['socket_id']    = $metadata['socket_id'];
                         $result_data['session_id']   = $metadata['sessionId'];
                         $result_data['process_name'] = $metadata['workerName'];
 

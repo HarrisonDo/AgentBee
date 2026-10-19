@@ -37,12 +37,8 @@ final class core extends Factory
     public context   $context;
     public SocketMgr $socketMgr;
 
-    public int $flush_time_at  = 0;
-    public int $flush_interval = 30;
-
     public array $llm_tools       = [];
     public array $agent_tools     = [];
-    public array $flush_buffers   = [];
     public array $curr_message_id = [];
 
     /**
@@ -199,74 +195,46 @@ final class core extends Factory
     }
 
     /**
-     * @param string $socket_id
-     * @param array  $message
+     * @param array $message
+     * @param array $to_sockets
      *
      * @return void
      * @throws \Random\RandomException
      * @throws \ReflectionException
      */
-    public function sendMessage(string $socket_id, array $message): void
+    public function sendMessage(array $message, array $to_sockets = []): void
     {
         if (!isset($message['type'])) {
             $this->utils->debug('Missing message type: ' . json_encode($message, JSON_FORMAT), 'trace');
             return;
         }
 
-        if (!isset($this->utils->socket_session[$socket_id]) || 'ready' !== $this->utils->socket_session[$socket_id]) {
+        if ([] === $to_sockets) {
+            $to_sockets = $this->utils->socket_session;
+        }
+
+        if ([] === $to_sockets) {
             $this->utils->message_buffers[] = $message;
+            $this->utils->debug('No client online, message queued in buffer for next delivery.', 'debug');
             return;
         }
 
-        $microtime = (int)(microtime(true) * 1000000);
+        $buffers = ['create_id' => (int)(microtime(true) * 1000000)] + $message;
 
-        if ([] !== $this->flush_buffers) {
-            if (
-                $microtime - $this->flush_time_at > $this->flush_interval * 1000
-                || !isset($message['messageId'])
-                || $message['type'] !== $this->flush_buffers['type']
-                || $message['messageId'] !== $this->flush_buffers['messageId']
-            ) {
-                $buffers = ['create_id' => $microtime] + $this->flush_buffers;
-                $success = $this->socketMgr->sendMessage($socket_id, $this->socketMgr->wsEncode(json_encode($buffers, JSON_FORMAT)));
+        foreach ($to_sockets as $socket_id => $socket_status) {
+            if ('ready' !== $socket_status) {
+                continue;
+            }
 
-                if (!$success) {
-                    $this->utils->message_buffers[] = $this->flush_buffers;
-                } elseif (isset($message['sessionId']) && isset($this->curr_message_id[$message['sessionId']])) {
-                    $this->sendClose($socket_id, $message['sessionId']);
-                    $this->curr_message_id[$message['sessionId']] = null;
-                }
-
-                $this->flush_time_at = $microtime;
-                $this->flush_buffers = [];
+            if (!$this->socketMgr->sendMessage($socket_id, $this->socketMgr->wsEncode(json_encode($buffers, JSON_FORMAT)))) {
+                $this->utils->debug('Failed to send message to #' . $socket_id, 'debug');
             }
         }
 
-        if (in_array($message['type'], ['content', 'think'], true)) {
-            if ([] !== $this->flush_buffers) {
-                $this->flush_buffers['data'] .= $message['data'];
-            } else {
-                $this->flush_buffers = $message;
-            }
-
-            return;
-        }
-
-        $buffers = ['create_id' => $microtime] + $message;
-        $success = $this->socketMgr->sendMessage($socket_id, $this->socketMgr->wsEncode(json_encode($buffers, JSON_FORMAT)));
-
-        if (!$success) {
-            $this->utils->message_buffers[] = $message;
-        } elseif (isset($message['sessionId']) && isset($this->curr_message_id[$message['sessionId']])) {
-            $this->sendClose($socket_id, $message['sessionId']);
-            $this->curr_message_id[$message['sessionId']] = null;
-        }
-
-        unset($socket_id, $message, $microtime, $buffers, $success);
+        unset($message, $to_sockets, $buffers, $socket_id, $socket_status);
     }
 
     /**
-     * @param string $socket_id
      * @param array  $message
      * @param string $data_url
      * @param string $image_prompt
@@ -275,13 +243,13 @@ final class core extends Factory
      * @throws \Random\RandomException
      * @throws \ReflectionException
      */
-    public function sendImageMessage(string $socket_id, array $message, string $data_url, string $image_prompt = ''): void
+    public function sendImageMessage(array $message, string $data_url, string $image_prompt = ''): void
     {
         $message['type']   = 'image';
         $message['data']   = $data_url;
         $message['prompt'] = $image_prompt;
 
-        $this->sendMessage($socket_id, $message);
-        unset($socket_id, $message, $data_url, $image_prompt);
+        $this->sendMessage($message);
+        unset($message, $data_url, $image_prompt);
     }
 }

@@ -42,14 +42,13 @@ class message extends Factory
     }
 
     /**
-     * @param string $socket_id
-     * @param array  $data_content
+     * @param array $data_content
      *
      * @return array|string[]
      * @throws \ReflectionException
      * @throws \Exception
      */
-    public function process_setting(string $socket_id, array $data_content): array
+    public function process_setting(array $data_content): array
     {
         $act = $data_content['act'] ?? 'unknown';
 
@@ -101,18 +100,17 @@ class message extends Factory
             'type'     => 'setting'
         ];
 
-        unset($socket_id, $data_content, $act, $content);
+        unset($data_content, $act, $content);
         return $result;
     }
 
     /**
-     * @param string $socket_id
-     * @param array  $data_content
+     * @param array $data_content
      *
      * @return array
      * @throws \ReflectionException
      */
-    public function process_system(string $socket_id, array $data_content): array
+    public function process_system(array $data_content): array
     {
         $act = $data_content['act'] ?? 'unknown';
 
@@ -151,19 +149,18 @@ class message extends Factory
             'type'     => 'system'
         ];
 
-        unset($socket_id, $data_content, $act, $content);
+        unset($data_content, $act, $content);
         return $result;
     }
 
     /**
-     * @param string $socket_id
      * @param array  $data_content
      * @param string $session_id
      *
      * @return array
      * @throws \ReflectionException
      */
-    public function process_memory(string $socket_id, array $data_content, string $session_id): array
+    public function process_memory(array $data_content, string $session_id): array
     {
         $act = $data_content['act'] ?? 'unknown';
 
@@ -225,46 +222,7 @@ class message extends Factory
             'type'     => 'memory'
         ];
 
-        unset($socket_id, $data_content, $session_id, $act, $content);
-        return $result;
-    }
-
-    /**
-     * Normal text chat
-     *
-     * @param string $socket_id
-     * @param array  $data_content
-     *
-     * @return array
-     */
-    public function process_text(string $socket_id, array $data_content): array
-    {
-        $text = trim($data_content['text'] ?? '');
-
-        if ('' !== $text) {
-            if ('/reset' !== $text) {
-                $result = [
-                    'need_llm' => true,
-                    'content'  => [['type' => 'text', 'content' => $text]],
-                    'saves'    => [$text],
-                    'type'     => 'chat'
-                ];
-            } else {
-                $result = [
-                    'need_llm' => false,
-                    'content'  => ['status' => 'success', 'act' => 'reset', 'content' => '好了，上下文已重置，我们继续吧。'],
-                    'type'     => 'message'
-                ];
-            }
-        } else {
-            $result = [
-                'need_llm' => false,
-                'content'  => ['status' => 'success', 'act' => 'idle', 'content' => '我在呢。有需要就告诉我，没事也可以聊两句。'],
-                'type'     => 'message'
-            ];
-        }
-
-        unset($socket_id, $data_content, $text);
+        unset($data_content, $session_id, $act, $content);
         return $result;
     }
 
@@ -276,12 +234,11 @@ class message extends Factory
      * - 'file' (array): list of text files, each as:
      *      ['filename' => ..., 'mimeType' => ..., 'content' => ...] (base64 content)
      *
-     * @param string $socket_id
-     * @param array  $data_content
+     * @param array $data_content
      *
      * @return array Associative array with 'need_llm' (bool), 'content' (multimodal content array) and others.
      */
-    public function process_chat(string $socket_id, array $data_content): array
+    public function process_chat(array $data_content): array
     {
         $content = [];
         $errors  = [];
@@ -429,8 +386,40 @@ class message extends Factory
             ];
         }
 
-        unset($socket_id, $data_content, $content, $errors, $saves, $files, $reset, $data, $text, $binary, $data_url, $detected, $file_text, $upload_path, $file_path);
+        unset($data_content, $content, $errors, $saves, $files, $reset, $data, $text, $binary, $data_url, $detected, $file_text, $upload_path, $file_path);
         return $result;
+    }
+
+    /**
+     * @param array $data_content
+     * @param array $msg_marker
+     *
+     * @return array
+     */
+    public function buildFeedback(array $data_content, array $msg_marker): array
+    {
+        $msg_list = [];
+
+        foreach ($data_content as $data) {
+            if (!isset($data['type']) || 'text' !== $data['type']) {
+                continue;
+            }
+
+            $text = trim($data['text'] ?? '');
+
+            if ('' === $text || '/reset' === $text) {
+                continue;
+            }
+
+            $msg_list[] = $text;
+        }
+
+        $message = [] !== $msg_list
+            ? $msg_marker + ['type' => 'feedback', 'data' => implode("\n", $msg_list)]
+            : [];
+
+        unset($data_content, $msg_marker, $msg_list, $data, $text);
+        return $message;
     }
 
     /**

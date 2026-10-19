@@ -285,7 +285,6 @@ class go extends Factory
 
         $this->initChild();
 
-        $socket_id = '';
         $context   = context::new();
         $llm_tools = $this->core->llm_tools;
 
@@ -312,18 +311,13 @@ class go extends Factory
 
             $this->libOpenAI->setModelParams($talk_data['llm_params'] + $llm_tools);
 
-            switch ($talk_data['cmd']) {
-                case 'start':
-                    $socket_id = $talk_data['metadata']['socket_id'];
-
-                case 'talk':
-                    $this->processor->talk(
-                        $talk_data['metadata'] + ['socket_id' => $socket_id],
-                        $talk_data['system'],
-                        $talk_data['history'],
-                        $this->libOpenAI
-                    );
-                    break;
+            if ('talk' === $talk_data['cmd']) {
+                $this->processor->talk(
+                    $talk_data['metadata'],
+                    $talk_data['system'],
+                    $talk_data['history'],
+                    $this->libOpenAI
+                );
             }
         }
     }

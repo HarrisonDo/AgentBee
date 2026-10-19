@@ -91,7 +91,6 @@ class handler extends Factory
             );
 
             $agent_core->core->sendImageMessage(
-                $payload_data['socket_id'],
                 $message,
                 $data_url,
                 $filename
