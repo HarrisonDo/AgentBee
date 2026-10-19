@@ -227,44 +227,6 @@ class message extends Factory
     }
 
     /**
-     * Normal text chat
-     *
-     * @param array $data_content
-     *
-     * @return array
-     */
-    public function process_text(array $data_content): array
-    {
-        $text = trim($data_content['text'] ?? '');
-
-        if ('' !== $text) {
-            if ('/reset' !== $text) {
-                $result = [
-                    'need_llm' => true,
-                    'content'  => [['type' => 'text', 'content' => $text]],
-                    'saves'    => [$text],
-                    'type'     => 'chat'
-                ];
-            } else {
-                $result = [
-                    'need_llm' => false,
-                    'content'  => ['status' => 'success', 'act' => 'reset', 'content' => '好了，上下文已重置，我们继续吧。'],
-                    'type'     => 'message'
-                ];
-            }
-        } else {
-            $result = [
-                'need_llm' => false,
-                'content'  => ['status' => 'success', 'act' => 'idle', 'content' => '我在呢。有需要就告诉我，没事也可以聊两句。'],
-                'type'     => 'message'
-            ];
-        }
-
-        unset($data_content, $text);
-        return $result;
-    }
-
-    /**
      * Multimodal content chat
      *
      * Expected input $data structure:
@@ -426,6 +388,38 @@ class message extends Factory
 
         unset($data_content, $content, $errors, $saves, $files, $reset, $data, $text, $binary, $data_url, $detected, $file_text, $upload_path, $file_path);
         return $result;
+    }
+
+    /**
+     * @param array $data_content
+     * @param array $msg_marker
+     *
+     * @return array
+     */
+    public function buildFeedback(array $data_content, array $msg_marker): array
+    {
+        $msg_list = [];
+
+        foreach ($data_content as $data) {
+            if (!isset($data['type']) || 'text' !== $data['type']) {
+                continue;
+            }
+
+            $text = trim($data['text'] ?? '');
+
+            if ('' === $text || '/reset' === $text) {
+                continue;
+            }
+
+            $msg_list[] = $text;
+        }
+
+        $message = [] !== $msg_list
+            ? $msg_marker + ['type' => 'feedback', 'data' => implode("\n", $msg_list)]
+            : [];
+
+        unset($data_content, $msg_marker, $msg_list, $data, $text);
+        return $message;
     }
 
     /**

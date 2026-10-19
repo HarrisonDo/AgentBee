@@ -871,14 +871,16 @@ class go extends Factory
         $last_key = array_key_last($user_msg);
         $main_pid = $this->utils->getMainIDX();
 
-        foreach ($user_msg as $key => $line) {
+        $other_clients = array_diff_key($this->utils->socket_session, [$socket_id => 'ready']);
+
+        foreach ($user_msg as $line) {
             $data = json_decode($line, true);
 
             if (!is_array($data) || !isset($data['type'])) {
                 continue;
             }
 
-            if ('abort' === $data['type']) {
+            if ('/abort' === $data['type']) {
                 $this->openai->abort();
                 $this->utils->debug('User: Abort signal sent. Cancelling task.', 'trace');
                 continue;
@@ -889,6 +891,21 @@ class go extends Factory
             if (!method_exists($this->message, $type_method)) {
                 $this->utils->debug('User: Incorrect message type: ' . $data['type'], 'debug');
                 continue;
+            }
+
+            // broadcast input message to all online clients
+            if ([] !== $other_clients && isset($data['sessionId']) && '' !== $data['sessionId']) {
+                $marker = $this->utils->getMarker(
+                    WORKER_USER,
+                    WORKER_MAIN,
+                    WORKER_USER,
+                    WORKER_MAIN,
+                    0,
+                    $data['sessionId']
+                );
+
+                $this->core->sendMessage($this->message->buildFeedback($data['content'], $marker), $other_clients);
+                unset($marker);
             }
 
             if ('memory' === $data['type']) {
@@ -1009,7 +1026,7 @@ class go extends Factory
             );
         }
 
-        unset($socket_id, $message, $is_binary, $curr_msg, $user_msg, $last_key, $main_pid, $key, $line, $data, $type_method, $result, $session_id, $message_list, $message_metadata);
+        unset($socket_id, $message, $is_binary, $curr_msg, $user_msg, $last_key, $main_pid, $other_clients, $line, $data, $type_method, $result, $session_id, $message_list, $message_metadata);
     }
 
     /**

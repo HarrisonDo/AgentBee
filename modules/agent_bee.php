@@ -23,6 +23,7 @@ declare(strict_types = 1);
 const AGENT_VERSION = '2.0.22';
 const AGENT_NAME    = '蜂小秘 - AgentBee';
 
+const WORKER_USER  = 'User';
 const WORKER_MAIN  = 'Agent';
 const WORKER_CHILD = 'Expert';
 
