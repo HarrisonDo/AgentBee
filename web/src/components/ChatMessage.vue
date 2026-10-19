@@ -60,6 +60,12 @@ onUpdated(() => {
   });
 });
 
+const isMainProcessMessage = computed(() => (
+    props.message.isSubTalk === 1 &&
+    props.message.sender === 'Agent' &&
+    props.message.role === 'assistant'
+));
+
 const hasAssistantOutput = computed(() => (
   Boolean(props.message.content?.trim()) ||
   Boolean(props.message.think?.trim()) ||
@@ -400,7 +406,7 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
 </script>
 
 <template>
-  <article class="message" :class="[message.role, { 'remote-history': message.isRemoteHistory }]">
+  <article class="message" :class="[message.role, { 'remote-history': message.isRemoteHistory, 'sub-talk': message.isSubTalk === 1, 'main-process': isMainProcessMessage }]">
     <div v-if="message.role === 'system'" class="system-log">
       <SquareTerminal :size="14" aria-hidden="true" />
       <span class="system-log-text">{{ message.content }}</span>

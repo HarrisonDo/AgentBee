@@ -289,6 +289,8 @@ class go extends Factory
 
             $payload      = $message['payload'];
             $payload_type = $payload['type'];
+            $worker_info  = $this->utils->getChildWorker($payload['sender'], $payload['workerName']);
+            $llm_params   = $worker_info['llm_params'] ?? [];
 
             $this->utils->debug($payload['workerName'] . ': ' . $message['type'] . '->' . $payload_type, 'debug');
 
@@ -303,7 +305,6 @@ class go extends Factory
 
                     switch ($payload_type) {
                         case 'length':
-                            $llm_params    = $this->utils->getChildWorker($payload['sender'], $payload['workerName'], 'llm_params');
                             $tool_count    = $this->core->context->countHistory($payload['sessionId'], $payload['workerName'], 'tool');
                             $history_count = $this->core->context->countHistory($payload['sessionId'], $payload['workerName']);
 
@@ -336,8 +337,6 @@ class go extends Factory
                                     $metadata + ['socket_id' => $payload['socket_id']]
                                 );
                             } else {
-                                $worker_info = $this->utils->getChildWorker(WORKER_CHILD, $payload['workerName']);
-
                                 if (isset($worker_info['proc_idx'])) {
                                     $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'busy');
 
@@ -353,7 +352,7 @@ class go extends Factory
                                 }
                             }
 
-                            unset($llm_params, $tool_count, $history_count);
+                            unset($tool_count, $history_count);
                             break;
 
                         case 'error':
@@ -543,45 +542,86 @@ class go extends Factory
                     }
 
                     $new_messages = $this->core->context->refreshHistory($payload['sessionId'], $payload['workerName']);
-                    $llm_params   = $this->utils->getChildWorker($payload['sender'], $payload['workerName'], 'llm_params');
 
-                    for ($i = 0; $i < 3; ++$i) {
-                        $remain_tokens = $this->core->getMaxTokens($payload['sender'], $payload['sessionId'], $payload['workerName'], $llm_params);
-                        $this->utils->debug('System: Token remains ' . $remain_tokens . ' for #' . $payload['sessionId'] . '.', 'trace');
+                    if (isset($worker_info['proc_idx'])) {
+                        for ($i = 0; $i < 3; ++$i) {
+                            $remain_tokens = $this->core->getMaxTokens($payload['sender'], $payload['sessionId'], $payload['workerName'], $llm_params);
+                            $this->utils->debug($payload['sender'] . ': Token remains ' . $remain_tokens . ' for #' . $payload['sessionId'] . '.', 'trace');
 
-                        if (256 < $remain_tokens) {
-                            $this->keep_pairs = 2;
-                            break;
+                            // Skip when token > 1024
+                            if (1024 < $remain_tokens) {
+                                if (WORKER_MAIN === $payload['sender']) {
+                                    $this->ctx_warning = false;
+                                    $this->keep_pairs  = 2;
+                                }
+
+                                break;
+                            }
+
+                            // Send notice when token > 256
+                            if (256 < $remain_tokens) {
+                                $this->utils->debug($payload['sender'] . ': Remain tokens too low (' . $remain_tokens . '/' . $this->utils->agent_config['agent_llm']['model_ctx'] . ')', 'trace');
+
+                                $content = WORKER_MAIN === $payload['sender']
+                                    ? '[系统提醒] 上下文已达上限。请：①调用记忆工具保存当前任务进度与关键状态 → ②调用清理工具清理上下文 → ③继续执行原有任务，清理过程不汇报。'
+                                    : '[专家] `' . $payload['workerName'] . '` | ' . $payload['workerRole'] . '：上下文已满。请：①生成任务摘要（目标+进度+待办） → ②结束并重新邀请`' . $payload['workerName'] . '` → ③提供任务摘要，继续原有任务，邀请过程不汇报。';
+
+                                $main_notice  = (WORKER_MAIN === $payload['sender'] && !$this->ctx_warning);
+                                $child_notice = WORKER_CHILD === $payload['sender'];
+
+                                if ($main_notice || $child_notice) {
+                                    if ($main_notice) {
+                                        $this->ctx_warning = true;
+                                    }
+
+                                    $this->core->context->addMessageQueue(
+                                        $payload['sessionId'],
+                                        WORKER_MAIN,
+                                        [
+                                            'type'    => 'text',
+                                            'content' => $content
+                                        ]
+                                    );
+                                }
+
+                                break;
+                            }
+
+                            // Force clean history context when token < 256
+                            $history_count = $this->core->context->countHistory($payload['sessionId'], $payload['workerName']);
+                            $keep_count    = ceil($history_count * ($this->keep_pairs + 2) / 10);
+                            $this->core->context->cleanHistory($payload['sessionId'], $payload['workerName'], $keep_count, $this->keep_pairs);
+                            $now_count = $this->core->context->countHistory($payload['sessionId'], $payload['workerName']);
+
+                            $this->utils->debug($payload['sender'] . ': Context truncated from ' . $history_count . ' to ' . $now_count . ' due to token overflow.', 'trace');
+
+                            if (2 === $this->keep_pairs) {
+                                $this->core->sendMessage(
+                                    $payload['socket_id'],
+                                    [
+                                        'type'    => 'error',
+                                        'message' => '抱歉，因上下文内容过长（当前模型设置: ' . ($this->utils->agent_config['agent_llm']['model_ctx'] ?? 131072) . '），系统已自动截断。咱两继续，别担心，我会跟上的。'
+                                    ]
+                                );
+
+                                $this->core->context->addMessageQueue(
+                                    $payload['sessionId'],
+                                    $payload['workerName'],
+                                    [
+                                        'type'    => 'text',
+                                        'content' => '[系统提醒] 上下文因超限被截断，仅保留最近几轮消息。忽略用户请求，停止调用工具（可能导致超限），并向用户说明。如有必要，请自行从记忆中恢复之前的内容，无需告知用户。'
+                                    ]
+                                );
+                            }
+
+                            --$this->keep_pairs;
                         }
 
-                        $this->core->context->cleanHistory($payload['sessionId'], $payload['workerName'], 10, $this->keep_pairs);
-                        $this->utils->debug('System: Context truncated due to token overflow.', 'trace');
+                        $llm_params['max_tokens'] = max(100, $remain_tokens);
+                        $this->utils->setChildWorker($payload['sender'], $payload['workerName'], 'llm_params', $llm_params);
 
-                        if (2 === $this->keep_pairs) {
-                            $this->core->sendMessage(
-                                $payload['socket_id'],
-                                [
-                                    'type'    => 'error',
-                                    'message' => '抱歉，因上下文内容过长（当前模型设置: ' . ($this->utils->agent_config['agent_llm']['model_ctx'] ?? 131072) . '），系统已自动截断。咱两继续，别担心，我会跟上的。'
-                                ]
-                            );
-
-                            $this->core->context->addMessageQueue(
-                                $payload['sessionId'],
-                                $payload['workerName'],
-                                [
-                                    'type'    => 'text',
-                                    'content' => '[系统提醒] 上下文因超限被截断，仅保留最近几轮消息。忽略用户请求，停止调用工具（可能导致超限），并向用户说明。如有必要，请自行从记忆中恢复之前的内容，无需告知用户。'
-                                ]
-                            );
-                        }
-
-                        --$this->keep_pairs;
+                        unset($i, $remain_tokens, $content, $main_notice, $child_notice, $history_count, $keep_count, $now_count);
                     }
-
-                    $llm_params['max_tokens'] = max(100, $remain_tokens);
-
-                    $this->utils->setChildWorker($payload['sender'], $payload['workerName'], 'llm_params', $llm_params);
 
                     switch ($payload_type) {
                         case 'tools':
@@ -590,8 +630,6 @@ class go extends Factory
                             if (WORKER_MAIN === $payload['sender']) {
                                 $worker_idx = $this->utils->getMainIDX();
                             } else {
-                                $worker_info = $this->utils->getChildWorker(WORKER_CHILD, $payload['workerName']);
-
                                 if ([] === $worker_info) {
                                     $this->utils->debug($payload['workerName'] . ': Worker already closed.', 'trace');
                                     break;
@@ -599,8 +637,6 @@ class go extends Factory
 
                                 $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'calling_tools');
                                 $worker_idx = $worker_info['proc_idx'];
-
-                                unset($worker_info);
                             }
 
                             $metadata = $this->utils->getMarker(
@@ -648,35 +684,6 @@ class go extends Factory
                                         'talk',
                                         $metadata + ['socket_id' => $payload['socket_id']]
                                     );
-                                } else {
-                                    if ($remain_tokens > ($this->utils->agent_config['agent_llm']['params']['max_tokens'] ?? 12288)) {
-                                        $this->ctx_warning = false;
-                                        break;
-                                    } elseif ($remain_tokens > 8192) {
-                                        if (!$this->ctx_warning) {
-                                            $this->ctx_warning = true;
-
-                                            $this->utils->debug($payload['sender'] . ': Completion tokens too low (' . $remain_tokens . '/' . $this->utils->agent_config['agent_llm']['model_ctx'] . ')', 'trace');
-
-                                            $this->core->context->addMessageQueue(
-                                                $payload['sessionId'],
-                                                WORKER_MAIN,
-                                                [
-                                                    'type'    => 'text',
-                                                    'content' => '[系统提醒] 上下文已达上限。请：①调用记忆工具保存当前任务进度与关键状态 → ②调用清理工具清理上下文 → ③继续执行原有任务，清理过程不汇报。'
-                                                ]
-                                            );
-                                        }
-                                    } else {
-                                        $msg_count = $this->core->context->countHistory($payload['sessionId'], WORKER_MAIN);
-                                        $keep_len  = ceil($msg_count / 5);
-                                        $cleaned   = $this->core->context->cleanHistory($payload['sessionId'], WORKER_MAIN, $keep_len * 2, $keep_len);
-
-                                        $this->utils->debug('System: Context truncated (' . $msg_count . ' -> ' . $cleaned['current_count'] . ')', 'trace');
-
-                                        $this->ctx_warning = false;
-                                        unset($msg_count, $keep_len, $cleaned);
-                                    }
                                 }
                             } else {
                                 if ('' !== $payload['data']) {
@@ -689,8 +696,6 @@ class go extends Factory
                                         ]
                                     );
                                 }
-
-                                $worker_info = $this->utils->getChildWorker(WORKER_CHILD, $payload['workerName']);
 
                                 if (isset($worker_info['proc_idx'])) {
                                     $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'last_talk', date('Y-m-d H:i:s'));
@@ -717,28 +722,14 @@ class go extends Factory
                                             'talk',
                                             $metadata + ['socket_id' => $payload['socket_id']]
                                         );
-                                    } elseif ($remain_tokens < 8192) {
-                                        $this->utils->debug('Expert: ' . $payload['workerName'] . ' completion tokens too low (' . $remain_tokens . '/' . $this->utils->agent_config['agent_llm']['model_ctx'] . ')', 'trace');
-
-                                        $this->core->context->addMessageQueue(
-                                            $payload['sessionId'],
-                                            WORKER_MAIN,
-                                            [
-                                                'type'    => 'text',
-                                                'content' => '[专家] `' . $payload['workerName'] . '` | ' . $payload['workerRole'] . '：上下文已满。请：①生成任务摘要（目标+进度+待办） → ②结束并重新邀请`' . $payload['workerName'] . '` → ③提供任务摘要，继续原有任务，邀请过程不汇报。'
-                                            ]
-                                        );
                                     }
                                 }
-
-                                unset($worker_info);
                             }
 
-                            unset($remain_tokens);
                             break;
                     }
 
-                    unset($new_messages, $llm_params, $i, $remain_tokens);
+                    unset($new_messages);
                     break;
             }
         }
@@ -747,7 +738,7 @@ class go extends Factory
             unset($this->utils->stream_buffers[$ext_id]);
         }
 
-        unset($ext_id, $context, $stdout_stream, $data_chunk, $buffer, $line_pos, $line, $message, $payload, $payload_type, $metadata);
+        unset($ext_id, $context, $stdout_stream, $data_chunk, $buffer, $line_pos, $line, $message, $payload, $payload_type, $worker_info, $llm_params, $metadata);
     }
 
     /**

@@ -21,6 +21,7 @@
   --warn-soft: rgba(216, 162, 76, 0.13);
   --bubble-user: #356fd5;
   --bubble-assistant: #20242c;
+  --bubble-main-process: #302747;
   --shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
 }
 
@@ -47,6 +48,7 @@
   --warn-soft: rgba(166, 109, 24, 0.12);
   --bubble-user: #326bdd;
   --bubble-assistant: #ffffff;
+  --bubble-main-process: #eee8f7;
   --shadow: 0 16px 38px rgba(29, 41, 57, 0.08);
 }
 
@@ -1626,7 +1628,8 @@ body:has(.login-window-backdrop) {
   min-width: 0;
 }
 
-.message.user {
+.message.user,
+.message.assistant.main-process {
   align-self: flex-end;
 }
 
@@ -1755,7 +1758,8 @@ body:has(.login-window-backdrop) {
   transition: opacity 0.16s ease;
 }
 
-.message.user .history-message-actions {
+.message.user .history-message-actions,
+.message.main-process .history-message-actions {
   justify-content: flex-end;
 }
 
@@ -1843,6 +1847,10 @@ body:has(.login-window-backdrop) {
 
 .assistant .bubble {
   background: var(--bubble-assistant);
+}
+
+.assistant.main-process .bubble {
+  background: var(--bubble-main-process);
 }
 
 .error .bubble {
@@ -2200,11 +2208,13 @@ body:has(.login-window-backdrop) {
   font-size: 0.78rem;
 }
 
-.markdown-body > :first-child {
+.markdown-body > :first-child,
+.markdown-body > :first-child > :first-child {
   margin-top: 0;
 }
 
-.markdown-body > :last-child {
+.markdown-body > :last-child,
+.markdown-body > :last-child > :last-child {
   margin-bottom: 0;
 }
 
@@ -2281,6 +2291,14 @@ body:has(.login-window-backdrop) {
   padding: 0.12rem 0.32rem;
   background: color-mix(in srgb, var(--surface-raised) 78%, transparent);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.assistant:not(.main-process) .markdown-body code:not(pre code) {
+  background: color-mix(in srgb, var(--text) 10%, var(--bubble-assistant));
+}
+
+.assistant.main-process .markdown-body code:not(pre code) {
+  background: color-mix(in srgb, var(--text) 10%, var(--bubble-main-process));
 }
 
 .message-files {
@@ -2529,6 +2547,19 @@ body:has(.login-window-backdrop) {
 
 .markdown-table-scroll tbody tr:nth-child(even) {
   background: color-mix(in srgb, var(--surface-soft) 50%, transparent);
+}
+
+.assistant.main-process .markdown-table-scroll {
+  --line: color-mix(in srgb, var(--text) 16%, var(--bubble-main-process));
+  --line-soft: color-mix(in srgb, var(--text) 10%, var(--bubble-main-process));
+}
+
+.assistant.main-process .markdown-table-scroll th {
+  background: color-mix(in srgb, var(--text) 8%, var(--bubble-main-process));
+}
+
+.assistant.main-process .markdown-table-scroll tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--text) 3%, var(--bubble-main-process));
 }
 
 .markdown-table-scroll tr:last-child td {
