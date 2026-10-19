@@ -300,7 +300,7 @@ class go extends Factory
                         $this->utils->setStatus($payload['sessionId'], utils::STATUS_WAIT);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'streaming');
-                        $this->utils->debug('Expert: ' . $payload['workerName'] . ' working on streaming', 'debug');
+                        $this->utils->debug('Collaborator: ' . $payload['workerName'] . ' working on streaming', 'debug');
                     }
 
                     switch ($payload_type) {
@@ -538,7 +538,7 @@ class go extends Factory
                         $this->utils->setStatus($payload['sessionId'], utils::STATUS_IDLE);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
-                        $this->utils->debug('Expert: ' . $payload['workerName'] . ' reply completed, ready.', 'trace');
+                        $this->utils->debug('Collaborator: ' . $payload['workerName'] . ' reply completed, ready.', 'trace');
                     }
 
                     $new_messages = $this->core->context->refreshHistory($payload['sessionId'], $payload['workerName']);
@@ -564,7 +564,7 @@ class go extends Factory
 
                                 $content = WORKER_MAIN === $payload['sender']
                                     ? '[系统提醒] 上下文已达上限。请：①调用记忆工具保存当前任务进度与关键状态 → ②调用清理工具清理上下文 → ③继续执行原有任务，清理过程不汇报。'
-                                    : '[专家] `' . $payload['workerName'] . '` | ' . $payload['workerRole'] . '：上下文已满。请：①生成任务摘要（目标+进度+待办） → ②结束并重新邀请`' . $payload['workerName'] . '` → ③提供任务摘要，继续原有任务，邀请过程不汇报。';
+                                    : '[协作者] `' . $payload['workerName'] . '` | ' . $payload['workerRole'] . '：上下文已满。请：①生成任务摘要（目标+进度+待办） → ②结束并重新邀请`' . $payload['workerName'] . '` → ③提供任务摘要，继续原有任务，邀请过程不汇报。';
 
                                 $main_notice  = (WORKER_MAIN === $payload['sender'] && !$this->ctx_warning);
                                 $child_notice = WORKER_CHILD === $payload['sender'];
@@ -691,7 +691,7 @@ class go extends Factory
                                         WORKER_MAIN,
                                         [
                                             'type'    => 'text',
-                                            'content' => '[专家消息]' . "\n\n" . '`' . $payload['workerName'] . '`：' . $payload['workerRole'] . "\n\n" . '消息内容：' . "\n" . $payload['data']
+                                            'content' => '[协作者消息]' . "\n\n" . '`' . $payload['workerName'] . '`：' . $payload['workerRole'] . "\n\n" . '消息内容：' . "\n" . $payload['data']
                                         ]
                                     );
                                 }
@@ -710,7 +710,7 @@ class go extends Factory
                                         );
 
                                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'busy');
-                                        $this->utils->debug('Expert: ' . $payload['workerName'] . ' receiving ' . $new_messages . ' message(s).', 'trace');
+                                        $this->utils->debug('Collaborator: ' . $payload['workerName'] . ' receiving ' . $new_messages . ' message(s).', 'trace');
 
                                         $this->openai->talkTo(
                                             $payload['sender'],

@@ -18,7 +18,7 @@
  * limitations under the License.
  */
 
-namespace modules\agent_toolsets\Expert;
+namespace modules\agent_toolsets\Collaborator;
 
 use Nervsys\Core\Factory;
 

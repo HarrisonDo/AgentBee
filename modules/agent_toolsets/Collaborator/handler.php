@@ -1,6 +1,6 @@
 <?php
 
-namespace modules\agent_toolsets\Expert;
+namespace modules\agent_toolsets\Collaborator;
 
 use modules\agent_core\go as agent_core;
 use Nervsys\Core\Factory;
@@ -21,19 +21,19 @@ class handler extends Factory
         $worker_info = $agent_core->utils->getChildWorker(WORKER_CHILD, $payload_data['worker_name']);
 
         if ([] !== $worker_info) {
-            // Expert already exists, change name or talk
-            $agent_core->utils->debug('Expert already exists: ' . $payload_data['worker_name'] . ' | ' . $worker_info['worker_role'] . ' already exists!', 'trace');
+            // Collaborator already exists, change name or talk
+            $agent_core->utils->debug('Collaborator already exists: ' . $payload_data['worker_name'] . ' | ' . $worker_info['worker_role'] . ' already exists!', 'trace');
 
             $agent_core->core->context->addMessageQueue(
                 $payload_data['session_id'],
                 WORKER_MAIN,
                 [
                     'type'    => 'text',
-                    'content' => '[专家] "`' . $payload_data['worker_name'] . '`" 已存在。请换名或直接交流 (角色: ' . $worker_info['worker_role'] . ')'
+                    'content' => '[协作者] "`' . $payload_data['worker_name'] . '`" 已就位。请换名或直接交流 (角色: ' . $worker_info['worker_role'] . ')'
                 ]
             );
 
-            return '[专家] "`' . $payload_data['worker_name'] . '`" 已存在。请换名或直接交流 (角色: ' . $worker_info['worker_role'] . ')';
+            return '[协作者] "`' . $payload_data['worker_name'] . '`" 已就位。请换名或直接交流 (角色: ' . $worker_info['worker_role'] . ')';
         }
 
         $proc_idx = $agent_core->runWorker(
@@ -43,7 +43,7 @@ class handler extends Factory
             [$agent_core, 'streamWorkerHandler']
         );
 
-        $agent_core->utils->debug('Expert started: ' . $payload_data['worker_name'] . ' (WorkerID: ' . $proc_idx . ', ' . $payload_data['worker_role'] . ')', 'trace');
+        $agent_core->utils->debug('Collaborator started: ' . $payload_data['worker_name'] . ' (WorkerID: ' . $proc_idx . ', ' . $payload_data['worker_role'] . ')', 'trace');
 
         $init_prompt = $payload_data['init_prompt'] . "\n" . '先阅读用户要求，用一句话介绍你的名字和角色，并回复“已就绪”。';
 
@@ -91,7 +91,7 @@ class handler extends Factory
             $metadata
         );
 
-        $message = '正在邀请专家"`' . $payload_data['worker_name'] . '`"，待其回复“已就绪”后即可开始交流。期间可处理其他任务。';
+        $message = '正在邀请"`' . $payload_data['worker_name'] . '`"，待其回复“已就绪”后即可开始交流。期间可处理其他任务。';
 
         unset($payload_data, $agent_core, $proc_idx, $init_prompt, $worker_info, $metadata);
         return $message;
@@ -111,21 +111,21 @@ class handler extends Factory
         $worker_info = $agent_core->utils->getChildWorker(WORKER_CHILD, $payload_data['worker_name']);
 
         if ([] === $worker_info || 0 === $agent_core->utils->procMgr->getStatus($worker_info['proc_idx'])) {
-            // Expert closed, notice main worker
+            // Collaborator closed, notice main worker
             $agent_core->core->context->addMessageQueue(
                 $payload_data['session_id'],
                 WORKER_MAIN,
                 [
                     'type'    => 'text',
-                    'content' => '[专家] `' . $payload_data['worker_name'] . '` 交流已结束，消息发送失败'
+                    'content' => '[协作者] `' . $payload_data['worker_name'] . '` 的交流已结束，消息发送失败'
                 ]
             );
 
-            return '[专家] "`' . $payload_data['worker_name'] . '`" 交流已结束，消息发送失败';
+            return '[协作者] "`' . $payload_data['worker_name'] . '`" 的交流已结束，消息发送失败';
         }
 
         if ('ready' !== $worker_info['status']) {
-            $agent_core->utils->debug('Expert: ' . $worker_info['worker_name'] . ' is busy, new message queued.', 'trace');
+            $agent_core->utils->debug('Collaborator: ' . $worker_info['worker_name'] . ' is busy, new message queued.', 'trace');
 
             $this->sendMessage(
                 $agent_core,
@@ -143,10 +143,10 @@ class handler extends Factory
                 ]
             );
 
-            return '[专家] 消息已发送。`' . $worker_info['worker_name'] . '`正忙（' . $worker_info['status'] . '），消息已入队，回复将异步送达。无需等待，禁止重发，可继续处理其他任务。';
+            return '消息已发送。`' . $worker_info['worker_name'] . '`正忙（' . $worker_info['status'] . '），消息已入队，回复将异步送达。无需等待，禁止重发，可继续处理其他任务。';
         }
 
-        $agent_core->utils->debug('Expert: ' . $worker_info['worker_name'] . ' is working on task.', 'trace');
+        $agent_core->utils->debug('Collaborator: ' . $worker_info['worker_name'] . ' is working on task.', 'trace');
 
         $agent_core->utils->setChildWorker(WORKER_CHILD, $worker_info['worker_name'], 'status', 'busy');
         $agent_core->core->context->refreshHistory($payload_data['session_id'], $worker_info['worker_name']);
@@ -205,7 +205,7 @@ class handler extends Factory
         $worker_info = $agent_core->utils->getChildWorker(WORKER_CHILD, $payload_data['worker_name']);
 
         if ([] !== $worker_info && 0 < $agent_core->utils->procMgr->getStatus($worker_info['proc_idx'])) {
-            $agent_core->utils->debug('Expert closed: ' . $worker_info['worker_name'] . ' (WorkerID:' . $worker_info['proc_idx'] . ', ' . $worker_info['worker_role'] . ')', 'trace');
+            $agent_core->utils->debug('Collaborator closed: ' . $worker_info['worker_name'] . ' (WorkerID:' . $worker_info['proc_idx'] . ', ' . $worker_info['worker_role'] . ')', 'trace');
 
             $agent_core->utils->procMgr->close($worker_info['proc_idx']);
             $agent_core->core->context->removeHistory($payload_data['session_id'], $worker_info['worker_name']);
@@ -215,13 +215,13 @@ class handler extends Factory
                 $agent_core,
                 $payload_data['session_id'],
                 $worker_info,
-                ['content' => '专家“' . $payload_data['worker_name'] . '”已结束交流。']
+                ['content' => '协作者“' . $payload_data['worker_name'] . '”已结束交流。']
             );
         } else {
-            $agent_core->utils->debug('Expert not exist: ' . $payload_data['worker_name'], 'trace');
+            $agent_core->utils->debug('Collaborator not exist: ' . $payload_data['worker_name'], 'trace');
         }
 
-        $message = '专家`' . $payload_data['worker_name'] . '`的交流已结束。';
+        $message = '协作者`' . $payload_data['worker_name'] . '`的交流已结束。';
 
         unset($payload_data, $agent_core, $worker_info, $metadata);
         return $message;

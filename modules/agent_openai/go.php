@@ -76,7 +76,7 @@ class go extends Factory
     public function initChild(bool $reload = false): void
     {
         $llm_params  = [];
-        $config_file = $this->utils->config->config_dir . DIRECTORY_SEPARATOR . 'Expert.json';
+        $config_file = $this->utils->config->config_dir . DIRECTORY_SEPARATOR . 'Collaborator.json';
 
         if (is_file($config_file)) {
             $llm_params = json_decode(file_get_contents($config_file), true) ?? [];
@@ -274,12 +274,12 @@ class go extends Factory
     }
 
     /**
-     * Expert Worker process
+     * Collaborator Worker process
      *
      * @return void
      * @throws \Exception
      */
-    public function Expert(): void
+    public function Collaborator(): void
     {
         ini_set('memory_limit', $this->utils->agent_config['memory_limit'] ?? '4G');
 
