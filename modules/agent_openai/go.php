@@ -310,15 +310,12 @@ class go extends Factory
             }
 
             $this->libOpenAI->setModelParams($talk_data['llm_params'] + $llm_tools);
-
-            if ('talk' === $talk_data['cmd']) {
-                $this->processor->talk(
-                    $talk_data['metadata'],
-                    $talk_data['system'],
-                    $talk_data['history'],
-                    $this->libOpenAI
-                );
-            }
+            $this->processor->talk(
+                $talk_data['metadata'],
+                $talk_data['system'],
+                $talk_data['history'],
+                $this->libOpenAI
+            );
         }
     }
 
