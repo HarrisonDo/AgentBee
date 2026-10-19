@@ -49,7 +49,6 @@ class handler extends Factory
 
         $worker_info = [
             'proc_idx'    => $proc_idx,
-            'socket_id'   => $payload_data['socket_id'],
             'worker_name' => $payload_data['worker_name'],
             'worker_role' => $payload_data['worker_role'],
             'status'      => 'busy',
@@ -89,7 +88,7 @@ class handler extends Factory
                 $payload_data['worker_role']
             ),
             'start',
-            $metadata + ['socket_id' => $payload_data['socket_id']]
+            $metadata
         );
 
         $message = '正在邀请专家"`' . $payload_data['worker_name'] . '`"，待其回复“已就绪”后即可开始交流。期间可处理其他任务。';
@@ -184,7 +183,7 @@ class handler extends Factory
                 $worker_info['worker_role'],
             ),
             'talk',
-            $metadata + ['socket_id' => $payload_data['socket_id']]
+            $metadata
         );
 
         $message = '消息已送达。`' . $worker_info['worker_name'] . '`将异步回复，无需等待，禁止连续发送，可继续处理其他任务。';
@@ -276,7 +275,7 @@ class handler extends Factory
                 'data' => $payload_data['content']
             ];
 
-        $agent_core->core->sendMessage($worker_info['socket_id'], $worker_message);
+        $agent_core->core->sendMessage($worker_message);
         unset($agent_core, $worker_info, $payload_data, $worker_message);
     }
 }

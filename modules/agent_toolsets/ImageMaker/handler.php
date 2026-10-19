@@ -109,7 +109,7 @@ class handler extends Factory
             ]
         );
 
-        $result = $this->handleResponse($agent_core, $payload_data['socket_id'], $payload_data['session_id'], $payload_data['process_name'], $response);
+        $result = $this->handleResponse($agent_core, $payload_data['session_id'], $payload_data['process_name'], $response);
 
         unset($payload_data, $agent_core, $config, $openai, $response);
         return $result;
@@ -187,7 +187,7 @@ class handler extends Factory
             unset($files, $image_path, $image_binary, $image_type, $payload);
         }
 
-        $result = $this->handleResponse($agent_core, $payload_data['socket_id'], $payload_data['session_id'], $payload_data['process_name'], $response);
+        $result = $this->handleResponse($agent_core, $payload_data['session_id'], $payload_data['process_name'], $response);
 
         unset($payload_data, $agent_core, $config, $openai, $options, $response);
         return $result;
@@ -195,7 +195,6 @@ class handler extends Factory
 
     /**
      * @param agent_core $agent_core
-     * @param string     $socket_id
      * @param string     $session_id
      * @param string     $process_name
      * @param array      $response
@@ -204,7 +203,7 @@ class handler extends Factory
      * @throws \Random\RandomException
      * @throws \ReflectionException
      */
-    private function handleResponse(agent_core $agent_core, string $socket_id, string $session_id, string $process_name, array $response): array
+    private function handleResponse(agent_core $agent_core, string $session_id, string $process_name, array $response): array
     {
         if (isset($response['data']) && true === $response['success']) {
             $saved_files   = [];
@@ -222,7 +221,6 @@ class handler extends Factory
 
             foreach ($response['data'] as $value) {
                 $agent_core->core->sendImageMessage(
-                    $socket_id,
                     $message,
                     'data:image/' . $output_format . ';base64,' . $value['b64_json'],
                     $this->prompt,
@@ -263,7 +261,7 @@ class handler extends Factory
             $response['error']  = '图片生成失败，原因未知。告知用户，禁止重试。';
         }
 
-        unset($agent_core, $socket_id, $session_id, $process_name);
+        unset($agent_core, $session_id, $process_name);
         return $response;
     }
 }

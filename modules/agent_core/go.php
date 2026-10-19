@@ -334,7 +334,7 @@ class go extends Factory
                                     $this->utils->getMainIDX(),
                                     $this->getSystemPrompt($payload['sessionId']),
                                     'talk',
-                                    $metadata + ['socket_id' => $payload['socket_id']]
+                                    $metadata
                                 );
                             } else {
                                 if (isset($worker_info['proc_idx'])) {
@@ -347,7 +347,7 @@ class go extends Factory
                                         $worker_info['proc_idx'],
                                         $this->getSystemPrompt($payload['sessionId']),
                                         'talk',
-                                        $metadata + ['socket_id' => $payload['socket_id']]
+                                        $metadata
                                     );
                                 }
                             }
@@ -367,17 +367,17 @@ class go extends Factory
                                 ? $payload['data']
                                 : ['message' => $payload['data']];
 
-                            $this->core->sendMessage($message['socket_id'], $error);
+                            $this->core->sendMessage($error);
                             unset($this->utils->stream_buffers[$ext_id], $error);
                             break;
 
                         case 'abort':
-                            $this->core->sendMessage($message['socket_id'], $payload);
+                            $this->core->sendMessage($payload);
                             $this->utils->setStatus($payload['sessionId'], utils::STATUS_IDLE);
                             break;
 
                         default:
-                            $this->core->sendMessage($message['socket_id'], $payload);
+                            $this->core->sendMessage($payload);
                             break;
                     }
                     break;
@@ -523,7 +523,7 @@ class go extends Factory
                                     ]
                                 ];
 
-                                $this->core->sendMessage($payload['socket_id'], $metadata + $msg_data);
+                                $this->core->sendMessage($metadata + $msg_data);
                             }
 
                             unset($tool_calls, $tool_results, $data, $handler, $result, $metadata, $assistant_message, $tool_result, $msg_data);
@@ -597,7 +597,6 @@ class go extends Factory
 
                             if (2 === $this->keep_pairs) {
                                 $this->core->sendMessage(
-                                    $payload['socket_id'],
                                     [
                                         'type'    => 'error',
                                         'message' => '抱歉，因上下文内容过长（当前模型设置: ' . ($this->utils->agent_config['agent_llm']['model_ctx'] ?? 131072) . '），系统已自动截断。咱两继续，别担心，我会跟上的。'
@@ -656,7 +655,7 @@ class go extends Factory
                                 $worker_idx,
                                 $this->getSystemPrompt($payload['sessionId']),
                                 'talk',
-                                $metadata + ['socket_id' => $payload['socket_id']]
+                                $metadata
                             );
 
                             unset($worker_idx);
@@ -682,7 +681,7 @@ class go extends Factory
                                         $this->utils->getMainIDX(),
                                         $this->getSystemPrompt($payload['sessionId']),
                                         'talk',
-                                        $metadata + ['socket_id' => $payload['socket_id']]
+                                        $metadata
                                     );
                                 }
                             } else {
@@ -720,7 +719,7 @@ class go extends Factory
                                             $worker_info['proc_idx'],
                                             $this->getSystemPrompt($payload['sessionId']),
                                             'talk',
-                                            $metadata + ['socket_id' => $payload['socket_id']]
+                                            $metadata
                                         );
                                     }
                                 }
@@ -834,7 +833,7 @@ class go extends Factory
                 $this->utils->getMainIDX(),
                 $this->getSystemPrompt($session_id),
                 'talk',
-                $metadata + ['socket_id' => $socket_id]
+                $metadata
             );
         }
 
@@ -896,14 +895,14 @@ class go extends Factory
                 $data['content']['memory'] = $this->memory;
             }
 
-            $result = $this->message->$type_method($socket_id, $data['content'], $data['sessionId'] ?? '');
+            $result = $this->message->$type_method($data['content'], $data['sessionId'] ?? '');
 
             if (!$result['need_llm']) {
                 // Other actions
                 $this->utils->debug('User: ' . $data['type'] . '->' . ($result['content']['act'] ?? 'Unsupported'), 'debug');
 
                 $response = ['type' => $result['type'] ?? $data['type']] + $result['content'];
-                $this->core->sendMessage($socket_id, $response);
+                $this->core->sendMessage($response);
 
                 switch ($result['content']['act']) {
                     // Reset session memory
@@ -942,7 +941,7 @@ class go extends Factory
             }
 
             if (isset($result['errors']) && [] !== $result['errors']) {
-                $this->core->sendMessage($socket_id, ['type' => 'error', 'error' => implode("\n", $result['errors'])]);
+                $this->core->sendMessage(['type' => 'error', 'error' => implode("\n", $result['errors'])]);
             }
 
             if (0 === $this->core->context->countHistory($data['sessionId'], WORKER_MAIN)) {
@@ -1006,7 +1005,7 @@ class go extends Factory
                 $main_pid,
                 $this->getSystemPrompt($session_id),
                 'talk',
-                $message_metadata + ['socket_id' => $socket_id]
+                $message_metadata
             );
         }
 
@@ -1025,7 +1024,7 @@ class go extends Factory
     {
         if ([] !== $this->utils->message_buffers) {
             while (null !== ($buffer = array_shift($this->utils->message_buffers))) {
-                $this->core->sendMessage($socket_id, $buffer);
+                $this->core->sendMessage($buffer);
             }
         }
 
@@ -1069,7 +1068,7 @@ class go extends Factory
                 $this->utils->getMainIDX(),
                 $this->getSystemPrompt($session_id),
                 'talk',
-                $metadata + ['socket_id' => $socket_id]
+                $metadata
             );
         }
 
