@@ -458,7 +458,9 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     const session = resolveTurnSession(messageId).session || options.activeSession();
     if (!session) return false;
 
-    sendJson({ type: 'abort', sessionId: session.id, messageId: messageId || makeId() });
+    // 后端把 `/abort` 当作指令前缀处理（`go.php` 里 `'/abort' === $data['type']`），
+    // 不会反射成 `process_abort`；服务端「已停止生成」的回执仍然是 `type: 'abort'`。
+    sendJson({ type: '/abort', sessionId: session.id, messageId: messageId || makeId() });
 
     // 提示写进被停止的那个会话，而不是用户此刻正在看的会话。
     session.messages.push({
@@ -616,6 +618,46 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     socket.value?.send(`${JSON.stringify(payload)}\n`);
   }
 
+  /**
+   * 多端同步：把其他设备广播过来的 `feedback` 落成会话里的一条用户消息。
+   *
+   * 后端 `go.php onMessage` 会把用户输入原样广播给**其他**在线客户端，
+   * 载荷形如 `{ type:'feedback', data:'文本', sessionId, messageId, ... }`。
+   * 它和本机发消息时本地先插入的那条 user 消息语义相同，所以按 user 渲染。
+   *
+   * - 只认已存在的会话：未知 session 宁可丢弃，也不写错会话（与广播事件的路由规则一致）。
+   * - 按服务端 `messageId` 去重，重复投递不会出现两条气泡。
+   * - 不登记 pendingTurns：这条消息没有在本机发起一轮对话，不应该触发加载态或超时收尾。
+   */
+  function appendRemoteFeedbackMessage(msg: ServerMessage) {
+    const sessionId = (msg.sessionId || msg.session_id || '').trim();
+    if (!sessionId) return;
+
+    const session = options.getSessionById
+      ? options.getSessionById(sessionId)
+      : options.activeSession()?.id === sessionId ? options.activeSession() : null;
+    if (!session) return;
+
+    const messageId = (msg.messageId || '').trim();
+    if (messageId && session.messages.some((message) => message.messageId === messageId)) return;
+
+    const content = normalizePayload(msg);
+    if (!content.trim()) return;
+
+    session.messages.push({
+      id: makeId(),
+      role: 'user',
+      content,
+      time: nowTime(),
+      ...(messageId ? { messageId } : {}),
+      ...(typeof msg.sender === 'string' && msg.sender.trim() ? { sender: msg.sender.trim() } : {}),
+    });
+
+    if (session.keepEmpty) delete session.keepEmpty;
+    options.touchSession(session);
+    options.saveSessions();
+  }
+
   function handleServerMessage(raw: string) {
     const parsed = parseServerMessage(raw);
     if (typeof parsed === 'string') {
@@ -654,6 +696,12 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       return;
     }
     if (type === 'history') return;
+    // 多端同步：其他设备发出的用户消息由后端以 `feedback` 广播过来。
+    // 它不是一轮回复，不能走下面的 assistant 兜底分支（否则整包 JSON 会变成气泡）。
+    if (type === 'feedback') {
+      appendRemoteFeedbackMessage(msg);
+      return;
+    }
     // 广播事件按服务端 session 路由；无 session 的旧协议只能认已知轮次。
     const sessionId = (msg.sessionId || msg.session_id || '').trim();
     if (sessionId) {

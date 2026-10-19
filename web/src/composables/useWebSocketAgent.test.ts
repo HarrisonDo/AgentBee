@@ -328,7 +328,7 @@ describe('switching sessions while a turn is streaming', () => {
     agent.stopCurrent();
 
     const abortPayload = JSON.parse(sockets[0].sent[sockets[0].sent.length - 1]);
-    expect(abortPayload).toMatchObject({ type: 'abort', sessionId: 'session-1', messageId });
+    expect(abortPayload).toMatchObject({ type: '/abort', sessionId: 'session-1', messageId });
     expect(assistantOf(messageId, 'session-1')?.status).toBe('stopped');
   });
 
@@ -680,5 +680,64 @@ describe('session isolation for broadcast events', () => {
     emit({ type: 'end', messageId });
     expect(assistantOf(messageId, 'session-1')?.content).toBe('answer late');
     expect(assistantOf(messageId, 'session-2')).toBeUndefined();
+  });
+});
+
+describe('multi-device feedback messages', () => {
+  /** 后端 `buildFeedback` + `core->sendMessage` 实际发出的形状。 */
+  function feedbackEvent(overrides: Record<string, unknown> = {}) {
+    return {
+      create_id: 1792397194956378,
+      sender: 'User',
+      isSubTalk: 0,
+      workerName: 'Agent',
+      workerRole: 'User',
+      sessionId: 'session-1',
+      messageId: 'feedback-1',
+      WindowName: 'Agent',
+      type: 'feedback',
+      data: '测试',
+      ...overrides,
+    };
+  }
+
+  it('renders a feedback broadcast as a user message instead of a raw JSON assistant bubble', () => {
+    const { agent, emit, session } = setupAgent();
+    agent.connect();
+
+    emit(feedbackEvent());
+
+    const message = session.messages.find((item) => item.messageId === 'feedback-1');
+    expect(message).toMatchObject({ role: 'user', content: '测试', sender: 'User' });
+    // 兜底分支会把整包 JSON 当正文推一条 assistant 消息，这里必须没有。
+    expect(session.messages.some((item) => item.role === 'assistant')).toBe(false);
+    // 它不是在本地发起的一轮对话，不能留下加载态或超时收尾。
+    expect(agent.hasPendingTurns.value).toBe(false);
+  });
+
+  it('routes feedback into the session that owns it without touching the active one', () => {
+    const { agent, createSession, emit, session } = setupAgent();
+    agent.connect();
+    const second = createSession('session-2');
+
+    emit(feedbackEvent({ sessionId: second.id, messageId: 'feedback-2', data: 'from phone' }));
+
+    expect(second.messages.find((item) => item.messageId === 'feedback-2')).toMatchObject({
+      role: 'user',
+      content: 'from phone',
+    });
+    expect(session.messages.some((item) => item.messageId === 'feedback-2')).toBe(false);
+  });
+
+  it('drops feedback for unknown sessions and ignores duplicate deliveries', () => {
+    const { agent, emit, session } = setupAgent();
+    agent.connect();
+
+    emit(feedbackEvent({ sessionId: 'missing', messageId: 'feedback-3' }));
+    expect(session.messages.some((item) => item.messageId === 'feedback-3')).toBe(false);
+
+    emit(feedbackEvent());
+    emit(feedbackEvent());
+    expect(session.messages.filter((item) => item.messageId === 'feedback-1')).toHaveLength(1);
   });
 });
