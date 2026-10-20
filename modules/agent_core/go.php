@@ -223,6 +223,21 @@ class go extends Factory
     {
         $now_time = time();
         $weekday  = ['日', '一', '二', '三', '四', '五', '六'][date('w', $now_time)];
+        $hour     = (int)date('H', $now_time);
+
+        if ($hour >= 5 && $hour < 9) {
+            $period = '早上';
+        } elseif ($hour >= 9 && $hour < 11) {
+            $period = '上午';
+        } elseif ($hour >= 11 && $hour < 13) {
+            $period = '中午';
+        } elseif ($hour >= 13 && $hour < 18) {
+            $period = '下午';
+        } elseif ($hour >= 18 && $hour < 23) {
+            $period = '晚上';
+        } else {
+            $period = '深夜';
+        }
 
         $system_default = $this->utils->getMainPrompt();
         $system_memory  = $this->memory->read('system');
@@ -243,7 +258,11 @@ class go extends Factory
             : '【会话ID】`' . $session_id . '`，读写记忆时必传。';
 
         $system_default .= "\n\n" . '---' . "\n\n";
-        $system_default .= '【时间·唯一权威】每次对话前必须校准：当前 ' . date('Y-m-d H:i:s', $now_time) . ' 周' . $weekday . '，时区 ' . $this->core->app->timezone . '。判断现在/今天/多久前均以此为准，上下文中的时间不作依据。';
+        $system_default .= '【时间·唯一权威】当前时间为 '
+            . date('Y-m-d H:i:s', $now_time)
+            . '，星期' . $weekday . $period
+            . '，时区为 ' . $this->core->app->timezone
+            . '。判断现在、今天、昨天、多久前等时间表达，以该时间戳和时区为准；上下文中的时间不作为当前时间依据。';
 
         unset($session_id, $now_time, $weekday, $system_memory, $memory, $content);
         return $system_default;
