@@ -755,9 +755,7 @@ class utils extends Factory
     public function getChildPrompt(string $worker_name, string $worker_role): string
     {
         $prompts   = [];
-        $now_time  = time();
         $work_path = $this->agent_config['workspace_path'];
-        $weekday   = ['日', '一', '二', '三', '四', '五', '六'][date('w', $now_time)];
 
         $prompts[] = '## 身份';
         $prompts[] = '你是 **' . $worker_name . '**，' . $worker_role . '。';
@@ -800,11 +798,44 @@ class utils extends Factory
 
         $prompts[] = '';
         $prompts[] = '---';
-        $prompts[] = '【时间·最高优先级】当前：' . date('Y-m-d H:i:s', $now_time) . ' 周' . $weekday . '，时区：' . $this->app->timezone . '。唯一权威，禁止读取/推测上下文/历史/记忆/工具中的时间，冲突以此为准。';
+        $prompts[] = $this->getNowTimePrompt();
 
         $prompt = implode("\n", $prompts);
 
-        unset($worker_name, $worker_role, $prompts, $now_time, $work_path, $weekday, $skills);
+        unset($worker_name, $worker_role, $prompts, $work_path, $skills);
+        return $prompt;
+    }
+
+    /**
+     * @return string
+     */
+    public function getNowTimePrompt(): string
+    {
+        $now_time = time();
+        $weekday  = ['日', '一', '二', '三', '四', '五', '六'][date('w', $now_time)];
+        $hour     = (int)date('H', $now_time);
+
+        if ($hour >= 5 && $hour < 9) {
+            $period = '早上';
+        } elseif ($hour >= 9 && $hour < 11) {
+            $period = '上午';
+        } elseif ($hour >= 11 && $hour < 13) {
+            $period = '中午';
+        } elseif ($hour >= 13 && $hour < 18) {
+            $period = '下午';
+        } elseif ($hour >= 18 && $hour < 23) {
+            $period = '晚上';
+        } else {
+            $period = '深夜';
+        }
+
+        $prompt = '【时间·唯一权威】当前时间为 '
+            . date('Y-m-d H:i:s', $now_time)
+            . '，星期' . $weekday . $period
+            . '，时区为 ' . $this->app->timezone
+            . '。判断现在/今天/昨天/多久前等时间表达，以该时间戳和时区为准；上下文中的时间不作为当前时间依据。';
+
+        unset($now_time, $weekday, $hour, $period);
         return $prompt;
     }
 

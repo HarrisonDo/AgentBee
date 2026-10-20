@@ -221,51 +221,31 @@ class go extends Factory
      */
     public function getSystemPrompt(string $session_id): string
     {
-        $now_time = time();
-        $weekday  = ['日', '一', '二', '三', '四', '五', '六'][date('w', $now_time)];
-        $hour     = (int)date('H', $now_time);
+        $prompt   = $this->utils->getMainPrompt();
+        $memories = $this->memory->read('system');
 
-        if ($hour >= 5 && $hour < 9) {
-            $period = '早上';
-        } elseif ($hour >= 9 && $hour < 11) {
-            $period = '上午';
-        } elseif ($hour >= 11 && $hour < 13) {
-            $period = '中午';
-        } elseif ($hour >= 13 && $hour < 18) {
-            $period = '下午';
-        } elseif ($hour >= 18 && $hour < 23) {
-            $period = '晚上';
-        } else {
-            $period = '深夜';
-        }
-
-        $system_default = $this->utils->getMainPrompt();
-        $system_memory  = $this->memory->read('system');
-
-        if ([] !== $system_memory['data']) {
+        if ([] !== $memories['data']) {
             $memory = ['## 用户与人物设定'];
 
-            foreach ($system_memory['data'] as $content) {
+            foreach ($memories['data'] as $content) {
                 $memory[] = '- ' . $content['content'];
             }
 
-            $system_default .= "\n\n" . implode("\n", $memory);
+            $prompt .= "\n\n" . implode("\n", $memory);
+
+            unset($memory, $content);
         }
 
-        $system_default .= "\n\n" . '---' . "\n\n";
-        $system_default .= '' === $session_id
+        $prompt .= "\n\n" . '---' . "\n\n";
+        $prompt .= '' === $session_id
             ? '【会话ID】未分配，本次禁止读写`daily`/`misc`记忆。'
             : '【会话ID】`' . $session_id . '`，读写记忆时必传。';
 
-        $system_default .= "\n\n" . '---' . "\n\n";
-        $system_default .= '【时间·唯一权威】当前时间为 '
-            . date('Y-m-d H:i:s', $now_time)
-            . '，星期' . $weekday . $period
-            . '，时区为 ' . $this->core->app->timezone
-            . '。判断现在、今天、昨天、多久前等时间表达，以该时间戳和时区为准；上下文中的时间不作为当前时间依据。';
+        $prompt .= "\n\n" . '---' . "\n\n";
+        $prompt .= $this->utils->getNowTimePrompt();
 
-        unset($session_id, $now_time, $weekday, $system_memory, $memory, $content);
-        return $system_default;
+        unset($session_id, $memories);
+        return $prompt;
     }
 
     /**
