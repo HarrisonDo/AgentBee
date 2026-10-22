@@ -245,7 +245,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'runTask',
-                'description' => '获取当前会话所有到期任务。返回：[prompt, ...]。',
+                'description' => '获取当前会话所有到期任务。返回：[{create_id, prompt}]。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [

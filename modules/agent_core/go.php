@@ -799,21 +799,34 @@ class go extends Factory
 
                 $this->utils->setStatus($session_id, utils::STATUS_IDLE, true);
             }
+        }
 
-            $task_list = $this->memory->runTask($session_id);
+        $session_list = $this->memory->listSessions(0, true);
+
+        foreach ($session_list as $session) {
+            $task_list = $this->memory->runTask($session['session_id']);
 
             if ([] === $task_list) {
                 continue;
             }
 
-            $this->utils->debug('ScheduledTask: Running ' . count($task_list) . ' task jobs on #' . $session_id, 'trace');
+            // Remove all tasks if session is deleted
+            if (1 !== $session['session_status']) {
+                foreach ($task_list as $task) {
+                    $this->memory->removeTask($task['create_id']);
+                }
+
+                continue;
+            }
+
+            $this->utils->debug('ScheduledTask: Running ' . count($task_list) . ' task jobs on #' . $session['session_id'], 'trace');
 
             $task_content = '[定时任务]' . "\n"
-                . '会话ID：`' . $session_id . '`' . "\n\n"
-                . '待执行任务：' . "\n" . implode("\n", $task_list) . "\n\n"
+                . '会话ID：`' . $session['session_id'] . '`' . "\n\n"
+                . '待执行任务：' . "\n" . implode("\n", array_column($task_list, 'prompt')) . "\n\n"
                 . '流程：①执行任务并获取结果；②按任务会话ID，重要存daily，特别重要存important，琐事不存；③简要汇报结果及存储层级；④完成后清理定时任务（忽略结果）。';
 
-            $this->core->context->addUserMessage($session_id, WORKER_MAIN, [['type' => 'text', 'content' => $task_content]]);
+            $this->core->context->addUserMessage($session['session_id'], WORKER_MAIN, [['type' => 'text', 'content' => $task_content]]);
 
             $metadata = $this->utils->getMarker(
                 WORKER_MAIN,
@@ -821,22 +834,22 @@ class go extends Factory
                 'Assistant',
                 AGENT_NAME,
                 0,
-                $session_id
+                $session['session_id']
             );
 
             $this->openai->resume();
             $this->openai->talkTo(
                 WORKER_MAIN,
                 WORKER_MAIN,
-                $session_id,
+                $session['session_id'],
                 $this->utils->getMainIDX(),
-                $this->getSystemPrompt($session_id),
+                $this->getSystemPrompt($session['session_id']),
                 'talk',
                 $metadata
             );
         }
 
-        unset($socket_id, $now_time, $session_list, $session_id, $active_time, $task_list, $task_content, $metadata);
+        unset($socket_id, $now_time, $session_list, $session_id, $active_time, $session, $task_list, $task_content, $metadata);
         return '';
     }
 
@@ -1044,14 +1057,9 @@ class go extends Factory
             }
         }
 
-        $now_time     = time();
         $session_list = $this->core->context->getSessionList();
 
         foreach ($session_list as $session_id => $active_time) {
-            if ($now_time - $active_time >= $this->utils->agent_config['reset_interval']) {
-                $this->core->context->removeSessionList($session_id);
-            }
-
             $message_onsend = $this->core->context->isMessageOnSend($session_id);
 
             if (utils::STATUS_IDLE !== $this->utils->wait_status[$session_id] && !$message_onsend) {
@@ -1088,7 +1096,7 @@ class go extends Factory
             );
         }
 
-        unset($socket_id, $buffer, $now_time, $session_list, $session_id, $active_time, $message_onsend, $new_messages, $metadata);
+        unset($socket_id, $buffer, $session_list, $session_id, $active_time, $message_onsend, $new_messages, $metadata);
         return [];
     }
 
