@@ -209,7 +209,7 @@ const agent = useWebSocketAgent({
   onSettingMessage: handleSettingMessage,
   onSystemMessage: handleSystemMessage,
   registerSession: sessions.registerSession,
-  scheduleregisterSession: sessions.scheduleregisterSession,
+  scheduleCreateSession: sessions.scheduleCreateSession,
   touchSession: sessions.touchSession,
 });
 const connectionErrorText = computed(() => formatConnectionIssue(agent.connectionError.value));

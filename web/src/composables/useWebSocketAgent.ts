@@ -90,7 +90,7 @@ interface UseWebSocketAgentOptions {
   onMemoryMessage?: (act: string, msg: ServerMessage) => void;
   onSessionMessage?: (act: string, msg: ServerMessage) => void;
   registerSession: () => void;
-  scheduleregisterSession: () => void;
+  scheduleCreateSession: () => void;
   touchSession: (session: ChatSession) => void;
 }
 
@@ -865,7 +865,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.content += text || '';
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.scheduleregisterSession();
+    options.scheduleCreateSession();
   }
 
   function appendAssistantThinkNow(messageId: string | null, text: string, msg?: ServerMessage) {
@@ -876,7 +876,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.think = `${turn.assistant.think || ''}${text || ''}`;
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.scheduleregisterSession();
+    options.scheduleCreateSession();
   }
 
   function appendAssistantToolEvent(messageId: string | null, kind: 'tool_calls' | 'tool_result', msg: ServerMessage) {
@@ -888,7 +888,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.toolEvents.push(normalizeToolEvent(kind, msg, makeId, nowTime));
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.scheduleregisterSession();
+    options.scheduleCreateSession();
   }
 
   function appendAssistantImage(messageId: string | null, msg: ServerMessage) {
@@ -906,7 +906,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.images.push(image);
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.scheduleregisterSession();
+    options.scheduleCreateSession();
   }
 
   function finishAssistantMessage(
@@ -1099,7 +1099,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.files.push(file);
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.scheduleregisterSession();
+    options.scheduleCreateSession();
   }
 
   function handleOffline() {

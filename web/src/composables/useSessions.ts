@@ -177,7 +177,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     console.warn('BeeWeb local chat history save reached the pruning retry limit.');
   }
 
-  function scheduleregisterSession() {
+  function scheduleCreateSession() {
     if (storageDisabled || saveTimer !== null) return;
     saveTimer = window.setTimeout(() => {
       saveTimer = null;
@@ -521,7 +521,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     renameSession,
     restoreSessionTitle,
     registerSession,
-    scheduleregisterSession,
+    scheduleCreateSession,
     sessions,
     switchSession,
     touchSession,

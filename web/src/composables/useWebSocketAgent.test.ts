@@ -118,7 +118,7 @@ function setupAgent() {
     addMessage,
     getSessionById: (id: string) => sessionList.find((item) => item.id === id) || null,
     registerSession: vi.fn(),
-    scheduleregisterSession: vi.fn(),
+    scheduleCreateSession: vi.fn(),
     touchSession: vi.fn(),
   });
 
@@ -505,7 +505,7 @@ describe('sendText reconnect dispatch', () => {
       activeSession: () => session,
       addMessage,
       registerSession: vi.fn(),
-      scheduleregisterSession: vi.fn(),
+      scheduleCreateSession: vi.fn(),
       touchSession: vi.fn(),
     });
     const dispatched = vi.fn();
