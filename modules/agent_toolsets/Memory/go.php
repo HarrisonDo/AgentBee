@@ -125,7 +125,7 @@ class go extends Factory
         $this->initDatabase();
         $this->purgeExpired();
 
-        $this->readSession(0);
+        $this->listSessions(0);
     }
 
     // =========================================================================
@@ -139,7 +139,7 @@ class go extends Factory
      * @return string[]
      * @throws \ReflectionException
      */
-    public function saveSession(string $session_id, string $session_name): array
+    public function createSession(string $session_id, string $session_name): array
     {
         if (in_array($session_id, $this->session_list, true)) {
             return ['status' => 'success', 'session_id' => $session_id];
@@ -157,13 +157,15 @@ class go extends Factory
             ])
             ->execute();
 
-        $result = $saved
-            ? ['status' => 'success', 'session_id' => $session_id]
-            : ['status' => 'error', 'error' => '会话[#' . $session_id . ']保存失败'];
+        if ($saved) {
+            $this->session_list[] = $session_id;
 
-        $this->session_list[] = $session_id;
+            $result = ['status' => 'success', 'session_id' => $session_id];
+        } else {
+            $result = ['status' => 'error', 'error' => '会话`' . $session_id . '`保存失败'];
+        }
 
-        unset($session_id, $session_name, $now_time);
+        unset($session_id, $session_name, $now_time, $saved);
         return $result;
     }
 
@@ -174,7 +176,7 @@ class go extends Factory
      * @return array
      * @throws \ReflectionException
      */
-    public function readSession(int $session_status = 1, bool $keep_datetime = false): array
+    public function listSessions(int $session_status = 1, bool $keep_datetime = false): array
     {
         if (!in_array($session_status, [0, 1, 2], true)) {
             $session_status = 0;
@@ -213,39 +215,86 @@ class go extends Factory
     /**
      * @param string $session_id
      * @param string $session_name
-     * @param int    $session_status
      *
-     * @return string[]
+     * @return array|string[]
      * @throws \ReflectionException
      */
-    public function updateSession(string $session_id, string $session_name = '', int $session_status = 0): array
+    public function renameSession(string $session_id, string $session_name): array
     {
-        if ('' === $session_name && 0 === $session_status) {
-            return ['status' => 'success', 'affected_rows' => 0];
+        if ('' === $session_name) {
+            return ['status' => 'error', 'error' => '会话名称不能为空'];
         }
 
-        $session_data = [];
+        $session = $this->libSQLite->select()
+            ->table('agent_session')
+            ->where(['session_id', $session_id])
+            ->limit(1)
+            ->fetch();
 
-        if (0 !== $session_status) {
-            if (!in_array($session_status, [1, 2], true)) {
-                $session_status = 1;
-            }
-
-            $session_data['session_status'] = $session_status;
-        }
-
-        if ('' !== $session_name) {
-            $session_data['session_name'] = $session_name;
+        if ([] === $session) {
+            return ['status' => 'error', 'error' => '该会话不存在，请核实会话ID'];
         }
 
         $this->libSQLite->table('agent_session')
-            ->update($session_data)
+            ->update(['session_name' => $session_name])
             ->where(['session_id', $session_id])
             ->execute();
 
         $result = ['status' => 'success', 'affected_rows' => $this->libSQLite->getAffectedRows()];
 
-        unset($session_id, $session_name, $session_status, $session_data);
+        unset($session_id, $session_name, $session);
+        return $result;
+    }
+
+    /**
+     * @param string $session_id
+     *
+     * @return string[]
+     * @throws \ReflectionException
+     */
+    public function deleteSession(string $session_id): array
+    {
+        return $this->updateSessionStatus($session_id, 2);
+    }
+
+    /**
+     * @param string $session_id
+     *
+     * @return string[]
+     * @throws \ReflectionException
+     */
+    public function restoreSession(string $session_id): array
+    {
+        return $this->updateSessionStatus($session_id, 1);
+    }
+
+    /**
+     * @param string $session_id
+     * @param int    $session_status
+     *
+     * @return array|string[]
+     * @throws \ReflectionException
+     */
+    private function updateSessionStatus(string $session_id, int $session_status): array
+    {
+        $session = $this->libSQLite->select()
+            ->table('agent_session')
+            ->where(['session_id', $session_id])
+            ->limit(1)
+            ->fetch();
+
+        if ([] === $session) {
+            return ['status' => 'error', 'error' => '该会话不存在，请核实会话ID'];
+        }
+
+        $this->libSQLite->table('agent_session')
+            ->update(['session_status' => $session_status])
+            ->where(['session_id', $session_id])
+            ->execute();
+
+        $result = ['status' => 'success', 'affected_rows' => $this->libSQLite->getAffectedRows()];
+
+        unset($session_id, $session_status, $session);
         return $result;
     }
 
@@ -299,7 +348,7 @@ class go extends Factory
         }
 
         if ('' !== $session_id) {
-            $this->saveSession($session_id, mb_substr($content, 0, 16, 'UTF-8'));
+            $this->createSession($session_id, mb_substr($content, 0, 16, 'UTF-8'));
 
             $this->libSQLite->table('agent_session')
                 ->update(['last_time' => $now_time])

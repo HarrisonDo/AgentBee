@@ -35,16 +35,16 @@ export function useSessions(options: UseSessionsOptions = {}) {
   /**
    * 「本次打开还没有落点」。
    *
-   * 窗口刚打开时不存在「用户正在某个会话里」这回事，所以第一份 `readSession` 回来后
+   * 窗口刚打开时不存在「用户正在某个会话里」这回事，所以第一份 `listSessions` 回来后
    * 应该直接站到列表第一条（后端按 `create_time DESC` 返回，即最近一条），
    * 而不是停在本地缓存里的某条上、更不该凭空造一个新的。
    *
    * 一旦用户自己动过（发消息 / 新建 / 切换 / 删除 / 改名），这个标记立刻作废：
-   * 之后再收到 readSession（手动刷新、断线重连）绝不能把用户从他正在聊的会话里踢走。
+   * 之后再收到 listSessions（手动刷新、断线重连）绝不能把用户从他正在聊的会话里踢走。
    */
   let initialPlacementPending = true;
   /**
-   * 后端上一份 `readSession` 返回的会话顺序（新的在前）。
+   * 后端上一份 `listSessions` 返回的会话顺序（新的在前）。
    *
    * **列表顺序以后端为准**：后端按 `create_time DESC` 返回，这个顺序是稳定的
    * （`agent_session` 表里没有 update_time，所以不会因为「最近说过话」而变化），
@@ -116,7 +116,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
    *
    * **列表为空是合法状态**（用户把会话全删了）。这时 `activeSession` 退回内存里的
    * `fallbackSession` 供界面渲染，但绝不把它塞进 `sessions`：
-   * 一旦塞进去就会被 `saveSessions()` 持久化，刷新后变成一条凭空多出来的「新对话」——
+   * 一旦塞进去就会被 `registerSession()` 持久化，刷新后变成一条凭空多出来的「新对话」——
    * 也就是「删了会话、刷新又冒出一个」的成因。
    */
   function ensureSession(): ChatSession {
@@ -135,7 +135,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
   function loadSessions() {
     clearSaveTimer();
     storageDisabled = false;
-    // 一次新的「打开」：落点重新交给第一份 readSession 决定。
+    // 一次新的「打开」：落点重新交给第一份 listSessions 决定。
     initialPlacementPending = true;
     localStorage.removeItem(LEGACY_STORAGE_KEY);
     localStorage.removeItem(SINGLE_SESSION_STORAGE_KEY);
@@ -148,7 +148,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     ensureSession();
   }
 
-  function saveSessions() {
+  function registerSession() {
     if (storageDisabled) return;
     clearSaveTimer();
 
@@ -177,11 +177,11 @@ export function useSessions(options: UseSessionsOptions = {}) {
     console.warn('BeeWeb local chat history save reached the pruning retry limit.');
   }
 
-  function scheduleSaveSessions() {
+  function scheduleCreateSession() {
     if (storageDisabled || saveTimer !== null) return;
     saveTimer = window.setTimeout(() => {
       saveTimer = null;
-      saveSessions();
+      registerSession();
     }, SAVE_DEBOUNCE_MS);
   }
 
@@ -189,7 +189,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     storageDisabled = true;
     clearSaveTimer();
     initialPlacementPending = true;
-    // 本地历史清掉了，后端的顺序也一并作废：下次 readSession 回来重新建立。
+    // 本地历史清掉了，后端的顺序也一并作废：下次 listSessions 回来重新建立。
     remoteOrder = [];
     remoteOrderLoaded = false;
     localStorage.removeItem(LEGACY_STORAGE_KEY);
@@ -212,7 +212,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     // 如果它们也能触发新建，那么**登录成功的那一刻**就会凭空冒出一条空会话——
     // 连接时列表通常正是空的（`pagehide` 会清掉本地历史），于是用户看到的现象就是
     // 「token 登录后又多了一个新会话」；更糟的是它还会把「首次落点」标记用掉，
-    // 随后 readSession 回来也不会再自动定位到最近的真实会话。
+    // 随后 listSessions 回来也不会再自动定位到最近的真实会话。
     // 这类消息落进内存兜底会话即可：不建会话、不落盘。
     const isConversation = role === 'user' || role === 'assistant';
     if (isConversation) {
@@ -237,7 +237,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     // 顺序以后端为准（见 `reorderSessions()`），所以这里**不再**把刚说过话的会话顶到最前；
     // 只有还没拿到后端顺序时（离线 / 后端没有任何历史）才按本地活动时间重排。
     if (!remoteOrderLoaded) sortSessions();
-    saveSessions();
+    registerSession();
     return message;
   }
 
@@ -247,7 +247,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
 
     message.content = content;
     activeSession.value.updatedAt = new Date().toISOString();
-    saveSessions();
+    registerSession();
     return message;
   }
 
@@ -260,7 +260,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     const session = createEmptySession(resolveDefaultTitle(), true);
     sessions.value.unshift(session);
     activeSessionId.value = session.id;
-    saveSessions();
+    registerSession();
     return session;
   }
 
@@ -275,7 +275,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     if (!exists || sessionId === activeSessionId.value) return false;
     markPlacementDecided();
     activeSessionId.value = sessionId;
-    saveSessions();
+    registerSession();
     return true;
   }
 
@@ -286,7 +286,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
    * - 空白标题直接拒绝（返回 `null`），调用方据此提示用户；不做「清空即恢复默认名」，
    *   那会让人以为名字被系统改掉了。
    * - 前后空格折叠、连续空白合并、超长按 `MAX_SESSION_TITLE_LENGTH` 截断。
-   * - 打上 `titleEdited`：之后既不会被 `readSession` 回来的 `session_name` 覆盖，
+   * - 打上 `titleEdited`：之后既不会被 `listSessions` 回来的 `session_name` 覆盖，
    *   也不会被「第一句话前 8 个字」的自动命名覆盖。
    * - **不动 `updatedAt`**：改名不是一次会话活动，不该让列表重新排序或把它顶到最前，
    *   时间戳也应该继续显示最后一次真正聊天的时间。
@@ -301,7 +301,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     markPlacementDecided();
     session.title = normalized;
     session.titleEdited = true;
-    saveSessions();
+    registerSession();
     return normalized;
   }
 
@@ -318,7 +318,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     session.title = title;
     if (titleEdited) session.titleEdited = true;
     else delete session.titleEdited;
-    saveSessions();
+    registerSession();
     return true;
   }
 
@@ -336,12 +336,12 @@ export function useSessions(options: UseSessionsOptions = {}) {
     // 列表空了就把兜底会话换成干净的，`activeSession` 还有东西可渲染。
     if (!sessions.value.length) fallbackSession.value = createEmptySession(resolveDefaultTitle());
     ensureSession();
-    saveSessions();
+    registerSession();
     return true;
   }
 
   /**
-   * 把后端 `readSession` 的返回合并进本地列表。**服务端是会话是否存在的权威来源**：
+   * 把后端 `listSessions` 的返回合并进本地列表。**服务端是会话是否存在的权威来源**：
    *
    * - 后端有、本地没有 → 新增（本地新建但还没发过消息的会话保留，它还没入库）。
    * - 本地有、后端也有 → 补 `remoteName` 和**标题**（`session_name` 是标题的唯一来源，
@@ -352,14 +352,14 @@ export function useSessions(options: UseSessionsOptions = {}) {
    * **顺序也以后端为准**：列表按 `remote` 的数组顺序排（后端 `create_time DESC`），
    * 本地未入库的新会话排在最前。见 `reorderSessions()`。
    *
-   * 落点：**本次打开的第一份 readSession 会直接定位到排序后的第一条**
+   * 落点：**本次打开的第一份 listSessions 会直接定位到排序后的第一条**
    * （后端按 `create_time DESC` 返回，即最近一条）；用户自己动过之后（发过消息 /
    * 新建 / 切换 / 删除 / 改名）就不再有自动定位，手动刷新和断线重连都不会把他踢走。
    * 后端也没有历史就保持空列表，由用户自己点「新建会话」，不再凭空造一条。
    * 只有用户主动点「新建会话」留的空壳（`keepEmpty`）在本次打开期间会被保留。
    */
   function applyRemoteSessions(remote: RemoteSession[]): void {
-    // 只在「本次打开的第一份 readSession」上生效；读到就作废，提前 return 的路径也算。
+    // 只在「本次打开的第一份 listSessions」上生效；读到就作废，提前 return 的路径也算。
     const pendingInitialPlacement = initialPlacementPending;
     initialPlacementPending = false;
 
@@ -431,7 +431,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     if (!changed && !placeholderIds.size && !missingRemoteIds.size) {
       if (orderChanged) {
         reorderSessions();
-        saveSessions();
+        registerSession();
       }
       return;
     }
@@ -448,7 +448,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
       fallbackSession.value = createEmptySession(resolveDefaultTitle());
     }
 
-    // 本次打开还没有落点（第一份 readSession），或者本地本来就没有真实历史、
+    // 本次打开还没有落点（第一份 listSessions），或者本地本来就没有真实历史、
     // 或者当前就停在一个空占位上：直接落到排序后的第一条
     // （后端按 create_time DESC 返回，即最近的一条会话）。
     // 没有任何历史时列表就保持为空，由用户自己点「新建会话」。
@@ -459,7 +459,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     // 兜底：activeSessionId 指丢了就回到最近的一条（列表为空时它保持为空）。
     ensureSession();
 
-    saveSessions();
+    registerSession();
   }
 
   /** 纯本地排序：按最后活动时间倒序。只在还没拿到后端顺序时使用。 */
@@ -472,7 +472,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
   }
 
   /**
-   * 按「后端顺序优先」重排列表（拿到 `readSession` 后调用）。
+   * 按「后端顺序优先」重排列表（拿到 `listSessions` 后调用）。
    *
    * - 后端返回过的会话：严格按接口给的数组顺序（`create_time DESC`）。
    * - 本地新建、还没入库的：排在最前面，彼此按创建时间倒序（它们都是刚建的）。
@@ -503,7 +503,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
   onBeforeUnmount(() => {
     if (saveTimer === null) return;
     clearSaveTimer();
-    saveSessions();
+    registerSession();
   });
 
   ensureSession();
@@ -520,8 +520,8 @@ export function useSessions(options: UseSessionsOptions = {}) {
     removeSession,
     renameSession,
     restoreSessionTitle,
-    saveSessions,
-    scheduleSaveSessions,
+    registerSession,
+    scheduleCreateSession,
     sessions,
     switchSession,
     touchSession,

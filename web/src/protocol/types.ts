@@ -6,6 +6,7 @@ export type ServerEventType =
   | 'content'
   | 'assistant'
   | 'message'
+  | 'feedback'
   | 'think'
   | 'thinking'
   | 'status'
@@ -87,7 +88,7 @@ export interface ChatSession {
   title: string;
   createdAt: string;
   updatedAt: string;
-  /** 后端 readSession 里同步过来的名称；本地标题会被第一句话覆盖。 */
+  /** 后端 listSessions 里同步过来的名称；本地标题会被第一句话覆盖。 */
   remoteName?: string;
   /**
    * 用户在界面上主动点的「新建会话」留的空壳。
@@ -148,7 +149,7 @@ export interface ClientHistoryRequest {
 
 /**
  * 会话 CRUD 目前复用 memory 这个 type：后端 `process_memory` 里
- * 直接 switch 了 read / delete / readSession / deleteSession / renameSession。
+ * 直接 switch 了 read / delete / listSessions / deleteSession / renameSession。
  */
 export type ClientMemoryAct = 'read' | 'delete' | ClientSessionAct;
 
@@ -179,7 +180,7 @@ export interface ClientMemoryDeleteRequest {
 }
 
 /**
- * 会话 CRUD（readSession / deleteSession / renameSession）。
+ * 会话 CRUD（listSessions / deleteSession / renameSession）。
  *
  * `sessionId` **一律放顶层**：后端 `go.php` 的派发是
  * `$this->message->$type_method($socket_id, $data['content'], $data['sessionId'] ?? '')`，
@@ -188,14 +189,14 @@ export interface ClientMemoryDeleteRequest {
  */
 export interface ClientMemorySessionRequest {
   type: 'memory';
-  /** readSession 可以不带（服务端会拿到空值）；deleteSession / renameSession 传目标会话 id。 */
+  /** listSessions 可以不带（服务端会拿到空值）；deleteSession / renameSession 传目标会话 id。 */
   sessionId?: string;
   content: {
     act: ClientSessionAct;
     /**
      * 仅 `renameSession` 使用：新的会话名。
      * 字段名跟后端 `updateSession(session_id, session_name)` 以及
-     * `readSession` 返回的 `session_name` 保持一致，别改成驼峰。
+     * `listSessions` 返回的 `session_name` 保持一致，别改成驼峰。
      */
     session_name?: string;
   };
@@ -210,13 +211,16 @@ export interface MemoryRecord {
 }
 
 /**
- * 中止某个会话正在跑的那一轮。
+ * 中止当前正在跑的那一轮。
  *
- * `sessionId` **必须在顶层且非空**：后端拿到它做 `openai->abort()` +
- * `setStatus(sessionId, IDLE)`，给 null 会把 IDLE 写到错的会话上。
+ * `sessionId` 仍然放在顶层：前端用它把「Stop request sent.」和 stopped 收尾
+ * 写回真正在跑的那个会话；后端 `/abort` 分支目前只中止主 worker，不读 `messageId`。
+ *
+ * 请求类型是 `/abort`：后端 `go.php onMessage` 直接按这个字符串拦截，
+ * 不会走 `process_*` 反射。服务端「已停止生成」的回执仍然是 `type: 'abort'`。
  */
 export interface ClientAbortRequest {
-  type: 'abort';
+  type: '/abort';
   sessionId: string;
   /** 前端用来认领本地那一轮；后端不看这个字段。 */
   messageId: string | null;
@@ -242,7 +246,7 @@ export interface ClientSystemRequest {
   };
 }
 
-export type ClientSessionAct = 'readSession' | 'deleteSession' | 'renameSession';
+export type ClientSessionAct = 'listSessions' | 'deleteSession' | 'renameSession';
 
 export interface ClientSessionRequest {
   type: 'session';
@@ -254,7 +258,7 @@ export interface ClientSessionRequest {
   };
 }
 
-/** 后端 readSession 返回的一条会话记录。 */
+/** 后端 listSessions 返回的一条会话记录。 */
 export interface RemoteSession {
   session_id: string;
   session_name?: string;

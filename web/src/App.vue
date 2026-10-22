@@ -208,8 +208,8 @@ const agent = useWebSocketAgent({
   onSessionMessage: handleSessionMessage,
   onSettingMessage: handleSettingMessage,
   onSystemMessage: handleSystemMessage,
-  saveSessions: sessions.saveSessions,
-  scheduleSaveSessions: sessions.scheduleSaveSessions,
+  registerSession: sessions.registerSession,
+  scheduleCreateSession: sessions.scheduleCreateSession,
   touchSession: sessions.touchSession,
 });
 const connectionErrorText = computed(() => formatConnectionIssue(agent.connectionError.value));
@@ -608,7 +608,7 @@ function deleteSubAgent(agentName: string) {
   if (selectedSubAgentName.value === agentName) {
     selectedSubAgentName.value = null;
   }
-  sessions.saveSessions();
+  sessions.registerSession();
 }
 
 function selectSubAgent(agentName: string) {
@@ -903,7 +903,7 @@ function sendSettingRequest(act: ClientSettingAct, content?: unknown) {
 
 function handleMemoryMessage(act: string, msg: ServerMessage) {
   // 会话 CRUD 目前是 memory 类型下的 act，转发给会话处理。
-  if (act === 'readSession' || act === 'deleteSession' || act === 'renameSession') {
+  if (act === 'listSessions' || act === 'deleteSession' || act === 'renameSession') {
     handleSessionMessage(act, msg);
     return;
   }
@@ -978,12 +978,12 @@ function handleMemoryMessage(act: string, msg: ServerMessage) {
 }
 
 // ---------------------------------------------------------------------------
-// 会话（session）：readSession / deleteSession，形如 memory
+// 会话（session）：listSessions / deleteSession，形如 memory
 // ---------------------------------------------------------------------------
 
 function requestSessionRead(): boolean {
   if (!agent.canSend.value) return false;
-  if (!agent.readSessions()) return false;
+  if (!agent.listSessions()) return false;
   sessionLoading.value = true;
   sessionError.value = '';
   // 会话列表超时也要把历史拉起来，否则聊天区会一直空着。
@@ -1033,7 +1033,7 @@ function clearSessionDeleteTimer() {
 function handleSessionMessage(act: string, msg: ServerMessage) {
   const errorMessage = normalizeServerError(msg);
 
-  if (act === 'readSession') {
+  if (act === 'listSessions') {
     clearSessionResponseTimer();
     sessionLoading.value = false;
     if (errorMessage) {
@@ -1058,7 +1058,7 @@ function handleSessionMessage(act: string, msg: ServerMessage) {
     sessionDeleting.value = false;
     if (errorMessage) {
       // 后端没能删掉（缺会话 ID、服务端异常…）：本地**保留**这条会话，
-      // 否则下次 readSession 会把它又带回来，看起来就像「删了又复活」。
+      // 否则下次 listSessions 会把它又带回来，看起来就像「删了又复活」。
       sessionDeleteCandidateId.value = null;
       sessionError.value = '';
       toasts.pushToast(`${t.value.sessionDeleteFailed}：${errorMessage}`, 'error');
@@ -1447,7 +1447,7 @@ function applyOlderMemoryPage(page: MemoryRecord[], responseTotal: number | null
   }
 }
 
-/** 解析后端 readSession 的返回，容错掉任何缺 session_id 的脏数据。 */
+/** 解析后端 listSessions 的返回，容错掉任何缺 session_id 的脏数据。 */
 function parseRemoteSessions(value: unknown): RemoteSession[] {
   const list = Array.isArray(value) ? value : [];
   const seen = new Set<string>();

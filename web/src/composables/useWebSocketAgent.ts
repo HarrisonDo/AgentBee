@@ -89,8 +89,8 @@ interface UseWebSocketAgentOptions {
   onSystemMessage?: (act: string, content: unknown, msg: ServerMessage) => void;
   onMemoryMessage?: (act: string, msg: ServerMessage) => void;
   onSessionMessage?: (act: string, msg: ServerMessage) => void;
-  saveSessions: () => void;
-  scheduleSaveSessions: () => void;
+  registerSession: () => void;
+  scheduleCreateSession: () => void;
   touchSession: (session: ChatSession) => void;
 }
 
@@ -438,7 +438,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     ensureAssistantMessage(messageId);
     startNoResponseTimer(messageId);
     options.touchSession(session);
-    options.saveSessions();
+    options.registerSession();
 
     sendJson({
       sessionId: session.id,
@@ -458,7 +458,9 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     const session = resolveTurnSession(messageId).session || options.activeSession();
     if (!session) return false;
 
-    sendJson({ type: 'abort', sessionId: session.id, messageId: messageId || makeId() });
+    // 后端把 `/abort` 当作指令前缀处理（`go.php` 里 `'/abort' === $data['type']`），
+    // 不会反射成 `process_abort`；服务端「已停止生成」的回执仍然是 `type: 'abort'`。
+    sendJson({ type: '/abort', sessionId: session.id, messageId: messageId || makeId() });
 
     // 提示写进被停止的那个会话，而不是用户此刻正在看的会话。
     session.messages.push({
@@ -537,13 +539,13 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   }
 
   /**
-   * 会话请求。后端（`lib/message.php process_memory`）目前是把 readSession / deleteSession /
+   * 会话请求。后端（`lib/message.php process_memory`）目前是把 listSessions / deleteSession /
    * renameSession 当作 **memory 类型的一个 act** 实现的，没有独立的 process_session，
    * 所以这里必须发 `type: 'memory'`，否则后端反射不到方法。
    * 若后端哪天拆出 `type: 'session'`，把 SESSION_REQUEST_TYPE 改掉即可，
    * 响应侧两种 type 都能识别。
    *
-   * `sessionId` 走**顶层**：`readSession` 不传就带上当前会话（后端 readSession 不按会话过滤，
+   * `sessionId` 走**顶层**：`listSessions` 不传就带上当前会话（后端 listSessions 不按会话过滤，
    * 带上只是为了「会话相关请求一律带顶层 sessionId」这条约定统一）；
    * `deleteSession` / `renameSession` 传的是**目标会话**，后端直接读它。
    */
@@ -563,8 +565,8 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     return true;
   }
 
-  function readSessions(): boolean {
-    return sendSessionAct('readSession');
+  function listSessions(): boolean {
+    return sendSessionAct('listSessions');
   }
 
   function deleteSession(sessionId: string): boolean {
@@ -579,7 +581,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
    *
    * 目标会话 id 走**顶层**——后端 `process_memory` 的第三个参数就是它，
    * `content` 里只放 act 自己的参数。名字字段用蛇形 `session_name`，
-   * 对齐后端 `updateSession(session_id, session_name)` 和 `readSession` 返回里的同名字段。
+   * 对齐后端 `updateSession(session_id, session_name)` 和 `listSessions` 返回里的同名字段。
    */
   function renameSession(sessionId: string, sessionName: string): boolean {
     const id = sessionId.trim();
@@ -614,6 +616,46 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
 
   function sendJson(payload: ClientMessage) {
     socket.value?.send(`${JSON.stringify(payload)}\n`);
+  }
+
+  /**
+   * 多端同步：把其他设备广播过来的 `feedback` 落成会话里的一条用户消息。
+   *
+   * 后端 `go.php onMessage` 会把用户输入原样广播给**其他**在线客户端，
+   * 载荷形如 `{ type:'feedback', data:'文本', sessionId, messageId, ... }`。
+   * 它和本机发消息时本地先插入的那条 user 消息语义相同，所以按 user 渲染。
+   *
+   * - 只认已存在的会话：未知 session 宁可丢弃，也不写错会话（与广播事件的路由规则一致）。
+   * - 按服务端 `messageId` 去重，重复投递不会出现两条气泡。
+   * - 不登记 pendingTurns：这条消息没有在本机发起一轮对话，不应该触发加载态或超时收尾。
+   */
+  function appendRemoteFeedbackMessage(msg: ServerMessage) {
+    const sessionId = (msg.sessionId || msg.session_id || '').trim();
+    if (!sessionId) return;
+
+    const session = options.getSessionById
+      ? options.getSessionById(sessionId)
+      : options.activeSession()?.id === sessionId ? options.activeSession() : null;
+    if (!session) return;
+
+    const messageId = (msg.messageId || '').trim();
+    if (messageId && session.messages.some((message) => message.messageId === messageId)) return;
+
+    const content = normalizePayload(msg);
+    if (!content.trim()) return;
+
+    session.messages.push({
+      id: makeId(),
+      role: 'user',
+      content,
+      time: nowTime(),
+      ...(messageId ? { messageId } : {}),
+      ...(typeof msg.sender === 'string' && msg.sender.trim() ? { sender: msg.sender.trim() } : {}),
+    });
+
+    if (session.keepEmpty) delete session.keepEmpty;
+    options.touchSession(session);
+    options.registerSession();
   }
 
   function handleServerMessage(raw: string) {
@@ -654,6 +696,12 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       return;
     }
     if (type === 'history') return;
+    // 多端同步：其他设备发出的用户消息由后端以 `feedback` 广播过来。
+    // 它不是一轮回复，不能走下面的 assistant 兜底分支（否则整包 JSON 会变成气泡）。
+    if (type === 'feedback') {
+      appendRemoteFeedbackMessage(msg);
+      return;
+    }
     // 广播事件按服务端 session 路由；无 session 的旧协议只能认已知轮次。
     const sessionId = (msg.sessionId || msg.session_id || '').trim();
     if (sessionId) {
@@ -817,7 +865,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.content += text || '';
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.scheduleSaveSessions();
+    options.scheduleCreateSession();
   }
 
   function appendAssistantThinkNow(messageId: string | null, text: string, msg?: ServerMessage) {
@@ -828,7 +876,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.think = `${turn.assistant.think || ''}${text || ''}`;
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.scheduleSaveSessions();
+    options.scheduleCreateSession();
   }
 
   function appendAssistantToolEvent(messageId: string | null, kind: 'tool_calls' | 'tool_result', msg: ServerMessage) {
@@ -840,7 +888,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.toolEvents.push(normalizeToolEvent(kind, msg, makeId, nowTime));
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.scheduleSaveSessions();
+    options.scheduleCreateSession();
   }
 
   function appendAssistantImage(messageId: string | null, msg: ServerMessage) {
@@ -858,7 +906,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.images.push(image);
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.scheduleSaveSessions();
+    options.scheduleCreateSession();
   }
 
   function finishAssistantMessage(
@@ -880,7 +928,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       options.touchSession(session);
     }
     if (resolvedMessageId) pendingTurns.value.delete(resolvedMessageId);
-    options.saveSessions();
+    options.registerSession();
   }
 
   function finishAllPendingWithoutResponse() {
@@ -901,7 +949,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       }
     });
     pendingTurns.value.clear();
-    options.saveSessions();
+    options.registerSession();
   }
 
   /**
@@ -933,7 +981,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     if (assistant && hasAssistantOutput(assistant)) {
       assistant.status = 'stopped';
       pendingTurns.value.delete(resolvedMessageId);
-      options.saveSessions();
+      options.registerSession();
       return;
     }
 
@@ -941,7 +989,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       message.role === 'assistant' && message.messageId === resolvedMessageId
     ));
     pendingTurns.value.delete(resolvedMessageId);
-    options.saveSessions();
+    options.registerSession();
   }
 
   function removeAssistantForMessage(session: ChatSession, messageId: string) {
@@ -964,7 +1012,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       if (assistant && assistant.status === 'loading' && !hasAssistantOutput(assistant)) {
         assistant.status = 'done';
         pendingTurns.value.delete(messageId);
-        options.saveSessions();
+        options.registerSession();
       }
       noResponseTimers.delete(messageId);
     }, NO_RESPONSE_TIMEOUT_MS);
@@ -1051,7 +1099,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.files.push(file);
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.scheduleSaveSessions();
+    options.scheduleCreateSession();
   }
 
   function handleOffline() {
@@ -1183,7 +1231,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     reconnect,
     resumeConnection,
     readMemory,
-    readSessions,
+    listSessions,
     renameSession,
     resendEditedText,
     sendSessionAct,

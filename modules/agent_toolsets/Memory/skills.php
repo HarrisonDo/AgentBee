@@ -30,12 +30,12 @@ class skills
         [
             'type'     => 'function',
             'function' => [
-                'name'        => 'saveSession',
-                'description' => '新建会话。仅当用户明确提出"新建会话"并提供会话名称时才可调用。返回：{status, session_id}或{status, error}。',
+                'name'        => 'createSession',
+                'description' => '创建新会话记录，不涉及记忆内容。用户明确要求"新建会话"并提供名称时才调用。返回：{status, session_id}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
-                        'session_id'   => ['type' => 'string', 'description' => '会话ID (标准 UUID v4 格式字符串)'],
+                        'session_id'   => ['type' => 'string', 'description' => '会话ID（标准 UUID v4 格式字符串）'],
                         'session_name' => ['type' => 'string', 'description' => '会话名称']
                     ],
                     'required'   => ['session_id', 'session_name']
@@ -45,12 +45,12 @@ class skills
         [
             'type'     => 'function',
             'function' => [
-                'name'        => 'readSession',
-                'description' => '读取会话列表，获取会话ID和名称。用户提及历史会话/切换话题/查阅其他会话记忆时调用。返回：{status, sessions: [{session_id, session_name, session_status, create_time}]}。',
+                'name'        => 'listSessions',
+                'description' => '列出所有会话的ID、名称和状态。用于跨会话定位会话ID（如用户提及其他会话内容时，先获取会话列表，再读取对应会话的记忆）。返回：{status, sessions: [{session_id, session_name, session_status, create_time}]}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
-                        'session_status' => ['type' => 'integer', 'default' => 1, 'description' => '会话状态：1=启用(默认)；2=已删除；0=全部']
+                        'session_status' => ['type' => 'integer', 'default' => 1, 'description' => '会话状态过滤：1=启用（默认）；2=已删除；0=全部会话（含已删除）']
                     ],
                     'required'   => []
                 ],
@@ -59,14 +59,41 @@ class skills
         [
             'type'     => 'function',
             'function' => [
-                'name'        => 'updateSession',
-                'description' => '按会话ID更新会话名称与状态。返回：{status, affected_rows}。',
+                'name'        => 'renameSession',
+                'description' => '修改指定会话的名称。返回：{status, affected_rows}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
-                        'session_id'     => ['type' => 'string', 'description' => '会话ID'],
-                        'session_name'   => ['type' => 'string', 'default' => '', 'description' => '新会话名称(可选，为空表示不修改)'],
-                        'session_status' => ['type' => 'integer', 'default' => 0, 'description' => '会话状态：1=启用；2=删除；0=不修改(默认)']
+                        'session_id'   => ['type' => 'string', 'description' => '会话ID'],
+                        'session_name' => ['type' => 'string', 'description' => '新会话名称'],
+                    ],
+                    'required'   => ['session_id', 'session_name']
+                ],
+            ],
+        ],
+        [
+            'type'     => 'function',
+            'function' => [
+                'name'        => 'deleteSession',
+                'description' => '软删除指定会话。不影响该会话下的记忆条目。返回：{status, affected_rows}或{status, error}。',
+                'parameters'  => [
+                    'type'       => 'object',
+                    'properties' => [
+                        'session_id' => ['type' => 'string', 'description' => '会话ID'],
+                    ],
+                    'required'   => ['session_id']
+                ],
+            ],
+        ],
+        [
+            'type'     => 'function',
+            'function' => [
+                'name'        => 'restoreSession',
+                'description' => '恢复软删除的会话到启用状态。返回：{status, affected_rows}或{status, error}。',
+                'parameters'  => [
+                    'type'       => 'object',
+                    'properties' => [
+                        'session_id' => ['type' => 'string', 'description' => '会话ID'],
                     ],
                     'required'   => ['session_id']
                 ],

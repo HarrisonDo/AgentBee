@@ -179,15 +179,19 @@ class message extends Factory
                 $content['act'] = $act;
                 break;
 
-            case 'readSession':
-                $content = $data_content['memory']->readSession(1, true);
+            case 'listSessions':
+                $content = $data_content['memory']->listSessions(1, true);
 
                 $content['act'] = $act;
                 break;
 
             case 'renameSession':
                 if ('' !== $session_id && '' !== ($data_content['session_name'] ?? '')) {
-                    $content = $data_content['memory']->updateSession($session_id, $data_content['session_name']);
+                    $content = $data_content['memory']->createSession($session_id, $data_content['session_name']);
+
+                    if ('success' === $content['status']) {
+                        $content = $data_content['memory']->updateSession($session_id, $data_content['session_name']);
+                    }
                 } else {
                     $content = ['status' => 'error', 'error' => '缺少会话ID'];
                 }
@@ -200,7 +204,7 @@ class message extends Factory
                     $context = context::new();
                     $context->removeHistory($session_id, WORKER_MAIN);
                     $context->removeMessageQueue($session_id, WORKER_MAIN);
-                    $content = $data_content['memory']->updateSession($session_id, '', 2);
+                    $content = $data_content['memory']->deleteSession($session_id);
                 } else {
                     $content = ['status' => 'error', 'error' => '缺少会话ID'];
                 }
