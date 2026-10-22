@@ -179,8 +179,8 @@ class message extends Factory
                 $content['act'] = $act;
                 break;
 
-            case 'readSession':
-                $content = $data_content['memory']->readSession(1, true);
+            case 'listSessions':
+                $content = $data_content['memory']->listSessions(1, true);
 
                 $content['act'] = $act;
                 break;

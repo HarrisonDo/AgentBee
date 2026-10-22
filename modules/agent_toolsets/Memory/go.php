@@ -125,7 +125,7 @@ class go extends Factory
         $this->initDatabase();
         $this->purgeExpired();
 
-        $this->readSession(0);
+        $this->listSessions(0);
     }
 
     // =========================================================================
@@ -139,7 +139,7 @@ class go extends Factory
      * @return string[]
      * @throws \ReflectionException
      */
-    public function saveSession(string $session_id, string $session_name): array
+    public function registerSession(string $session_id, string $session_name): array
     {
         if (in_array($session_id, $this->session_list, true)) {
             return ['status' => 'success', 'session_id' => $session_id];
@@ -174,7 +174,7 @@ class go extends Factory
      * @return array
      * @throws \ReflectionException
      */
-    public function readSession(int $session_status = 1, bool $keep_datetime = false): array
+    public function listSessions(int $session_status = 1, bool $keep_datetime = false): array
     {
         if (!in_array($session_status, [0, 1, 2], true)) {
             $session_status = 0;
@@ -224,28 +224,38 @@ class go extends Factory
             return ['status' => 'success', 'affected_rows' => 0];
         }
 
-        $session_data = [];
+        $session = $this->libSQLite->select()
+            ->table('agent_session')
+            ->where(['session_id', $session_id])
+            ->limit(1)
+            ->fetch();
 
-        if (0 !== $session_status) {
-            if (!in_array($session_status, [1, 2], true)) {
-                $session_status = 1;
-            }
-
-            $session_data['session_status'] = $session_status;
-        }
+        $session_data = ['session_id' => $session_id];
 
         if ('' !== $session_name) {
             $session_data['session_name'] = $session_name;
         }
 
+        $session_data['session_status'] = 0 !== $session_status
+            ? (in_array($session_status, [1, 2], true) ? $session_status : 1)
+            : ($session['session_status'] ?? 1);
+
+        if ([] === $session) {
+            $now_time = time();
+
+            $session_data['create_time'] = $now_time;
+            $session_data['last_time']   = $now_time;
+
+            unset($now_time);
+        }
+
         $this->libSQLite->table('agent_session')
-            ->update($session_data)
-            ->where(['session_id', $session_id])
+            ->replace($session_data)
             ->execute();
 
         $result = ['status' => 'success', 'affected_rows' => $this->libSQLite->getAffectedRows()];
 
-        unset($session_id, $session_name, $session_status, $session_data);
+        unset($session_id, $session_name, $session_status, $session, $session_data);
         return $result;
     }
 
@@ -299,7 +309,7 @@ class go extends Factory
         }
 
         if ('' !== $session_id) {
-            $this->saveSession($session_id, mb_substr($content, 0, 16, 'UTF-8'));
+            $this->registerSession($session_id, mb_substr($content, 0, 16, 'UTF-8'));
 
             $this->libSQLite->table('agent_session')
                 ->update(['last_time' => $now_time])
