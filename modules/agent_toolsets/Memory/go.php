@@ -194,14 +194,15 @@ class go extends Factory
         $sessions = $query->order(['last_time' => 'DESC'])->fetchAll();
 
         foreach ($sessions as $id => $session) {
-            $sessions[$id]['create_time'] = $keep_datetime
-                ? date('Y-m-d H:i', $session['create_time'])
-                : $this->formatMicroTime($session['create_time'], $now);
-
-            $sessions[$id]['session_status'] = match ($session['session_status']) {
-                1 => '启用',
-                default => '已删除'
-            };
+            if ($keep_datetime) {
+                $sessions[$id]['create_time'] = date('Y-m-d H:i', $session['create_time']);
+            } else {
+                $sessions[$id]['create_time']    = $this->formatMicroTime($session['create_time'], $now);
+                $sessions[$id]['session_status'] = match ($session['session_status']) {
+                    1 => '启用',
+                    default => '已删除'
+                };
+            }
         }
 
         $this->session_list = array_column($sessions, 'session_id');
@@ -832,7 +833,10 @@ class go extends Factory
         $result = [];
 
         foreach ($tasks as $key => $task) {
-            $result[] = '[任务' . ($key + 1) . '] ' . $task['prompt'];
+            $result[] = [
+                'create_id' => $task['create_id'],
+                'prompt'    => '[任务' . ($key + 1) . '] ' . $task['prompt']
+            ];
 
             if ($task['repeat']) {
                 // Recurring task: calculate next run time
