@@ -803,7 +803,7 @@ class go extends Factory
 
         $session_list = $this->memory->listSessions(0, true);
 
-        foreach ($session_list as $session) {
+        foreach ($session_list['sessions'] as $session) {
             $task_list = $this->memory->runTask($session['session_id']);
 
             if ([] === $task_list) {
