@@ -141,7 +141,7 @@
 侧边栏有「会话」面板：列出会话、点击切换、每条可删除，顶部可新建。
 
 - **协议**：会话 CRUD 目前是 **memory 类型下的 act**，不是独立的 `session` 类型——后端
-  `lib/message.php` 的 `process_memory` 里直接 switch 了 `read` / `delete` / `readSession` /
+  `lib/message.php` 的 `process_memory` 里直接 switch 了 `read` / `delete` / `listSessions` /
   `deleteSession` / `renameSession`，并没有 `process_session`。
 - **`sessionId` 一律放顶层，`content` 里不放**：后端 `go.php` 的派发是
   `$this->message->$type_method($socket_id, $data['content'], $data['sessionId'] ?? '')`，
@@ -149,7 +149,7 @@
   `renameSession` / `deleteSession` 拿它当目标会话），`content` 里只放 act 自己的参数。
   所以请求长这样：
   ```json
-  { "type": "memory", "sessionId": "uuid", "content": { "act": "readSession" } }
+  { "type": "memory", "sessionId": "uuid", "content": { "act": "listSessions" } }
   { "type": "memory", "sessionId": "uuid", "content": { "act": "deleteSession" } }
   { "type": "memory", "sessionId": "uuid", "content": { "act": "renameSession", "session_name": "新名字" } }
   { "type": "memory", "sessionId": "uuid", "content": { "act": "read", "length": 20, "create_id": 0 } }
@@ -158,23 +158,23 @@
   `type:'setting'` / `type:'system'` 与会话无关，不带 `sessionId`
   （它们的 `process_*` 是两参数签名，PHP 会忽略多传的那个参数）。
   前端统一走 `useWebSocketAgent.currentSessionId()` 取这个值。
-  后端把 content 展开到了顶层，响应形如 `{ "type":"memory", "act":"readSession", "status":"success",
+  后端把 content 展开到了顶层，响应形如 `{ "type":"memory", "act":"listSessions", "status":"success",
   "sessions":[{"session_id":"...","session_name":"...","create_time":"..."}] }`。
   前端对 `type: 'session'` 的响应也兼容（`useWebSocketAgent.ts` 里的 `SESSION_REQUEST_TYPE` 可切换）。
-- **拉取时机**：连接成功后和 `getConfig` / `getModels` / memory read 一起自动发一次 `readSession`；
+- **拉取时机**：连接成功后和 `getConfig` / `getModels` / memory read 一起自动发一次 `listSessions`；
   面板上的刷新按钮可手动再拉。
 - **新建会话**：`sessionId` 由前端 `makeId()`（UUID）生成，每次 chat 请求都会带上；
   后端收到第一条消息后自动入库，会话名取第一句话的前 8 个字。前端本地标题也按同样的 8 字规则生成。
 - **打开窗口时的落点**：会话列表**可以为空**，不会为了「让界面有东西可渲染」凭空造一条空会话——
   只有 `activeSession` 会退回内存兜底（不进列表、不落盘）。
-  `loadSessions()` 先把落点定在缓存里的第一条，第一份 `readSession` 回来后**再定位到列表第一条**
+  `loadSessions()` 先把落点定在缓存里的第一条，第一份 `listSessions` 回来后**再定位到列表第一条**
   （后端按 `create_time DESC` 返回，即最近一条）。这就是「打开就直接进最近那个会话，不新建」。
   一旦用户自己动过（发消息 / 新建 / 切换 / 删除 / 改名，`markPlacementDecided()`），
   自动定位立刻作废：之后的手动刷新、断线重连都不会把用户从正在聊的会话里拽走。
   后端也没有历史就保持空列表并提示「还没有会话」，由用户自己点新建。
 - **空壳不落盘**：`isUnusedEmptySession()` = 没有任何消息 + 标题还是占位文案 + 没被手动命名过 +
   不是后端下发的。这类会话（兜底占位、以及用户点了「新建会话」却一句话没说就刷新走的空壳）
-  `saveSessions()` 不写、`loadSessions()` 加载时也会过滤。
+  `registerSession()` 不写、`loadSessions()` 加载时也会过滤。
   不这样做的话它会排在列表最前面，看起来就像「一打开窗口又自动新建了一个会话」。
   在后端下发的或用户主动命名的空会话照常保留。用户主动新建的空壳只在本次打开期间留在内存里。
 - **删除**：先弹确认框，确认后发 `deleteSession`（后端是软删，即 `updateSession(..., status=2)`），
@@ -221,13 +221,13 @@
   `system` / `error` 是连接日志（`WebSocket connected.` / `Not connected, …`），
   它们落进内存兜底会话即可——**不能建会话**。
   否则「token 登录成功」这一步就会凭空冒出一条空会话（连接时列表通常正是空的），
-  而且会把「首次落点」标记用掉，导致随后的 `readSession` 也不再自动定位到最近的真实会话。
+  而且会把「首次落点」标记用掉，导致随后的 `listSessions` 也不再自动定位到最近的真实会话。
 - **聊天历史按会话隔离**：`memory read` 请求在**顶层**带 `sessionId`（`useWebSocketAgent.readMemory()`）。
   `go.php` 把它作为第三个参数传进 `process_memory`，read 分支再传给
   `Memory::read(..., $session_id, ...)`——那里对 `daily`/`misc` 只在 `session_id !== ''` 时才加 `where`。
   **漏带这个字段后端就会返回全局历史**，表现就是「新建会话还能看到旧会话的记录」。
   配套行为：切会话 / 新建会话 / 删掉当前会话都会 `resetMemoryHistory()` + 重拉
-  （`reloadActiveSessionHistory()`）；连接时先 `readSession`、等会话落点定了再拉历史；
+  （`reloadActiveSessionHistory()`）；连接时先 `listSessions`、等会话落点定了再拉历史；
   迟到的响应按发起时的会话 id 丢弃（`memoryRequestSessionId` 比对），
   避免把上一个会话的历史画进新会话。
 
@@ -259,7 +259,7 @@
 `sessionResponseTimer`——那个的守卫是 `sessionLoading`，删除时它一直是 false，计时器会空跑，
 结果是「会话既没删掉、界面上也没有任何解释」。
 
-会话列表读取失败（`readSession` 超时 / 报错）仍然用面板底部那行红字（`SessionPanel` 的 `error` prop），
+会话列表读取失败（`listSessions` 超时 / 报错）仍然用面板底部那行红字（`SessionPanel` 的 `error` prop），
 因为它描述的是「列表本身不可靠」这种上下文状态，而不是一次性动作的结果。
 
 ### 移动端适配（会话列表）

@@ -89,8 +89,8 @@ interface UseWebSocketAgentOptions {
   onSystemMessage?: (act: string, content: unknown, msg: ServerMessage) => void;
   onMemoryMessage?: (act: string, msg: ServerMessage) => void;
   onSessionMessage?: (act: string, msg: ServerMessage) => void;
-  saveSessions: () => void;
-  scheduleSaveSessions: () => void;
+  registerSession: () => void;
+  scheduleregisterSession: () => void;
   touchSession: (session: ChatSession) => void;
 }
 
@@ -438,7 +438,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     ensureAssistantMessage(messageId);
     startNoResponseTimer(messageId);
     options.touchSession(session);
-    options.saveSessions();
+    options.registerSession();
 
     sendJson({
       sessionId: session.id,
@@ -539,13 +539,13 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   }
 
   /**
-   * 会话请求。后端（`lib/message.php process_memory`）目前是把 readSession / deleteSession /
+   * 会话请求。后端（`lib/message.php process_memory`）目前是把 listSessions / deleteSession /
    * renameSession 当作 **memory 类型的一个 act** 实现的，没有独立的 process_session，
    * 所以这里必须发 `type: 'memory'`，否则后端反射不到方法。
    * 若后端哪天拆出 `type: 'session'`，把 SESSION_REQUEST_TYPE 改掉即可，
    * 响应侧两种 type 都能识别。
    *
-   * `sessionId` 走**顶层**：`readSession` 不传就带上当前会话（后端 readSession 不按会话过滤，
+   * `sessionId` 走**顶层**：`listSessions` 不传就带上当前会话（后端 listSessions 不按会话过滤，
    * 带上只是为了「会话相关请求一律带顶层 sessionId」这条约定统一）；
    * `deleteSession` / `renameSession` 传的是**目标会话**，后端直接读它。
    */
@@ -565,8 +565,8 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     return true;
   }
 
-  function readSessions(): boolean {
-    return sendSessionAct('readSession');
+  function listSessions(): boolean {
+    return sendSessionAct('listSessions');
   }
 
   function deleteSession(sessionId: string): boolean {
@@ -581,7 +581,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
    *
    * 目标会话 id 走**顶层**——后端 `process_memory` 的第三个参数就是它，
    * `content` 里只放 act 自己的参数。名字字段用蛇形 `session_name`，
-   * 对齐后端 `updateSession(session_id, session_name)` 和 `readSession` 返回里的同名字段。
+   * 对齐后端 `updateSession(session_id, session_name)` 和 `listSessions` 返回里的同名字段。
    */
   function renameSession(sessionId: string, sessionName: string): boolean {
     const id = sessionId.trim();
@@ -655,7 +655,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
 
     if (session.keepEmpty) delete session.keepEmpty;
     options.touchSession(session);
-    options.saveSessions();
+    options.registerSession();
   }
 
   function handleServerMessage(raw: string) {
@@ -865,7 +865,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.content += text || '';
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.scheduleSaveSessions();
+    options.scheduleregisterSession();
   }
 
   function appendAssistantThinkNow(messageId: string | null, text: string, msg?: ServerMessage) {
@@ -876,7 +876,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.think = `${turn.assistant.think || ''}${text || ''}`;
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.scheduleSaveSessions();
+    options.scheduleregisterSession();
   }
 
   function appendAssistantToolEvent(messageId: string | null, kind: 'tool_calls' | 'tool_result', msg: ServerMessage) {
@@ -888,7 +888,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.toolEvents.push(normalizeToolEvent(kind, msg, makeId, nowTime));
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.scheduleSaveSessions();
+    options.scheduleregisterSession();
   }
 
   function appendAssistantImage(messageId: string | null, msg: ServerMessage) {
@@ -906,7 +906,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.images.push(image);
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.scheduleSaveSessions();
+    options.scheduleregisterSession();
   }
 
   function finishAssistantMessage(
@@ -928,7 +928,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       options.touchSession(session);
     }
     if (resolvedMessageId) pendingTurns.value.delete(resolvedMessageId);
-    options.saveSessions();
+    options.registerSession();
   }
 
   function finishAllPendingWithoutResponse() {
@@ -949,7 +949,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       }
     });
     pendingTurns.value.clear();
-    options.saveSessions();
+    options.registerSession();
   }
 
   /**
@@ -981,7 +981,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     if (assistant && hasAssistantOutput(assistant)) {
       assistant.status = 'stopped';
       pendingTurns.value.delete(resolvedMessageId);
-      options.saveSessions();
+      options.registerSession();
       return;
     }
 
@@ -989,7 +989,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       message.role === 'assistant' && message.messageId === resolvedMessageId
     ));
     pendingTurns.value.delete(resolvedMessageId);
-    options.saveSessions();
+    options.registerSession();
   }
 
   function removeAssistantForMessage(session: ChatSession, messageId: string) {
@@ -1012,7 +1012,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       if (assistant && assistant.status === 'loading' && !hasAssistantOutput(assistant)) {
         assistant.status = 'done';
         pendingTurns.value.delete(messageId);
-        options.saveSessions();
+        options.registerSession();
       }
       noResponseTimers.delete(messageId);
     }, NO_RESPONSE_TIMEOUT_MS);
@@ -1099,7 +1099,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     turn.assistant.files.push(file);
     turn.assistant.status = 'loading';
     options.touchSession(turn.session);
-    options.scheduleSaveSessions();
+    options.scheduleregisterSession();
   }
 
   function handleOffline() {
@@ -1231,7 +1231,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     reconnect,
     resumeConnection,
     readMemory,
-    readSessions,
+    listSessions,
     renameSession,
     resendEditedText,
     sendSessionAct,

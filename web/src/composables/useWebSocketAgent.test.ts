@@ -117,8 +117,8 @@ function setupAgent() {
     activeSession: () => currentSession(),
     addMessage,
     getSessionById: (id: string) => sessionList.find((item) => item.id === id) || null,
-    saveSessions: vi.fn(),
-    scheduleSaveSessions: vi.fn(),
+    registerSession: vi.fn(),
+    scheduleregisterSession: vi.fn(),
     touchSession: vi.fn(),
   });
 
@@ -504,8 +504,8 @@ describe('sendText reconnect dispatch', () => {
     const agent = useWebSocketAgent({
       activeSession: () => session,
       addMessage,
-      saveSessions: vi.fn(),
-      scheduleSaveSessions: vi.fn(),
+      registerSession: vi.fn(),
+      scheduleregisterSession: vi.fn(),
       touchSession: vi.fn(),
     });
     const dispatched = vi.fn();
@@ -600,17 +600,17 @@ describe('session delete requests', () => {
     expect(payload.content).not.toHaveProperty('sessionId');
   });
 
-  it('carries the active session id on readSession too', () => {
+  it('carries the active session id on listSessions too', () => {
     const { agent, sendUserText, sockets } = setupAgent();
     sendUserText('warmup');
 
-    expect(agent.readSessions()).toBe(true);
-    // readSession 本身不按会话过滤，但顶层不带 sessionId 会把后端的
+    expect(agent.listSessions()).toBe(true);
+    // listSessions 本身不按会话过滤，但顶层不带 sessionId 会把后端的
     // `utils->session_id` 清空，所以照样带上当前会话。
     expect(JSON.parse(sockets[0].sent[sockets[0].sent.length - 1])).toMatchObject({
       type: 'memory',
       sessionId: 'session-1',
-      content: { act: 'readSession' },
+      content: { act: 'listSessions' },
     });
   });
 });

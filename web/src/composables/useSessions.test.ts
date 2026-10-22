@@ -115,7 +115,7 @@ describe('useSessions', () => {
     first.addMessage('user', '唯一的一条');
     first.removeSession(first.activeSessionId.value);
     expect(first.sessions.value).toHaveLength(0);
-    first.saveSessions();
+    first.registerSession();
 
     // 刷新：localStorage 里不该残留任何会话（尤其是被自动补出来的空占位）。
     const second = useSessions({ defaultTitle: () => '新对话' });
@@ -151,7 +151,7 @@ describe('useSessions', () => {
     // 本地什么都没有，界面先渲染内存兜底。
     expect(sessions.sessions.value).toHaveLength(0);
 
-    // 下面是后端 readSession 的真实返回（ORDER BY create_time DESC）。
+    // 下面是后端 listSessions 的真实返回（ORDER BY create_time DESC）。
     sessions.applyRemoteSessions([
       { session_id: '7bcad843-f95d-410d-9272-8bfb7eb7ade0', session_name: '新的对话', create_time: '2026-09-14 09:44:05' },
       { session_id: '9299e9a0-fcd4-4770-8acb-41e7321ac72c', session_name: '你好', create_time: '2026-09-14 09:44:00' },
@@ -264,7 +264,7 @@ describe('useSessions', () => {
     first.addMessage('user', '要被记住的一句话');
     const id = first.activeSessionId.value;
     first.createSession();
-    first.saveSessions();
+    first.registerSession();
 
     const second = useSessions();
     second.loadSessions();
@@ -304,7 +304,7 @@ describe('标题的来源', () => {
 });
 
 describe('会话顺序以后端为准', () => {
-  it('renders the list in the order readSession returned', () => {
+  it('renders the list in the order listSessions returned', () => {
     const sessions = useSessions({ defaultTitle: () => '新对话' });
     sessions.applyRemoteSessions([
       { session_id: 'b', session_name: '第二个', create_time: '2026-09-14 09:00:00' },
@@ -448,7 +448,7 @@ describe('renameSession', () => {
     first.addMessage('user', '会被记住的会话');
     const id = first.activeSessionId.value;
     first.renameSession(id, '我改过的名字');
-    first.saveSessions();
+    first.registerSession();
 
     const second = useSessions({ defaultTitle: () => '新对话' });
     second.loadSessions();
@@ -494,7 +494,7 @@ describe('opening the window', () => {
     const first = useSessions({ defaultTitle: () => '新对话' });
     first.createSession();
     expect(first.sessions.value).toHaveLength(1);
-    first.saveSessions();
+    first.registerSession();
 
     const second = useSessions({ defaultTitle: () => '新对话' });
     second.loadSessions();
@@ -527,7 +527,7 @@ describe('opening the window', () => {
     expect(third.activeSessionId.value).toBe('real');
   });
 
-  it('lands on the first session when the first readSession arrives', () => {
+  it('lands on the first session when the first listSessions arrives', () => {
     // 上次退出时停在缓存里的这一条上。注意时间要用**绝对时刻**比：
     // 后端 `create_time` 是本地时间字符串，存进本地的是 ISO(UTC)，两边的时刻要对得上。
     storage.set('agentbee.sessions.v3', JSON.stringify([
@@ -545,7 +545,7 @@ describe('opening the window', () => {
     sessions.loadSessions();
     expect(sessions.activeSessionId.value).toBe('cached');
 
-    // 打开窗口后的第一份 readSession：应该定位到第一条（最近一条），
+    // 打开窗口后的第一份 listSessions：应该定位到第一条（最近一条），
     // 而不是停在缓存里那条，更不该凭空造一个新的。
     sessions.applyRemoteSessions([
       { session_id: 'newest', session_name: '刚聊的', create_time: '2026-09-14 10:00:00' },
@@ -603,7 +603,7 @@ describe('connection logs', () => {
     expect(sessions.activeSession.value.messages).toHaveLength(2);
   });
 
-  it('still opens the most recent session when a log arrives before readSession', () => {
+  it('still opens the most recent session when a log arrives before listSessions', () => {
     const sessions = useSessions({ defaultTitle: () => '新对话' });
     sessions.addMessage('system', 'WebSocket connected.');
 

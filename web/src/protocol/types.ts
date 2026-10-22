@@ -88,7 +88,7 @@ export interface ChatSession {
   title: string;
   createdAt: string;
   updatedAt: string;
-  /** 后端 readSession 里同步过来的名称；本地标题会被第一句话覆盖。 */
+  /** 后端 listSessions 里同步过来的名称；本地标题会被第一句话覆盖。 */
   remoteName?: string;
   /**
    * 用户在界面上主动点的「新建会话」留的空壳。
@@ -149,7 +149,7 @@ export interface ClientHistoryRequest {
 
 /**
  * 会话 CRUD 目前复用 memory 这个 type：后端 `process_memory` 里
- * 直接 switch 了 read / delete / readSession / deleteSession / renameSession。
+ * 直接 switch 了 read / delete / listSessions / deleteSession / renameSession。
  */
 export type ClientMemoryAct = 'read' | 'delete' | ClientSessionAct;
 
@@ -180,7 +180,7 @@ export interface ClientMemoryDeleteRequest {
 }
 
 /**
- * 会话 CRUD（readSession / deleteSession / renameSession）。
+ * 会话 CRUD（listSessions / deleteSession / renameSession）。
  *
  * `sessionId` **一律放顶层**：后端 `go.php` 的派发是
  * `$this->message->$type_method($socket_id, $data['content'], $data['sessionId'] ?? '')`，
@@ -189,14 +189,14 @@ export interface ClientMemoryDeleteRequest {
  */
 export interface ClientMemorySessionRequest {
   type: 'memory';
-  /** readSession 可以不带（服务端会拿到空值）；deleteSession / renameSession 传目标会话 id。 */
+  /** listSessions 可以不带（服务端会拿到空值）；deleteSession / renameSession 传目标会话 id。 */
   sessionId?: string;
   content: {
     act: ClientSessionAct;
     /**
      * 仅 `renameSession` 使用：新的会话名。
      * 字段名跟后端 `updateSession(session_id, session_name)` 以及
-     * `readSession` 返回的 `session_name` 保持一致，别改成驼峰。
+     * `listSessions` 返回的 `session_name` 保持一致，别改成驼峰。
      */
     session_name?: string;
   };
@@ -246,7 +246,7 @@ export interface ClientSystemRequest {
   };
 }
 
-export type ClientSessionAct = 'readSession' | 'deleteSession' | 'renameSession';
+export type ClientSessionAct = 'listSessions' | 'deleteSession' | 'renameSession';
 
 export interface ClientSessionRequest {
   type: 'session';
@@ -258,7 +258,7 @@ export interface ClientSessionRequest {
   };
 }
 
-/** 后端 readSession 返回的一条会话记录。 */
+/** 后端 listSessions 返回的一条会话记录。 */
 export interface RemoteSession {
   session_id: string;
   session_name?: string;
