@@ -30,8 +30,8 @@ class skills
         [
             'type'     => 'function',
             'function' => [
-                'name'        => 'registerSession',
-                'description' => '注册新会话。仅创建会话记录，不涉及记忆内容。用户明确要求"新建会话"并提供名称时才调用。返回：{status, session_id} 或 {status, error}。',
+                'name'        => 'createSession',
+                'description' => '创建新会话记录，不涉及记忆内容。用户明确要求"新建会话"并提供名称时才调用。返回：{status, session_id}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
@@ -50,7 +50,7 @@ class skills
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
-                        'session_status' => ['type' => 'integer', 'default' => 1, 'description' => '会话状态过滤：1=启用（默认）；2=已删除；0=全部']
+                        'session_status' => ['type' => 'integer', 'default' => 1, 'description' => '会话状态过滤：1=启用（默认）；2=已删除；0=全部会话（含已删除）']
                     ],
                     'required'   => []
                 ],
@@ -59,14 +59,41 @@ class skills
         [
             'type'     => 'function',
             'function' => [
-                'name'        => 'updateSession',
-                'description' => '按会话ID修改会话元数据（名称/状态）。不影响该会话下的记忆条目。返回：{status, affected_rows}。',
+                'name'        => 'renameSession',
+                'description' => '修改指定会话的名称。返回：{status, affected_rows}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
-                        'session_id'     => ['type' => 'string', 'description' => '会话ID'],
-                        'session_name'   => ['type' => 'string', 'default' => '', 'description' => '新会话名称（可选，为空表示不修改）'],
-                        'session_status' => ['type' => 'integer', 'default' => 0, 'description' => '会话状态：1=启用；2=软删除；0=不修改（默认）']
+                        'session_id'   => ['type' => 'string', 'description' => '会话ID'],
+                        'session_name' => ['type' => 'string', 'description' => '新会话名称'],
+                    ],
+                    'required'   => ['session_id', 'session_name']
+                ],
+            ],
+        ],
+        [
+            'type'     => 'function',
+            'function' => [
+                'name'        => 'deleteSession',
+                'description' => '软删除指定会话。不影响该会话下的记忆条目。返回：{status, affected_rows}或{status, error}。',
+                'parameters'  => [
+                    'type'       => 'object',
+                    'properties' => [
+                        'session_id' => ['type' => 'string', 'description' => '会话ID'],
+                    ],
+                    'required'   => ['session_id']
+                ],
+            ],
+        ],
+        [
+            'type'     => 'function',
+            'function' => [
+                'name'        => 'restoreSession',
+                'description' => '恢复软删除的会话到启用状态。返回：{status, affected_rows}或{status, error}。',
+                'parameters'  => [
+                    'type'       => 'object',
+                    'properties' => [
+                        'session_id' => ['type' => 'string', 'description' => '会话ID'],
                     ],
                     'required'   => ['session_id']
                 ],
