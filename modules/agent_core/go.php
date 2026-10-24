@@ -25,6 +25,7 @@ use modules\agent_core\lib\utils;
 use modules\agent_openai\go as openai;
 use modules\agent_toolsets\Memory\go as memory;
 use Nervsys\Core\Factory;
+use Nervsys\Core\Mgr\SocketMgr;
 
 class go extends Factory
 {
@@ -199,6 +200,7 @@ class go extends Factory
             $this->utils->debug('Ready to start server: ' . $server_host, 'trace');
             $this->core->socketMgr
                 ->setAliveTimeout($this->utils->agent_config['agent_server']['ping_interval'])
+                ->setEventListener('onUserFunc', [$this, 'scheduleTask'])
                 ->setEventListener('onHandshake', [$this, 'onHandshake'])
                 ->setEventListener('onHeartbeat', [$this, 'onHeartbeat'])
                 ->setEventListener('onMessage', [$this, 'onMessage'])
@@ -740,6 +742,67 @@ class go extends Factory
     }
 
     /**
+     * Schedule task callback.
+     *
+     * @param SocketMgr $socketMgr
+     *
+     * @return void
+     * @throws \ReflectionException
+     */
+    public function scheduleTask(SocketMgr $socketMgr): void
+    {
+        $session_list = $this->memory->listSessions(0, true);
+
+        foreach ($session_list['sessions'] as $session) {
+            $task_list = $this->memory->runTask($session['session_id']);
+
+            if ([] === $task_list) {
+                continue;
+            }
+
+            // Remove all tasks if session is deleted
+            if (1 !== $session['session_status']) {
+                foreach ($task_list as $task) {
+                    $this->memory->removeTask($task['create_id']);
+                }
+
+                continue;
+            }
+
+            $this->utils->debug('ScheduledTask: Running ' . count($task_list) . ' task jobs on #' . $session['session_id'], 'trace');
+
+            $task_content = '[定时任务]' . "\n"
+                . '会话ID：`' . $session['session_id'] . '`' . "\n\n"
+                . '待执行任务：' . "\n" . implode("\n", array_column($task_list, 'prompt')) . "\n\n"
+                . '流程：①执行任务并获取结果；②按任务会话ID，重要存daily，特别重要存important，琐事不存；③简要汇报结果及存储层级；④完成后清理定时任务（忽略结果）。';
+
+            $this->core->context->addUserMessage($session['session_id'], WORKER_MAIN, [['type' => 'text', 'content' => $task_content]]);
+
+            $metadata = $this->utils->getMarker(
+                WORKER_MAIN,
+                WORKER_MAIN,
+                'Assistant',
+                AGENT_NAME,
+                0,
+                $session['session_id']
+            );
+
+            $this->openai->resume();
+            $this->openai->talkTo(
+                WORKER_MAIN,
+                WORKER_MAIN,
+                $session['session_id'],
+                $this->utils->getMainIDX(),
+                $this->getSystemPrompt($session['session_id']),
+                'talk',
+                $metadata
+            );
+        }
+
+        unset($socketMgr, $session_list, $session, $task_list, $task_content, $metadata);
+    }
+
+    /**
      * WebSocket handshake callback.
      *
      * @param string $socket_id
@@ -801,55 +864,7 @@ class go extends Factory
             }
         }
 
-        $session_list = $this->memory->listSessions(0, true);
-
-        foreach ($session_list['sessions'] as $session) {
-            $task_list = $this->memory->runTask($session['session_id']);
-
-            if ([] === $task_list) {
-                continue;
-            }
-
-            // Remove all tasks if session is deleted
-            if (1 !== $session['session_status']) {
-                foreach ($task_list as $task) {
-                    $this->memory->removeTask($task['create_id']);
-                }
-
-                continue;
-            }
-
-            $this->utils->debug('ScheduledTask: Running ' . count($task_list) . ' task jobs on #' . $session['session_id'], 'trace');
-
-            $task_content = '[定时任务]' . "\n"
-                . '会话ID：`' . $session['session_id'] . '`' . "\n\n"
-                . '待执行任务：' . "\n" . implode("\n", array_column($task_list, 'prompt')) . "\n\n"
-                . '流程：①执行任务并获取结果；②按任务会话ID，重要存daily，特别重要存important，琐事不存；③简要汇报结果及存储层级；④完成后清理定时任务（忽略结果）。';
-
-            $this->core->context->addUserMessage($session['session_id'], WORKER_MAIN, [['type' => 'text', 'content' => $task_content]]);
-
-            $metadata = $this->utils->getMarker(
-                WORKER_MAIN,
-                WORKER_MAIN,
-                'Assistant',
-                AGENT_NAME,
-                0,
-                $session['session_id']
-            );
-
-            $this->openai->resume();
-            $this->openai->talkTo(
-                WORKER_MAIN,
-                WORKER_MAIN,
-                $session['session_id'],
-                $this->utils->getMainIDX(),
-                $this->getSystemPrompt($session['session_id']),
-                'talk',
-                $metadata
-            );
-        }
-
-        unset($socket_id, $now_time, $session_list, $session_id, $active_time, $session, $task_list, $task_content, $metadata);
+        unset($socket_id, $now_time, $session_list, $session_id, $active_time);
         return '';
     }
 
