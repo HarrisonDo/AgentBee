@@ -1088,7 +1088,9 @@ class go extends Factory
                 continue;
             }
 
-            $this->utils->debug('System: Sending ' . $new_messages . ' message(s) to #' . $session_id, 'trace');
+            $message_onsend
+                ? $this->utils->debug('System: Resending messages to #' . $session_id, 'trace')
+                : $this->utils->debug('System: Sending ' . $new_messages . ' new message(s) to #' . $session_id, 'trace');
 
             $metadata = $this->utils->getMarker(
                 WORKER_MAIN,

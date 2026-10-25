@@ -503,7 +503,7 @@ class context extends Factory
     public function isMessageOnSend(string $session_id): bool
     {
         if (isset($this->message_onsend[$session_id])) {
-            $on_send = time() - $this->message_onsend[$session_id] > 10;
+            $on_send = time() - $this->message_onsend[$session_id] > 15;
         } else {
             $on_send = false;
         }
