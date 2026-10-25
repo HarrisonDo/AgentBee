@@ -1,5 +1,5 @@
 ---
-name: SkillGenerator
+name: SkillCreator
 description: 将业务目标沉淀为可执行、可验证的 AgentBee 任务技能；需要时整合现有工具或创建内部工具模块，也可用于修正技能文档和检查内部工具是否合规。
 triggers:
   - 创建技能
