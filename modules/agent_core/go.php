@@ -774,7 +774,7 @@ class go extends Factory
             $task_content = '[定时任务]' . "\n"
                 . '会话ID：`' . $session['session_id'] . '`' . "\n\n"
                 . '待执行任务：' . "\n" . implode("\n", array_column($task_list, 'prompt')) . "\n\n"
-                . '流程：①执行任务并获取结果；②按任务会话ID，重要存daily，特别重要存important，琐事不存；③简要汇报结果及存储层级；④完成后清理定时任务（忽略结果）。';
+                . '请严格按流程执行：①执行上述任务并详细汇总结果；②按任务会话ID分类存储：重要存daily、特别重要存important、琐事不存；③向用户汇报详细结果，简要说明存储层级或未存原因，必要时补充结果分析。';
 
             $this->core->context->addUserMessage($session['session_id'], WORKER_MAIN, [['type' => 'text', 'content' => $task_content]]);
 
