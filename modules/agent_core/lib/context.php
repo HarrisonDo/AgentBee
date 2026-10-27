@@ -486,7 +486,12 @@ class context extends Factory
      */
     public function messageOnSend(string $session_id, bool $on_send = true): void
     {
-        $this->message_onsend[$session_id] = $on_send;
+        if ($on_send) {
+            $this->message_onsend[$session_id] = time();
+        } else {
+            unset($this->message_onsend[$session_id]);
+        }
+
         unset($session_id, $on_send);
     }
 
@@ -497,7 +502,14 @@ class context extends Factory
      */
     public function isMessageOnSend(string $session_id): bool
     {
-        return $this->message_onsend[$session_id] ?? false;
+        if (isset($this->message_onsend[$session_id])) {
+            $on_send = time() - $this->message_onsend[$session_id] > 15;
+        } else {
+            $on_send = false;
+        }
+
+        unset($session_id);
+        return $on_send;
     }
 
     /**

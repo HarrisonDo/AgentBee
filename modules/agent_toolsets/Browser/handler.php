@@ -27,8 +27,11 @@ use Nervsys\Ext\libHttp;
 
 class handler extends Factory
 {
+    const VIEWPORT_WIDTH  = 1920;
+    const VIEWPORT_HEIGHT = 1080;
+
     public int $cmd_id  = 0;
-    public int $timeout = 60;
+    public int $timeout = 30;
 
     public string $curr_id = '';
 
@@ -38,7 +41,7 @@ class handler extends Factory
 
     public const START_ARGS = [
         '--lang=zh-CN',
-        '--window-size=1366,768',
+        '--window-size=' . self::VIEWPORT_WIDTH . ',' . self::VIEWPORT_HEIGHT,
         '--disable-background-timer-throttling',
         '--disable-backgrounding-occluded-windows',
         '--disable-component-update',
@@ -110,7 +113,6 @@ class handler extends Factory
         $start_args = self::START_ARGS;
 
         if ($payload_data['params']['headless'] ?? true) {
-            $start_args[] = '--disable-gpu';
             $start_args[] = '--headless=new';
         }
 
@@ -134,10 +136,15 @@ class handler extends Factory
 
         for ($i = 0; $i < 100; ++$i) {
             $err_msg = trim($agent_core->utils->procMgr->readProc($browser_idx, 'stderr'));
+            $marker  = '' !== $err_msg ? strpos($err_msg, 'DevTools listening on') : false;
 
-            if ('' !== $err_msg && str_starts_with($err_msg, 'DevTools listening on')) {
-                $browser_addr = substr($err_msg, strpos($err_msg, 'ws'));
-                break;
+            if (false !== $marker) {
+                $ws_pos = strpos($err_msg, 'ws', $marker);
+
+                if (false !== $ws_pos) {
+                    $browser_addr = substr($err_msg, $ws_pos);
+                    break;
+                }
             }
 
             usleep(100000);
@@ -200,7 +207,7 @@ class handler extends Factory
         $agent_core->utils->debug('Browser ready for connections.', 'trace');
         $message = '浏览器已就绪，当前标签页`target_id`：`' . $this->curr_id . '`，可继续操作。';
 
-        unset($payload_data, $agent_core, $start_args, $data_dir, $browser_idx, $browser_pid, $browser_addr, $i, $err_msg, $local_port, $debugger, $tab_list, $ws_addr);
+        unset($payload_data, $agent_core, $start_args, $data_dir, $browser_idx, $browser_pid, $browser_addr, $i, $err_msg, $marker, $ws_pos, $local_port, $debugger, $tab_list, $ws_addr);
         return $message;
     }
 
@@ -254,6 +261,10 @@ class handler extends Factory
      */
     public function switchTab(array $payload_data, agent_core $agent_core): array
     {
+        if ('' === ($payload_data['params']['target_id'] ?? '')) {
+            return ['status' => 'error', 'error' => '缺少target_id参数。'];
+        }
+
         return $this->sendCommand($agent_core, $payload_data, __FUNCTION__);
     }
 
@@ -327,6 +338,10 @@ class handler extends Factory
      */
     public function closeTab(array $payload_data, agent_core $agent_core): array
     {
+        if ('' === ($payload_data['params']['target_id'] ?? '')) {
+            return ['status' => 'error', 'error' => '缺少target_id参数。'];
+        }
+
         return $this->sendCommand($agent_core, $payload_data, __FUNCTION__);
     }
 
@@ -353,7 +368,56 @@ class handler extends Factory
      */
     public function click(array $payload_data, agent_core $agent_core): array
     {
-        return $this->sendCommand($agent_core, $payload_data, __FUNCTION__);
+        $result = $this->sendCommand($agent_core, $payload_data, 'getElementPosition');
+
+        if ('success' !== ($result['status'] ?? 'error')) {
+            return $result;
+        }
+
+        $position = $result['data'] ?? [];
+
+        if (
+            !is_array($position)
+            || !isset($position['x'], $position['y'])
+            || !is_numeric($position['x'])
+            || !is_numeric($position['y'])
+        ) {
+            return [
+                'status' => 'error',
+                'error'  => '无法获取目标元素的有效坐标。',
+            ];
+        }
+
+        $base_params      = $payload_data['params'];
+        $base_params['x'] = (float)$position['x'];
+        $base_params['y'] = (float)$position['y'];
+
+        unset($base_params['selector']);
+
+        $press_params               = $base_params;
+        $press_params['mouse_type'] = 'mousePressed';
+        $result                     = $this->sendCommand($agent_core, ['params' => $press_params], 'click');
+
+        if ('success' !== ($result['status'] ?? 'error')) {
+            return $result;
+        }
+
+        $release_params               = $base_params;
+        $release_params['mouse_type'] = 'mouseReleased';
+        $result                       = $this->sendCommand($agent_core, ['params' => $release_params], 'click');
+
+        if ('success' === ($result['status'] ?? 'error')) {
+            $result['message'] = $this->getMessage('click');
+        } else {
+            $result = [
+                'status'  => 'success',
+                'data'    => ['warning' => '按下已生效，释放事件上报异常，请留意页面状态'],
+                'message' => '点击已执行（释放阶段异常），请勿重复提交。',
+            ];
+        }
+
+        unset($payload_data, $agent_core, $position, $base_params, $press_params, $release_params);
+        return $result;
     }
 
     /**
@@ -366,7 +430,20 @@ class handler extends Factory
      */
     public function type(array $payload_data, agent_core $agent_core): array
     {
-        return $this->sendCommand($agent_core, $payload_data, __FUNCTION__);
+        $result = $this->sendCommand($agent_core, $payload_data, 'focus');
+
+        if ('success' !== ($result['status'] ?? 'error')) {
+            return $result;
+        }
+
+        $result = $this->sendCommand($agent_core, $payload_data, 'type');
+
+        if ('success' === ($result['status'] ?? 'error')) {
+            $result['message'] = $this->getMessage('type');
+        }
+
+        unset($payload_data, $agent_core);
+        return $result;
     }
 
     /**
@@ -587,14 +664,7 @@ class handler extends Factory
      */
     public function hover(array $payload_data, agent_core $agent_core): array
     {
-        $position_data = $payload_data;
-        $selector      = json_encode($payload_data['params']['selector'], JSON_FORMAT);
-
-        $position_data['params']['script'] = '(function(){const el=document.querySelector(' . $selector . ');if(!el)throw new Error("Element not found: "+' . $selector . ');el.scrollIntoView({behavior:"auto",block:"center",inline:"center"});const rect=el.getBoundingClientRect();if(rect.width<=0||rect.height<=0||el.getClientRects().length===0)throw new Error("Element is not visible: "+' . $selector . ');return{x:rect.left+rect.width/2,y:rect.top+rect.height/2};})()';
-
-        $position_data['params']['return_by_value'] = true;
-
-        $result = $this->sendCommand($agent_core, $position_data, 'evaluate');
+        $result = $this->sendCommand($agent_core, $payload_data, 'getElementPosition');
 
         if ('success' !== ($result['status'] ?? 'error')) {
             return $result;
@@ -625,8 +695,10 @@ class handler extends Factory
             $hover_data['params']['target_id'] = $payload_data['params']['target_id'];
         }
 
-        unset($payload_data, $position_data, $selector, $result, $position);
-        return $this->sendCommand($agent_core, $hover_data, __FUNCTION__);
+        $result = $this->sendCommand($agent_core, $hover_data, __FUNCTION__);
+
+        unset($payload_data, $agent_core, $position, $hover_data);
+        return $result;
     }
 
     /**
@@ -708,6 +780,12 @@ class handler extends Factory
 
         if ('success' === ($result['status'] ?? 'error')) {
             $result['message'] = $this->getMessage(__FUNCTION__);
+        } else {
+            $result = [
+                'status'  => 'success',
+                'data'    => ['warning' => '按下已生效，释放事件上报异常，请留意页面状态'],
+                'message' => '按键已执行（释放阶段异常），请勿重复操作。',
+            ];
         }
 
         unset($payload_data, $agent_core, $key, $modifiers, $allowed_modifiers, $invalid_modifiers, $key_aliases, $supported_keys);
@@ -735,12 +813,23 @@ class handler extends Factory
             throw new \RuntimeException('无法注入脚本：标签页WebSocket地址无效。');
         }
 
-        $source = '(function(){try{Object.defineProperty(Navigator.prototype,"webdriver",{configurable:true,enumerable:true,get:function(){return undefined;}});}catch(error){try{Object.defineProperty(navigator,"webdriver",{configurable:true,enumerable:true,get:function(){return undefined;}});}catch(ignored){}}})();';
+        $source = '(function(){"use strict";try{var g=function(){return false;};Object.defineProperty(g,"toString",{value:function(){return "function get webdriver() { [native code] }";},configurable:true});Object.defineProperty(Navigator.prototype,"webdriver",{configurable:true,enumerable:true,get:g});}catch(e){}try{if(!window.chrome){window.chrome={};}if(!window.chrome.runtime){window.chrome.runtime={connect:function(){},sendMessage:function(){}};}}catch(e){}try{if(0===navigator.plugins.length){var seeds=[["Chrome PDF Plugin","internal-pdf-viewer"],["Chrome PDF Viewer","mhjfbmdgcfjbbpaeojofohoefgiehjai"],["Native Client","internal-nacl-plugin"]];var fp=Object.create(PluginArray.prototype);fp.item=function(i){return this[i]||null;};fp.namedItem=function(n){return Array.prototype.find.call(this,function(p){return p.name===n;})||null;};seeds.forEach(function(s,i){var pl=Object.create(Plugin.prototype);Object.defineProperty(pl,"name",{value:s[0]});Object.defineProperty(pl,"filename",{value:s[1]});Object.defineProperty(pl,"description",{value:"Portable Document Format"});Object.defineProperty(pl,"length",{value:0});fp[i]=pl;});Object.defineProperty(fp,"length",{value:seeds.length});Object.defineProperty(Navigator.prototype,"plugins",{get:function(){return fp;}});}}catch(e){}try{if(window.Notification&&"denied"===Notification.permission){Object.defineProperty(Notification,"permission",{get:function(){return "default";}});}if(navigator.permissions&&navigator.permissions.query){var oq=navigator.permissions.query.bind(navigator.permissions);navigator.permissions.query=function(p){if(p&&"notifications"===p.name){return Promise.resolve({state:Notification.permission,onchange:null});}return oq(p);};}}catch(e){}try{if(window.outerHeight===window.innerHeight&&window.innerHeight>0){Object.defineProperty(window,"outerHeight",{get:function(){return window.innerHeight+85;}});}}catch(e){}})();';
 
         $socketMgr = SocketMgr::new('injector');
         $socketMgr->createWSClient($ws_addr);
 
         $commands = [
+            [
+                'method' => 'Emulation.setDeviceMetricsOverride',
+                'params' => [
+                    'width'             => self::VIEWPORT_WIDTH,
+                    'height'            => self::VIEWPORT_HEIGHT,
+                    'deviceScaleFactor' => 1,
+                    'mobile'            => false,
+                    'screenWidth'       => self::VIEWPORT_WIDTH,
+                    'screenHeight'      => self::VIEWPORT_HEIGHT,
+                ],
+            ],
             [
                 'method' => 'Page.addScriptToEvaluateOnNewDocument',
                 'params' => [
@@ -768,17 +857,16 @@ class handler extends Factory
             );
 
             $socketMgr->sendMessage($socketMgr->master_id, $socketMgr->wsEncode($message, false, true));
+        }
 
-            $read     = $socketMgr->master_sock;
-            $write    = [];
-            $except   = [];
-            $selected = stream_select($read, $write, $except, $this->timeout);
+        $write    = $except = null;
+        $read     = $socketMgr->master_sock;
+        $selected = stream_select($read, $write, $except, 3);
 
-            if (in_array($selected, [0, false], true)) {
-                continue;
+        if (false !== $selected && 0 < $selected) {
+            while ('' !== $socketMgr->readMessage($socketMgr->master_id, true)) {
+                // Drop Injection responses
             }
-
-            $socketMgr->readMessage($socketMgr->master_id, true);
         }
 
         Factory::destroy($socketMgr);
@@ -786,7 +874,7 @@ class handler extends Factory
         $this->tab_list[$target_id]['injected'] = true;
         $agent_core->utils->debug('Browser: Injection commands sent to ' . $target_id, 'trace');
 
-        unset($target_id, $agent_core, $ws_addr, $source, $socketMgr, $commands, $command, $cmd_id, $message, $read, $write, $except, $selected);
+        unset($target_id, $agent_core, $ws_addr, $source, $socketMgr, $commands, $command, $cmd_id, $message, $write, $except, $read, $selected);
     }
 
     /**
@@ -972,7 +1060,7 @@ class handler extends Factory
      */
     public function buildCommand(string $action, array $params, int $cmd_id): string
     {
-        $timeout_ms = $this->timeout * 1000;
+        $timeout_ms = ($this->timeout - 3) * 1000;
 
         switch ($action) {
             case 'createTab':
@@ -995,25 +1083,50 @@ class handler extends Factory
                 $cdp_params = ['url' => $params['url']];
                 break;
 
-            case 'click':
+            case 'getElementPosition':
                 $selector   = json_encode($params['selector'], JSON_FORMAT);
                 $method     = 'Runtime.evaluate';
                 $cdp_params = [
-                    'expression'    => '(function(){const el=document.querySelector(' . $selector . ');if(!el)throw new Error("Element not found: "+' . $selector . ');if(typeof el.click!=="function")throw new Error("Element is not clickable: "+' . $selector . ');if(el.disabled)throw new Error("Element is disabled: "+' . $selector . ');el.scrollIntoView({behavior:"auto",block:"center",inline:"center"});if(typeof el.focus==="function")el.focus({preventScroll:true});el.click();return true;})()',
+                    'expression'    => '(function(){const el=document.querySelector(' . $selector . ');if(!el)throw new Error("Element not found: "+' . $selector . ');el.scrollIntoView({behavior:"auto",block:"center",inline:"center"});const rect=el.getBoundingClientRect();if(rect.width<=0||rect.height<=0||el.getClientRects().length===0)throw new Error("Element is not visible: "+' . $selector . ');return{x:rect.left+rect.width/2,y:rect.top+rect.height/2};})()',
                     'returnByValue' => true,
-                    'userGesture'   => true,
+                ];
+                break;
+
+            case 'focus':
+                $selector   = json_encode($params['selector'], JSON_FORMAT);
+                $method     = 'Runtime.evaluate';
+                $cdp_params = [
+                    'expression'    => '(function(){const el=document.querySelector(' . $selector . ');if(!el)throw new Error("Element not found: "+' . $selector . ');if(!(el instanceof HTMLInputElement)&&!(el instanceof HTMLTextAreaElement)&&!el.isContentEditable)throw new Error("Element does not support text input: "+' . $selector . ');if(el.disabled)throw new Error("Element is disabled: "+' . $selector . ');if(el.readOnly)throw new Error("Element is read-only: "+' . $selector . ');el.focus();if(typeof el.select==="function"){el.select();}else if(el.isContentEditable){const r=document.createRange();r.selectNodeContents(el);const s=window.getSelection();s.removeAllRanges();s.addRange(r);}el.scrollIntoView({behavior:"auto",block:"center",inline:"nearest"});return true;})()',
+                    'returnByValue' => true,
+                ];
+                break;
+
+            case 'click':
+                if (!isset($params['x'], $params['y']) || !is_numeric($params['x']) || !is_numeric($params['y'])) {
+                    $method     = 'Runtime.evaluate';
+                    $cdp_params = [
+                        'expression'    => '(function(){throw new Error("click requires x/y, call getElementPosition first");})()',
+                        'returnByValue' => true,
+                    ];
+                    break;
+                }
+
+                $mouse_type = ('mouseReleased' === ($params['mouse_type'] ?? 'mousePressed')) ? 'mouseReleased' : 'mousePressed';
+
+                $method     = 'Input.dispatchMouseEvent';
+                $cdp_params = [
+                    'type'       => $mouse_type,
+                    'x'          => (float)$params['x'],
+                    'y'          => (float)$params['y'],
+                    'button'     => 'left',
+                    'buttons'    => ('mouseReleased' === $mouse_type) ? 0 : 1,
+                    'clickCount' => 1,
                 ];
                 break;
 
             case 'type':
-                $selector   = json_encode($params['selector'], JSON_FORMAT);
-                $text       = json_encode($params['text'], JSON_FORMAT);
-                $method     = 'Runtime.evaluate';
-                $cdp_params = [
-                    'expression'    => '(function() { const el = document.querySelector(' . $selector . '); if (!el) throw new Error("Element not found: " + ' . $selector . '); let proto; if (el instanceof HTMLInputElement) proto = HTMLInputElement.prototype; else if (el instanceof HTMLTextAreaElement) proto = HTMLTextAreaElement.prototype; else throw new Error("Element does not support text input: " + ' . $selector . '); if (el.disabled) throw new Error("Element is disabled: " + ' . $selector . '); if (el.readOnly) throw new Error("Element is read-only: " + ' . $selector . '); const setter = Object.getOwnPropertyDescriptor(proto, "value").set; el.focus(); setter.call(el, ' . $text . '); el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ' . $text . ' })); el.dispatchEvent(new Event("change", { bubbles: true })); return true; })()',
-                    'returnByValue' => true,
-                    'userGesture'   => true
-                ];
+                $method     = 'Input.insertText';
+                $cdp_params = ['text' => (string)$params['text']];
                 break;
 
             case 'submit':
@@ -1037,8 +1150,8 @@ class handler extends Factory
                 break;
 
             case 'getContent':
-                $html       = $params['html'] ?? false;
-                $expr       = (true === $html)
+                $html       = filter_var($params['html'] ?? false, FILTER_VALIDATE_BOOLEAN);
+                $expr       = $html
                     ? 'document.documentElement ? document.documentElement.outerHTML : ""'
                     : 'document.body ? document.body.innerText : ""';
                 $method     = 'Runtime.evaluate';
@@ -1182,7 +1295,6 @@ class handler extends Factory
                     ? 'keyUp'
                     : 'keyDown';
 
-                // CDP modifiers：Alt=1、Control=2、Meta=4、Shift=8
                 if (in_array('Alt', $modifiers, true)) {
                     $mod_bits |= 1;
                 }
@@ -1370,7 +1482,10 @@ class handler extends Factory
 
         $config        = $this->loadConfig($agent_core);
         $socketMgr     = SocketMgr::new('browser');
-        $this->timeout = $config['chrome_timeout'] ?? $this->timeout;
+        $wait_actions  = ['waitForSelector', 'waitForPageLoad', 'waitForText', 'waitForElementVisible', 'waitForUrl'];
+        $this->timeout = in_array($action, $wait_actions, true)
+            ? ($config['chrome_timeout'] ?? 30)
+            : 10;
 
         try {
             $agent_core->utils->debug('Browser: working on ' . $action . '.', 'trace');
@@ -1461,12 +1576,31 @@ class handler extends Factory
 
             if (isset($msg_data['error'])) {
                 $agent_core->utils->debug('Browser CDP error: ' . ($msg_data['error']['message'] ?? '未知错误'), 'debug');
-                $this->close($payload_data, $agent_core);
 
-                return [
-                    'status' => 'error',
-                    'error'  => '浏览器实例执行失败，已关闭，请重新启动浏览器。',
-                ];
+                if (in_array($action, ['switchTab', 'closeTab'], true)) {
+                    unset($this->tab_list[$target_id]);
+
+                    if ([] === $this->tab_list) {
+                        $this->close($payload_data, $agent_core);
+                        return ['status' => 'error', 'error' => '最后一个标签页已失效，浏览器实例已关闭。'];
+                    }
+
+                    if ($this->curr_id === $target_id) {
+                        $tab_ids       = array_keys($this->tab_list);
+                        $this->curr_id = [] !== $tab_ids ? $tab_ids[0] : '';
+
+                        if ('' !== $this->curr_id) {
+                            $this->browser_data['debug_addr'] = $this->tab_list[$this->curr_id]['ws_addr'];
+                        }
+
+                        unset($tab_ids);
+                    }
+
+                    return ['status' => 'error', 'error' => '标签页`' . $target_id . '`已失效，已自动移除。'];
+                }
+
+                $this->close($payload_data, $agent_core);
+                return ['status' => 'error', 'error' => '浏览器实例执行失败，已关闭，请重新启动浏览器。'];
             }
 
             $runtime_error = '';
@@ -1529,22 +1663,28 @@ class handler extends Factory
                 $data = $msg_data['result'] ?? [];
             }
 
-            if (
-                in_array($action, ['waitForSelector', 'waitForPageLoad', 'waitForText', 'waitForElementVisible', 'waitForUrl',], true)
-                && false === $data
-            ) {
+            if (in_array($action, $wait_actions, true) && false === $data) {
                 return [
                     'status' => 'error',
                     'error'  => '执行"' . $action . '"等待超时，条件未满足，请检查页面是否正常加载或增加超时时间。',
                 ];
             }
 
-            if ('createTab' === $action) {
-                return $this->handleCreateTab($payload_data, $msg_data, $agent_core);
-            }
+            if ('navigate' === $action) {
+                if (isset($msg_data['result']['errorText'])) {
+                    return [
+                        'status' => 'error',
+                        'error'  => '导航失败：' . $msg_data['result']['errorText'],
+                    ];
+                }
 
-            if ('closeTab' === $action) {
-                return $this->handleCloseTab($payload_data, $msg_data, $agent_core);
+                $nav_url = ($payload_data['params']['url'] ?? '');
+
+                if ('' !== $nav_url) {
+                    $this->tab_list[$target_id]['url'] = $nav_url;
+                }
+
+                unset($nav_url);
             }
 
             if ('switchTab' === $action) {
@@ -1553,15 +1693,14 @@ class handler extends Factory
                 if (isset($this->tab_list[$target_id]['ws_addr'])) {
                     $this->browser_data['debug_addr'] = $this->tab_list[$target_id]['ws_addr'];
                 }
-
-                return [
-                    'status'  => 'success',
-                    'message' => '当前标签页已切换至`' . $target_id . '`，可继续操作。',
-                ];
             }
 
-            if ('navigate' === $action && isset($data['url'])) {
-                $this->tab_list[$target_id]['url'] = $data['url'];
+            if ('createTab' === $action) {
+                return $this->handleCreateTab($payload_data, $msg_data, $agent_core);
+            }
+
+            if ('closeTab' === $action) {
+                return $this->handleCloseTab($payload_data, $msg_data, $agent_core);
             }
 
             return [
@@ -1580,7 +1719,7 @@ class handler extends Factory
             ];
         } finally {
             Factory::destroy($socketMgr);
-            unset($agent_core, $payload_data, $action, $target_id, $tab_info, $ws_addr, $socketMgr, $cmd_id, $master_id, $raw_msg, $msg_data, $deadline, $command, $remaining, $seconds, $microseconds, $read, $write, $except, $selected, $response_msg, $response_data, $runtime_error, $saved_path, $data);
+            unset($agent_core, $payload_data, $action, $target_id, $tab_info, $ws_addr, $socketMgr, $wait_actions, $cmd_id, $master_id, $raw_msg, $msg_data, $deadline, $command, $remaining, $seconds, $microseconds, $read, $write, $except, $selected, $response_msg, $response_data, $runtime_error, $saved_path, $data);
         }
     }
 
@@ -1594,6 +1733,8 @@ class handler extends Factory
         $messages = [
             'navigate'              => '导航已启动，请等待页面加载完成后（可通过`waitForPageLoad`确认）再继续操作，不要频繁发起请求。',
             'submit'                => '表单已提交，若页面发生跳转请等待加载完成，避免连续操作。',
+            'getElementPosition'    => '元素坐标已获取。',
+            'focus'                 => '元素已聚焦。',
             'click'                 => '点击操作已执行，若页面发生跳转请等待加载完成后继续。',
             'type'                  => '文本输入成功。',
             'getUrl'                => '当前页面URL已获取。',
@@ -1604,6 +1745,7 @@ class handler extends Factory
             'setAttribute'          => '属性设置成功。',
             'scrollIntoView'        => '元素已滚动到可视区域。',
             'selectOption'          => '选项已选择。',
+            'switchTab'             => '当前标签页已切换。',
             'evaluate'              => '脚本执行完成。',
             'screenshot'            => '截图已保存。',
             'waitForSelector'       => '等待条件已满足。',

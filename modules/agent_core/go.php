@@ -25,6 +25,7 @@ use modules\agent_core\lib\utils;
 use modules\agent_openai\go as openai;
 use modules\agent_toolsets\Memory\go as memory;
 use Nervsys\Core\Factory;
+use Nervsys\Core\Mgr\SocketMgr;
 
 class go extends Factory
 {
@@ -199,6 +200,7 @@ class go extends Factory
             $this->utils->debug('Ready to start server: ' . $server_host, 'trace');
             $this->core->socketMgr
                 ->setAliveTimeout($this->utils->agent_config['agent_server']['ping_interval'])
+                ->setEventListener('onUserFunc', [$this, 'scheduleTask'])
                 ->setEventListener('onHandshake', [$this, 'onHandshake'])
                 ->setEventListener('onHeartbeat', [$this, 'onHeartbeat'])
                 ->setEventListener('onMessage', [$this, 'onMessage'])
@@ -296,7 +298,7 @@ class go extends Factory
             switch ($message['type']) {
                 case 'stream':
                     if (WORKER_MAIN === $payload['sender']) {
-                        $this->utils->setStatus($payload['sessionId'], utils::STATUS_WAIT);
+                        $this->utils->setStatus(utils::STATUS_WAIT);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'streaming');
                         $this->utils->debug('Collaborator: ' . $payload['workerName'] . ' working on streaming', 'debug');
@@ -356,7 +358,7 @@ class go extends Factory
 
                         case 'error':
                             if (WORKER_MAIN === $payload['sender']) {
-                                $this->utils->setStatus($payload['sessionId'], utils::STATUS_IDLE);
+                                $this->utils->setStatus(utils::STATUS_IDLE);
                             } else {
                                 $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
                             }
@@ -372,7 +374,7 @@ class go extends Factory
 
                         case 'abort':
                             $this->core->sendMessage($payload);
-                            $this->utils->setStatus($payload['sessionId'], utils::STATUS_IDLE);
+                            $this->utils->setStatus(utils::STATUS_IDLE);
                             break;
 
                         default:
@@ -433,7 +435,7 @@ class go extends Factory
                 case 'context':
                     // Reset main worker status
                     if (WORKER_MAIN === $payload['sender']) {
-                        $this->utils->setStatus($payload['sessionId'], utils::STATUS_IDLE);
+                        $this->utils->setStatus(utils::STATUS_IDLE);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
                     }
@@ -534,7 +536,7 @@ class go extends Factory
                     $this->last_response[$payload['sessionId']] = time();
 
                     if (WORKER_MAIN === $payload['sender']) {
-                        $this->utils->setStatus($payload['sessionId'], utils::STATUS_IDLE);
+                        $this->utils->setStatus(utils::STATUS_IDLE);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
                         $this->utils->debug('Collaborator: ' . $payload['workerName'] . ' reply completed, ready.', 'trace');
@@ -740,6 +742,67 @@ class go extends Factory
     }
 
     /**
+     * Schedule task callback.
+     *
+     * @param SocketMgr $socketMgr
+     *
+     * @return void
+     * @throws \ReflectionException
+     */
+    public function scheduleTask(SocketMgr $socketMgr): void
+    {
+        $session_list = $this->memory->listSessions(0, true);
+
+        foreach ($session_list['sessions'] as $session) {
+            $task_list = $this->memory->runTask($session['session_id']);
+
+            if ([] === $task_list) {
+                continue;
+            }
+
+            // Remove all tasks if session is deleted
+            if (1 !== $session['session_status']) {
+                foreach ($task_list as $task) {
+                    $this->memory->removeTask($task['create_id']);
+                }
+
+                continue;
+            }
+
+            $this->utils->debug('ScheduledTask: Running ' . count($task_list) . ' task jobs on #' . $session['session_id'], 'trace');
+
+            $task_content = '[定时任务]' . "\n"
+                . '会话ID：`' . $session['session_id'] . '`' . "\n\n"
+                . '待执行任务：' . "\n" . implode("\n", array_column($task_list, 'prompt')) . "\n\n"
+                . '严格按流程执行：①执行任务并详细汇总；②按会话ID存储：重要→daily，特别重要→important，琐事不存；③完整输出详细结果，简述存储层级或未存原因，必要时补充分析并总结。';
+
+            $this->core->context->addUserMessage($session['session_id'], WORKER_MAIN, [['type' => 'text', 'content' => $task_content]]);
+
+            $metadata = $this->utils->getMarker(
+                WORKER_MAIN,
+                WORKER_MAIN,
+                'Assistant',
+                AGENT_NAME,
+                0,
+                $session['session_id']
+            );
+
+            $this->openai->resume();
+            $this->openai->talkTo(
+                WORKER_MAIN,
+                WORKER_MAIN,
+                $session['session_id'],
+                $this->utils->getMainIDX(),
+                $this->getSystemPrompt($session['session_id']),
+                'talk',
+                $metadata
+            );
+        }
+
+        unset($socketMgr, $session_list, $session, $task_list, $task_content, $metadata);
+    }
+
+    /**
      * WebSocket handshake callback.
      *
      * @param string $socket_id
@@ -785,71 +848,23 @@ class go extends Factory
                 && $now_time - $this->last_response[$session_id] >= $this->utils->agent_config['reset_interval']
             ) {
                 $this->core->context->removeHistory($session_id, WORKER_MAIN);
-                $this->utils->setStatus($session_id, utils::STATUS_IDLE);
+                $this->utils->setStatus(utils::STATUS_IDLE);
             }
 
             if ($now_time - $active_time >= $this->utils->agent_config['reset_interval']) {
                 $this->core->context->removeSessionList($session_id);
             }
 
-            if (utils::STATUS_IDLE !== $this->utils->wait_status[$session_id]) {
-                if ($this->utils->wait_until[$session_id] > $now_time) {
+            if (utils::STATUS_IDLE !== $this->utils->wait_status) {
+                if ($this->utils->wait_until > $now_time) {
                     continue;
                 }
 
-                $this->utils->setStatus($session_id, utils::STATUS_IDLE, true);
+                $this->utils->setStatus(utils::STATUS_IDLE, true);
             }
         }
 
-        $session_list = $this->memory->listSessions(0, true);
-
-        foreach ($session_list['sessions'] as $session) {
-            $task_list = $this->memory->runTask($session['session_id']);
-
-            if ([] === $task_list) {
-                continue;
-            }
-
-            // Remove all tasks if session is deleted
-            if (1 !== $session['session_status']) {
-                foreach ($task_list as $task) {
-                    $this->memory->removeTask($task['create_id']);
-                }
-
-                continue;
-            }
-
-            $this->utils->debug('ScheduledTask: Running ' . count($task_list) . ' task jobs on #' . $session['session_id'], 'trace');
-
-            $task_content = '[定时任务]' . "\n"
-                . '会话ID：`' . $session['session_id'] . '`' . "\n\n"
-                . '待执行任务：' . "\n" . implode("\n", array_column($task_list, 'prompt')) . "\n\n"
-                . '流程：①执行任务并获取结果；②按任务会话ID，重要存daily，特别重要存important，琐事不存；③简要汇报结果及存储层级；④完成后清理定时任务（忽略结果）。';
-
-            $this->core->context->addUserMessage($session['session_id'], WORKER_MAIN, [['type' => 'text', 'content' => $task_content]]);
-
-            $metadata = $this->utils->getMarker(
-                WORKER_MAIN,
-                WORKER_MAIN,
-                'Assistant',
-                AGENT_NAME,
-                0,
-                $session['session_id']
-            );
-
-            $this->openai->resume();
-            $this->openai->talkTo(
-                WORKER_MAIN,
-                WORKER_MAIN,
-                $session['session_id'],
-                $this->utils->getMainIDX(),
-                $this->getSystemPrompt($session['session_id']),
-                'talk',
-                $metadata
-            );
-        }
-
-        unset($socket_id, $now_time, $session_list, $session_id, $active_time, $session, $task_list, $task_content, $metadata);
+        unset($socket_id, $now_time, $session_list, $session_id, $active_time);
         return '';
     }
 
@@ -938,7 +953,7 @@ class go extends Factory
                     case 'reset':
                         $this->openai->reload();
                         $this->openai->getModels(true);
-                        $this->utils->setStatus($data['sessionId'], utils::STATUS_IDLE);
+                        $this->utils->setStatus(utils::STATUS_IDLE);
                         $this->core->context->messageOnSend($data['sessionId'], false);
                         $this->core->context->removeHistory($data['sessionId'], WORKER_MAIN);
                         break;
@@ -986,7 +1001,7 @@ class go extends Factory
             $curr_msg[$data['sessionId']] ??= [];
             $this->core->context->addSessionList($data['sessionId']);
 
-            if (!isset($this->utils->wait_status[$data['sessionId']]) || utils::STATUS_IDLE === $this->utils->wait_status[$data['sessionId']]) {
+            if (utils::STATUS_IDLE === $this->utils->wait_status) {
                 $curr_msg[$data['sessionId']] = array_merge($curr_msg[$data['sessionId']], $result['content']);
             } else {
                 $this->utils->debug('AgentBee: LLM is busy, ' . count($result['content']) . ' message(s) queued for #' . $data['sessionId'], 'trace');
@@ -1062,7 +1077,7 @@ class go extends Factory
         foreach ($session_list as $session_id => $active_time) {
             $message_onsend = $this->core->context->isMessageOnSend($session_id);
 
-            if (utils::STATUS_IDLE !== $this->utils->wait_status[$session_id] && !$message_onsend) {
+            if (utils::STATUS_IDLE !== $this->utils->wait_status && !$message_onsend) {
                 $this->utils->debug('System: Proc #' . $session_id . ' is BUSY with no message onsend.', 'debug');
                 continue;
             }
@@ -1073,7 +1088,9 @@ class go extends Factory
                 continue;
             }
 
-            $this->utils->debug('System: Sending ' . $new_messages . ' message(s) to #' . $session_id, 'trace');
+            $message_onsend
+                ? $this->utils->debug('System: Resending messages to #' . $session_id, 'trace')
+                : $this->utils->debug('System: Sending ' . $new_messages . ' new message(s) to #' . $session_id, 'trace');
 
             $metadata = $this->utils->getMarker(
                 WORKER_MAIN,
