@@ -40,17 +40,16 @@ class utils extends Factory
     public libFileIO $libFileIO;
     public config    $config;
 
-    public int $main_idx   = 0;
-    public int $proc_idx   = 10;
-    public int $worker_idx = 1000;
+    public int $main_idx    = 0;
+    public int $proc_idx    = 10;
+    public int $worker_idx  = 1000;
+    public int $wait_until  = 0;
+    public int $wait_status = self::STATUS_IDLE;
 
     public array  $agent_config;
     public string $pid_file_path;
 
     public string $memory_buffer = '';
-
-    public array $wait_until  = [];
-    public array $wait_status = [];
 
     public array $model_list      = [];
     public array $program_list    = [];
@@ -871,41 +870,39 @@ class utils extends Factory
     }
 
     /**
-     * @param string $session_id
-     * @param int    $status
-     * @param bool   $timeout
+     * @param int  $status
+     * @param bool $timeout
      *
      * @return void
      */
-    public function setStatus(string $session_id, int $status, bool $timeout = false): void
+    public function setStatus(int $status, bool $timeout = false): void
     {
-        $this->wait_until[$session_id]  ??= 0;
-        $this->wait_status[$session_id] ??= self::STATUS_IDLE;
+        $this->wait_status = self::STATUS_IDLE;
 
         if (self::STATUS_IDLE === $status) {
-            $this->debug('Status: #' . $session_id . ' IDLE (' . (!$timeout ? 'stream ended' : 'response timeout') . ')', 'trace');
-            $this->wait_status[$session_id] = $status;
+            $this->debug('Status: #' . WORKER_MAIN . ' IDLE (' . (!$timeout ? 'stream ended' : 'response timeout') . ')', 'trace');
+            $this->wait_status = $status;
 
             unset($status, $timeout);
             return;
         }
 
-        $this->wait_until[$session_id] = time() + ($this->agent_config['agent_llm']['timeout']);
+        $this->wait_until = time() + ($this->agent_config['agent_llm']['timeout']);
 
-        if (($this->wait_status[$session_id] & $status) !== $status) {
+        if (($this->wait_status & $status) !== $status) {
             switch ($status) {
                 case self::STATUS_BUSY:
-                    $this->debug('Status: #' . $session_id . ' BUSY (waiting for response)', 'trace');
+                    $this->debug('Status: #' . WORKER_MAIN . ' BUSY (waiting for response)', 'trace');
                     break;
                 case self::STATUS_WAIT:
-                    $this->debug('Status: #' . $session_id . ' WAIT (receiving stream data)', 'trace');
+                    $this->debug('Status: #' . WORKER_MAIN . ' WAIT (receiving stream data)', 'trace');
                     break;
             }
 
-            $this->wait_status[$session_id] |= $status;
+            $this->wait_status |= $status;
         }
 
-        unset($session_id, $status, $timeout);
+        unset($status, $timeout);
     }
 
     /**
