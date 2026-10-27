@@ -180,7 +180,7 @@ class message extends Factory
                 break;
 
             case 'listSessions':
-                $content = $data_content['memory']->listSessions(1, true);
+                $content = $data_content['memory']->listSessions(1, '', true);
 
                 $content['act'] = $act;
                 break;
@@ -190,7 +190,7 @@ class message extends Factory
                     $content = $data_content['memory']->createSession($session_id, $data_content['session_name']);
 
                     if ('success' === $content['status']) {
-                        $content = $data_content['memory']->updateSession($session_id, $data_content['session_name']);
+                        $content = $data_content['memory']->renameSession($session_id, $data_content['session_name']);
                     }
                 } else {
                     $content = ['status' => 'error', 'error' => '缺少会话ID'];

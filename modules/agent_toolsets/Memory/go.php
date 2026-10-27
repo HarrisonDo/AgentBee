@@ -170,13 +170,14 @@ class go extends Factory
     }
 
     /**
-     * @param int  $session_status 0：全部；1：启用；2：禁用
-     * @param bool $keep_datetime
+     * @param int    $session_status 0：全部；1：启用；2：禁用
+     * @param string $session_id     指定获取对应 session_id 的信息
+     * @param bool   $keep_datetime
      *
      * @return array
      * @throws \ReflectionException
      */
-    public function listSessions(int $session_status = 1, bool $keep_datetime = false): array
+    public function listSessions(int $session_status = 1, string $session_id = '', bool $keep_datetime = false): array
     {
         if (!in_array($session_status, [0, 1, 2], true)) {
             $session_status = 0;
@@ -186,6 +187,10 @@ class go extends Factory
         $query = $this->libSQLite
             ->table('agent_session')
             ->select('session_id', 'session_name', 'session_status', 'create_time');
+
+        if ('' !== $session_id) {
+            $query->where(['session_id', $session_id]);
+        }
 
         if (0 !== $session_status) {
             $query->where(['session_status', $session_status]);
@@ -209,7 +214,7 @@ class go extends Factory
 
         $result = ['status' => 'success', 'sessions' => $sessions];
 
-        unset($session_status, $keep_datetime, $now, $query, $sessions, $id, $session);
+        unset($session_status, $session_id, $keep_datetime, $now, $query, $sessions, $id, $session);
         return $result;
     }
 

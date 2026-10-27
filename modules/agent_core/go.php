@@ -239,9 +239,17 @@ class go extends Factory
         }
 
         $prompt .= "\n\n" . '---' . "\n\n";
-        $prompt .= '' === $session_id
-            ? '【会话ID】未分配，本次禁止读写`daily`/`misc`记忆。'
-            : '【会话ID】`' . $session_id . '`，读写记忆时必传。';
+
+        if ('' !== $session_id) {
+            $session = $this->memory->listSessions(0, $session_id, false);
+            $prompt  .= isset($session['sessions'][0]['session_id']) && $session['sessions'][0]['session_id'] === $session_id
+                ? '【当前会话】**' . $session['sessions'][0]['session_name'] . '**，【会话ID】`' . $session_id . '`，读写记忆时必传。'
+                : '【会话ID】`' . $session_id . '`，读写记忆时必传。';
+
+            unset($session);
+        } else {
+            $prompt .= '【会话ID】未分配，本次禁止读写`daily`/`misc`记忆。';
+        }
 
         $prompt .= "\n\n" . '---' . "\n\n";
         $prompt .= $this->utils->getNowTimePrompt();
@@ -751,7 +759,7 @@ class go extends Factory
      */
     public function scheduleTask(SocketMgr $socketMgr): void
     {
-        $session_list = $this->memory->listSessions(0, true);
+        $session_list = $this->memory->listSessions(0, '', true);
 
         foreach ($session_list['sessions'] as $session) {
             $task_list = $this->memory->runTask($session['session_id']);
