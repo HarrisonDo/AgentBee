@@ -31,7 +31,7 @@ class handler extends Factory
     const VIEWPORT_HEIGHT = 1080;
 
     public int $cmd_id  = 0;
-    public int $timeout = 60;
+    public int $timeout = 30;
 
     public string $curr_id = '';
 
@@ -261,6 +261,10 @@ class handler extends Factory
      */
     public function switchTab(array $payload_data, agent_core $agent_core): array
     {
+        if ('' === ($payload_data['params']['target_id'] ?? '')) {
+            return ['status' => 'error', 'error' => '缺少target_id参数。'];
+        }
+
         return $this->sendCommand($agent_core, $payload_data, __FUNCTION__);
     }
 
@@ -334,6 +338,10 @@ class handler extends Factory
      */
     public function closeTab(array $payload_data, agent_core $agent_core): array
     {
+        if ('' === ($payload_data['params']['target_id'] ?? '')) {
+            return ['status' => 'error', 'error' => '缺少target_id参数。'];
+        }
+
         return $this->sendCommand($agent_core, $payload_data, __FUNCTION__);
     }
 
@@ -849,17 +857,16 @@ class handler extends Factory
             );
 
             $socketMgr->sendMessage($socketMgr->master_id, $socketMgr->wsEncode($message, false, true));
+        }
 
-            $read     = $socketMgr->master_sock;
-            $write    = [];
-            $except   = [];
-            $selected = stream_select($read, $write, $except, $this->timeout);
+        $write    = $except = null;
+        $read     = $socketMgr->master_sock;
+        $selected = stream_select($read, $write, $except, 3);
 
-            if (in_array($selected, [0, false], true)) {
-                continue;
+        if (false !== $selected && 0 < $selected) {
+            while ('' !== $socketMgr->readMessage($socketMgr->master_id, true)) {
+                // Drop Injection responses
             }
-
-            $socketMgr->readMessage($socketMgr->master_id, true);
         }
 
         Factory::destroy($socketMgr);
@@ -867,7 +874,7 @@ class handler extends Factory
         $this->tab_list[$target_id]['injected'] = true;
         $agent_core->utils->debug('Browser: Injection commands sent to ' . $target_id, 'trace');
 
-        unset($target_id, $agent_core, $ws_addr, $source, $socketMgr, $commands, $command, $cmd_id, $message, $read, $write, $except, $selected);
+        unset($target_id, $agent_core, $ws_addr, $source, $socketMgr, $commands, $command, $cmd_id, $message, $write, $except, $read, $selected);
     }
 
     /**
@@ -1053,7 +1060,7 @@ class handler extends Factory
      */
     public function buildCommand(string $action, array $params, int $cmd_id): string
     {
-        $timeout_ms = $this->timeout * 1000;
+        $timeout_ms = ($this->timeout - 3) * 1000;
 
         switch ($action) {
             case 'createTab':
@@ -1475,7 +1482,10 @@ class handler extends Factory
 
         $config        = $this->loadConfig($agent_core);
         $socketMgr     = SocketMgr::new('browser');
-        $this->timeout = $config['chrome_timeout'] ?? $this->timeout;
+        $wait_actions  = ['waitForSelector', 'waitForPageLoad', 'waitForText', 'waitForElementVisible', 'waitForUrl'];
+        $this->timeout = in_array($action, $wait_actions, true)
+            ? ($config['chrome_timeout'] ?? 30)
+            : 10;
 
         try {
             $agent_core->utils->debug('Browser: working on ' . $action . '.', 'trace');
@@ -1566,12 +1576,31 @@ class handler extends Factory
 
             if (isset($msg_data['error'])) {
                 $agent_core->utils->debug('Browser CDP error: ' . ($msg_data['error']['message'] ?? '未知错误'), 'debug');
-                $this->close($payload_data, $agent_core);
 
-                return [
-                    'status' => 'error',
-                    'error'  => '浏览器实例执行失败，已关闭，请重新启动浏览器。',
-                ];
+                if (in_array($action, ['switchTab', 'closeTab'], true)) {
+                    unset($this->tab_list[$target_id]);
+
+                    if ([] === $this->tab_list) {
+                        $this->close($payload_data, $agent_core);
+                        return ['status' => 'error', 'error' => '最后一个标签页已失效，浏览器实例已关闭。'];
+                    }
+
+                    if ($this->curr_id === $target_id) {
+                        $tab_ids       = array_keys($this->tab_list);
+                        $this->curr_id = [] !== $tab_ids ? $tab_ids[0] : '';
+
+                        if ('' !== $this->curr_id) {
+                            $this->browser_data['debug_addr'] = $this->tab_list[$this->curr_id]['ws_addr'];
+                        }
+
+                        unset($tab_ids);
+                    }
+
+                    return ['status' => 'error', 'error' => '标签页`' . $target_id . '`已失效，已自动移除。'];
+                }
+
+                $this->close($payload_data, $agent_core);
+                return ['status' => 'error', 'error' => '浏览器实例执行失败，已关闭，请重新启动浏览器。'];
             }
 
             $runtime_error = '';
@@ -1634,22 +1663,28 @@ class handler extends Factory
                 $data = $msg_data['result'] ?? [];
             }
 
-            if (
-                in_array($action, ['waitForSelector', 'waitForPageLoad', 'waitForText', 'waitForElementVisible', 'waitForUrl',], true)
-                && false === $data
-            ) {
+            if (in_array($action, $wait_actions, true) && false === $data) {
                 return [
                     'status' => 'error',
                     'error'  => '执行"' . $action . '"等待超时，条件未满足，请检查页面是否正常加载或增加超时时间。',
                 ];
             }
 
-            if ('createTab' === $action) {
-                return $this->handleCreateTab($payload_data, $msg_data, $agent_core);
-            }
+            if ('navigate' === $action) {
+                if (isset($msg_data['result']['errorText'])) {
+                    return [
+                        'status' => 'error',
+                        'error'  => '导航失败：' . $msg_data['result']['errorText'],
+                    ];
+                }
 
-            if ('closeTab' === $action) {
-                return $this->handleCloseTab($payload_data, $msg_data, $agent_core);
+                $nav_url = ($payload_data['params']['url'] ?? '');
+
+                if ('' !== $nav_url) {
+                    $this->tab_list[$target_id]['url'] = $nav_url;
+                }
+
+                unset($nav_url);
             }
 
             if ('switchTab' === $action) {
@@ -1658,19 +1693,14 @@ class handler extends Factory
                 if (isset($this->tab_list[$target_id]['ws_addr'])) {
                     $this->browser_data['debug_addr'] = $this->tab_list[$target_id]['ws_addr'];
                 }
-
-                return [
-                    'status'  => 'success',
-                    'message' => '当前标签页已切换至`' . $target_id . '`，可继续操作。',
-                ];
             }
 
-            if ('navigate' === $action) {
-                $nav_url = ($payload_data['params']['url'] ?? '');
+            if ('createTab' === $action) {
+                return $this->handleCreateTab($payload_data, $msg_data, $agent_core);
+            }
 
-                if ('' !== $nav_url) {
-                    $this->tab_list[$target_id]['url'] = $nav_url;
-                }
+            if ('closeTab' === $action) {
+                return $this->handleCloseTab($payload_data, $msg_data, $agent_core);
             }
 
             return [
@@ -1689,7 +1719,7 @@ class handler extends Factory
             ];
         } finally {
             Factory::destroy($socketMgr);
-            unset($agent_core, $payload_data, $action, $target_id, $tab_info, $ws_addr, $socketMgr, $cmd_id, $master_id, $raw_msg, $msg_data, $deadline, $command, $remaining, $seconds, $microseconds, $read, $write, $except, $selected, $response_msg, $response_data, $runtime_error, $saved_path, $data);
+            unset($agent_core, $payload_data, $action, $target_id, $tab_info, $ws_addr, $socketMgr, $wait_actions, $cmd_id, $master_id, $raw_msg, $msg_data, $deadline, $command, $remaining, $seconds, $microseconds, $read, $write, $except, $selected, $response_msg, $response_data, $runtime_error, $saved_path, $data);
         }
     }
 
@@ -1715,6 +1745,7 @@ class handler extends Factory
             'setAttribute'          => '属性设置成功。',
             'scrollIntoView'        => '元素已滚动到可视区域。',
             'selectOption'          => '选项已选择。',
+            'switchTab'             => '当前标签页已切换。',
             'evaluate'              => '脚本执行完成。',
             'screenshot'            => '截图已保存。',
             'waitForSelector'       => '等待条件已满足。',
