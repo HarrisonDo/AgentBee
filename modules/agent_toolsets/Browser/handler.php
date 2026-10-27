@@ -996,13 +996,6 @@ class handler extends Factory
 
         $this->curr_id = $target_id;
 
-        try {
-            $this->injectScript($target_id, $agent_core);
-        } catch (\Throwable $throwable) {
-            $agent_core->utils->debug('Browser: Failed to inject to ' . $target_id, 'trace');
-            unset($throwable);
-        }
-
         unset($payload_data, $msg_data, $agent_core, $ws_addr, $debugger, $item);
         return [
             'status'  => 'success',
@@ -1454,13 +1447,13 @@ class handler extends Factory
             return ['status' => 'error', 'error' => '标签页`' . $target_id . '`正忙（操作: ' . $tab_info['action'] . '），请稍后重试。'];
         }
 
-        try {
-            if (!in_array($action, ['createTab', 'closeTab'], true)) {
+        if (!in_array($action, ['createTab', 'closeTab'], true)) {
+            try {
                 $this->injectScript($target_id, $agent_core);
+            } catch (\Throwable $throwable) {
+                $agent_core->utils->debug('Browser: Failed to inject: ' . $throwable->getMessage(), 'trace');
+                unset($throwable);
             }
-        } catch (\Throwable $throwable) {
-            $agent_core->utils->debug('Browser: Failed to inject to ' . $target_id, 'trace');
-            unset($throwable);
         }
 
         $this->tab_list[$target_id]['status'] = 'busy';
