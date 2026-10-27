@@ -859,22 +859,16 @@ class handler extends Factory
             $socketMgr->sendMessage($socketMgr->master_id, $socketMgr->wsEncode($message, false, true));
         }
 
-        $write    = $except = null;
-        $read     = $socketMgr->master_sock;
-        $selected = stream_select($read, $write, $except, 3);
+        $write = $except = null;
+        $read  = $socketMgr->master_sock;
 
-        if (false !== $selected && 0 < $selected) {
-            while ('' !== $socketMgr->readMessage($socketMgr->master_id, true)) {
-                // Drop Injection responses
-            }
-        }
-
+        stream_select($read, $write, $except, 3);
         Factory::destroy($socketMgr);
 
         $this->tab_list[$target_id]['injected'] = true;
         $agent_core->utils->debug('Browser: Injection commands sent to ' . $target_id, 'trace');
 
-        unset($target_id, $agent_core, $ws_addr, $source, $socketMgr, $commands, $command, $cmd_id, $message, $write, $except, $read, $selected);
+        unset($target_id, $agent_core, $ws_addr, $source, $socketMgr, $commands, $command, $cmd_id, $message, $write, $except, $read);
     }
 
     /**
