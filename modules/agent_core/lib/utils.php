@@ -877,8 +877,6 @@ class utils extends Factory
      */
     public function setStatus(int $status, bool $timeout = false): void
     {
-        $this->wait_status = self::STATUS_IDLE;
-
         if (self::STATUS_IDLE === $status) {
             $this->debug('Status: #' . WORKER_MAIN . ' IDLE (' . (!$timeout ? 'stream ended' : 'response timeout') . ')', 'trace');
             $this->wait_status = $status;
