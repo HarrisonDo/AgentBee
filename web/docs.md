@@ -189,10 +189,11 @@
   「停止」优先停当前会话正在跑的那一轮；当前会话没有在跑的，就停最近发起的那一轮。
   点击停止只发送 `{ type: '/abort', sessionId, messageId }`（`sessionId` 顶层必填），
   不在本地写日志或收尾；服务端收到 `/abort` 后中止当前主 worker，
-  真正中止之后回一条 `type: 'abort'` 事件，前端再按 `close` 的语义收尾。
-  **界面提示**：被中止的那条 assistant 气泡按 `status: 'stopped'` 渲染——
-  有内容时正文照常显示、末尾缀一条「已停止生成」（`ChatMessage` 的 `.message-stopped`）；
-  没内容时气泡里只显示这一条，而不是原来那句「未收到回复，对话已结束」。
+  真正中止之后回一条 `type: 'abort'` 事件，前端按 `abort` 单独处理：
+  即使这一轮还没产出内容也保留气泡，并把 `data.message`（如「已停止生成」）显示在气泡里；
+  有内容时正文照常显示、末尾缀一条同样的提示（`ChatMessage` 的 `.message-stopped`）。
+  `messageId` 对不上时，如果目标会话里只有一个 loading 的 assistant，也会收尾它，
+  避免回执被吞掉、界面一直没有反馈。
   用户点停止和后端自己 abort 走的是同一条渲染路径，都能在消息上看到结果。
   注意：后端一轮只服务一个 `curr_message_id`，在 A 还在输出时又去 B 发消息，
   后端可能按「放弃上一轮」的语义把 A 那一轮 close 掉（前端会保守保留已流出的内容）。
