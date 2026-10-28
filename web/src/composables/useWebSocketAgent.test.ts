@@ -329,7 +329,35 @@ describe('switching sessions while a turn is streaming', () => {
 
     const abortPayload = JSON.parse(sockets[0].sent[sockets[0].sent.length - 1]);
     expect(abortPayload).toMatchObject({ type: '/abort', sessionId: 'session-1', messageId });
+    // 本地不预判停止，等服务端 abort 回执。
+    expect(assistantOf(messageId, 'session-1')?.status).toBe('loading');
+    emit({ type: 'abort', sessionId: 'session-1', messageId });
     expect(assistantOf(messageId, 'session-1')?.status).toBe('stopped');
+  });
+
+  it('keeps the turn loading until the server confirms the abort', () => {
+    const { agent, assistantOf, emit, sendUserText, session } = setupAgent();
+    const messageId = sendUserText('要停的问题');
+    emit({ type: 'content', messageId, data: 'partial' });
+    emit({ type: 'tool_result', messageId, data: { name: 'X', content: 'ok' } });
+
+    agent.stopCurrent();
+
+    // 回执到达前保持 loading，也不写本地 "Stop request sent." 日志。
+    expect(assistantOf(messageId)?.status).toBe('loading');
+    expect(session.messages.some((item) => item.content === 'Stop request sent.')).toBe(false);
+    expect(agent.hasPendingTurns.value).toBe(true);
+
+    // 停止请求发出后、回执回来前，服务端仍可能推内容；照常展示。
+    emit({ type: 'content', messageId, data: ' still streaming' });
+    emit({ type: 'tool_result', messageId, data: { name: 'X', content: 'ok' } });
+    expect(assistantOf(messageId)?.content).toBe('partial still streaming');
+    expect(assistantOf(messageId)?.status).toBe('loading');
+
+    // 最终以服务端 abort 回执为准。
+    emit({ type: 'abort', sessionId: session.id, messageId });
+    expect(assistantOf(messageId)?.status).toBe('stopped');
+    expect(agent.hasPendingTurns.value).toBe(false);
   });
 
   it('sends the chat payload with the session active at send time', () => {

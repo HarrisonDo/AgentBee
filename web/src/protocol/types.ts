@@ -213,8 +213,8 @@ export interface MemoryRecord {
 /**
  * 中止当前正在跑的那一轮。
  *
- * `sessionId` 仍然放在顶层：前端用它把「Stop request sent.」和 stopped 收尾
- * 写回真正在跑的那个会话；后端 `/abort` 分支目前只中止主 worker，不读 `messageId`。
+ * `sessionId` 仍然放在顶层：前端用它标记要停的会话；真正的 stopped 收尾
+ * 等服务端 `abort` 回执，不在本地预判。后端 `/abort` 分支目前只中止主 worker，不读 `messageId`。
  *
  * 请求类型是 `/abort`：后端 `go.php onMessage` 直接按这个字符串拦截，
  * 不会走 `process_*` 反射。服务端「已停止生成」的回执仍然是 `type: 'abort'`。

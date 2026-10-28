@@ -453,8 +453,8 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     // 优先停当前会话正在跑的那一轮；当前会话没有在跑的，就停最近发起的那一轮。
     const messageId = getActiveSessionPendingMessageId() || getLatestPendingMessageId();
     // 有在途轮次时，归属会话取**那一轮自己的**会话：用户可能已经切走了，
-    // 要停的必须是真正在跑的那一轮，提示也得写回它。只有没有在途轮次时才退回当前会话
-    // ——这样 sessionId 永远不会是 null（后端拿它 setStatus，null 会写错会话）。
+    // 要停的必须是真正在跑的那一轮。只有没有在途轮次时才退回当前会话
+    // ——这样 sessionId 永远不会是 null。
     const session = resolveTurnSession(messageId).session || options.activeSession();
     if (!session) return false;
 
@@ -462,17 +462,10 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     // 不会反射成 `process_abort`；服务端「已停止生成」的回执仍然是 `type: 'abort'`。
     sendJson({ type: '/abort', sessionId: session.id, messageId: messageId || makeId() });
 
-    // 提示写进被停止的那个会话，而不是用户此刻正在看的会话。
-    session.messages.push({
-      id: makeId(),
-      role: 'system',
-      content: 'Stop request sent.',
-      time: nowTime(),
-    });
-    options.touchSession(session);
-
-    // 本地立刻收尾，别让气泡一直转圈等后端的 end（没有在途轮次时无事可做）。
-    if (messageId) finishAssistantMessage(messageId, 'stopped');
+    // 不在本地收尾，也不写 "Stop request sent." 日志：
+    // 服务端收到 `/abort` 后会回 `type: 'abort'`（或 close/end），由那条回执决定
+    // 这一轮是 stopped、done 还是被移除；回执到达前继续展示已经流出的内容。
+    // 否则点击停止会先冒出「已停止生成」，迟到的 content 又把它翻回加载态。
     return true;
   }
 
