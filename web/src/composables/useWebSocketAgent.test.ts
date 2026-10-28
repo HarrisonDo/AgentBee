@@ -283,6 +283,38 @@ describe('abort event handling', () => {
   });
 });
 
+describe('error event handling', () => {
+  it('renders data.message as the error text', () => {
+    const { emit, sendUserText, session } = setupAgent();
+    const messageId = sendUserText('会失败的问题');
+
+    emit({
+      type: 'error',
+      data: { message: '模型调用失败' },
+      sessionId: session.id,
+      messageId,
+    });
+
+    const error = session.messages.find((item) => item.role === 'error');
+    expect(error?.content).toBe('模型调用失败');
+  });
+
+  it('renders a string data payload as the error text', () => {
+    const { emit, sendUserText, session } = setupAgent();
+    const messageId = sendUserText('会失败的问题');
+
+    emit({
+      type: 'error',
+      data: '网络错误',
+      sessionId: session.id,
+      messageId,
+    });
+
+    const error = session.messages.find((item) => item.role === 'error');
+    expect(error?.content).toBe('网络错误');
+  });
+});
+
 describe('stream content without a message id', () => {
   it('does not create a ghost assistant message when no turn is pending', () => {
     const { agent, emit, session, sendUserText } = setupAgent();
