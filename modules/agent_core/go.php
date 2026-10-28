@@ -188,7 +188,13 @@ class go extends Factory
         $this->utils->debug('Ready to start ' . AGENT_NAME . ' v' . AGENT_VERSION, 'trace');
 
         $this->init();
-        $this->runWorker($this->utils->getMainIDX(), WORKER_MAIN, WORKER_MAIN, [$this, 'workerHandler']);
+
+        $this->runWorker(
+            $this->utils->getMainIDX(),
+            WORKER_MAIN,
+            WORKER_MAIN,
+            [$this, 'workerHandler']
+        );
 
         $agent_toolsets = $this->utils->fetchToolset('modules/agent_toolsets');
         $this->core->addSkills($agent_toolsets);
@@ -1050,7 +1056,6 @@ class go extends Factory
             }
 
             $this->utils->debug('User: Sending ' . (count($message_list)) . ' message(s) to #' . $session_id, 'trace');
-            $this->runWorker($main_pid, WORKER_MAIN, WORKER_MAIN, [$this, 'workerHandler']);
 
             $this->core->context->refreshHistory($session_id, WORKER_MAIN);
             $this->core->context->addUserMessage($session_id, WORKER_MAIN, $message_list);
