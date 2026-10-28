@@ -40,6 +40,7 @@ class go extends Factory
 
     public bool $ctx_warning = false;
 
+    public array $session_calls = [];
     public array $last_response = [];
 
     /**
@@ -292,16 +293,25 @@ class go extends Factory
 
             $message = json_decode($line, true);
 
-            if (!is_array($message)) {
+            if (!is_array($message) || !isset($message['payload']['sessionId'])) {
                 continue;
             }
 
             $payload      = $message['payload'];
             $payload_type = $payload['type'];
-            $worker_info  = $this->utils->getChildWorker($payload['sender'], $payload['workerName']);
-            $llm_params   = $worker_info['llm_params'] ?? [];
+
+            $this->session_calls[$payload['sessionId']] ??= 0;
+
+            if (0 < $this->session_calls[$payload['sessionId']]) {
+                $this->utils->debug('System: Calls executed for #' . $payload['sessionId'] . '.', 'trace');
+                $this->session_calls[$payload['sessionId']] = 0;
+                $this->utils->setStatus(utils::STATUS_IDLE);
+                \Fiber::suspend();
+            }
 
             $this->utils->debug($payload['workerName'] . ': ' . $message['type'] . '->' . $payload_type, 'debug');
+            $worker_info = $this->utils->getChildWorker($payload['sender'], $payload['workerName']);
+            $llm_params  = $worker_info['llm_params'] ?? [];
 
             switch ($message['type']) {
                 case 'stream':
@@ -443,6 +453,7 @@ class go extends Factory
                 case 'context':
                     // Reset main worker status
                     if (WORKER_MAIN === $payload['sender']) {
+                        ++$this->session_calls[$payload['sessionId']];
                         $this->utils->setStatus(utils::STATUS_IDLE);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
@@ -544,6 +555,7 @@ class go extends Factory
                     $this->last_response[$payload['sessionId']] = time();
 
                     if (WORKER_MAIN === $payload['sender']) {
+                        ++$this->session_calls[$payload['sessionId']];
                         $this->utils->setStatus(utils::STATUS_IDLE);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
@@ -683,6 +695,7 @@ class go extends Factory
                                         $this->core->curr_message_id[$payload['sessionId']] ?? ''
                                     );
 
+                                    $this->openai->resume();
                                     $this->openai->talkTo(
                                         $payload['sender'],
                                         $payload['workerName'],
@@ -1110,6 +1123,7 @@ class go extends Factory
                 $this->core->curr_message_id[$session_id] ?? ''
             );
 
+            $this->openai->resume();
             $this->openai->talkTo(
                 WORKER_MAIN,
                 WORKER_MAIN,
