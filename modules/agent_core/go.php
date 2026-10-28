@@ -384,7 +384,11 @@ class go extends Factory
                             $error = ['type' => 'error'];
                             $error += is_array($payload['data'])
                                 ? $payload['data']
-                                : ['message' => $payload['data']];
+                                : [
+                                    'sessionId' => $payload['sessionId'],
+                                    'messageId' => $payload['messageId'],
+                                    'message'   => $payload['data']
+                                ];
 
                             $this->core->sendMessage($error);
                             unset($this->utils->stream_buffers[$ext_id], $error);
