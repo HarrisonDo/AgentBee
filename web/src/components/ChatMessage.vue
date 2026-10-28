@@ -97,6 +97,11 @@ const wasStopped = computed(() => (
   props.message.status === 'stopped'
 ));
 
+/** 服务端 abort 回执里的文案优先；没有时退回本地 i18n。 */
+const stoppedLabel = computed(() => (
+  props.message.statusMessage?.trim() || props.labels.generationStopped
+));
+
 const renderedMarkdown = computed(() => {
   const markdown = props.message.content || '';
   if (props.message.status !== 'loading') {
@@ -485,7 +490,7 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
       </div>
 
       <div v-else-if="endedWithoutResponse" class="message-ended">
-        {{ wasStopped ? labels.generationStopped : labels.noResponseEnded }}
+        {{ wasStopped ? stoppedLabel : labels.noResponseEnded }}
       </div>
 
       <div
@@ -519,7 +524,7 @@ function splitStreamingMarkdown(markdown: string): { stable: string; tail: strin
 
       <!-- 有内容又被中止的：内容照常渲染，末尾补一条说明（没内容的情况上面那条已经显示了）。 -->
       <div v-if="wasStopped && !endedWithoutResponse" class="message-stopped">
-        {{ labels.generationStopped }}
+        {{ stoppedLabel }}
       </div>
     </div>
 

@@ -41,6 +41,8 @@ export interface ChatMessage {
   files?: ChatFile[];
   toolEvents?: ToolEvent[];
   status?: AssistantStatus;
+  /** 服务端 abort 回执里的说明（如「已停止生成」），优先于本地 i18n 文案。 */
+  statusMessage?: string;
   isSubTalk?: number;
   /** Runtime-only metadata for records loaded through memory/read. */
   memoryCreateId?: number;

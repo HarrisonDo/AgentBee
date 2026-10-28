@@ -695,6 +695,12 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       appendRemoteFeedbackMessage(msg);
       return;
     }
+    // 停止回执：用户主动停止后由服务端返回，按 sessionId/messageId 直接收尾，
+    // 不依赖下面的通用广播路由，避免 messageId 对不上时整条回执被吞掉。
+    if (type === 'abort') {
+      handleAbortMessage(msg);
+      return;
+    }
     // 广播事件按服务端 session 路由；无 session 的旧协议只能认已知轮次。
     const sessionId = (msg.sessionId || msg.session_id || '').trim();
     if (sessionId) {
@@ -745,10 +751,9 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       return finishAssistantMessage(messageId, 'error', msg);
     }
     if (['end', 'done', 'finish'].includes(type)) return finishAssistantMessage(messageId, 'done', msg);
-    // `abort` 是服务端「已停止生成」的回执（`{ type:'abort', data:{ message:'已停止生成' }, sessionId, messageId }`），
-    // 语义和 `close` 一样是「放弃这一轮」：保留已经流出来的内容并按 stopped 收尾，
-    // 什么都没产出的空壳则删掉。不能落到下面的兜底分支——那会把整包 JSON 当正文画进气泡。
-    if (type === 'close' || type === 'abort') return closeAssistantMessage(messageId);
+    // `close` 是服务端「放弃这一轮」的通知，可能指向早已结束的轮次；
+    // 按保守策略收尾。`abort` 已经在上面按服务端回执单独处理。
+    if (type === 'close') return closeAssistantMessage(messageId);
 
     queueAssistantContent(messageId, JSON.stringify(msg, null, 2), msg);
   }
@@ -946,7 +951,53 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   }
 
   /**
-   * 后端 `close`（以及 `abort`，见 handleServerMessage）的语义是「放弃这一轮」，
+   * 服务端 `abort` 回执：把对应的 assistant 气泡收尾为 stopped。
+   *
+   * 和 `close` 不同，`abort` 是用户主动停止后的权威回执：
+   * - 即使这一轮还没产出内容，也保留气泡并显示服务端返回的「已停止生成」，
+   *   否则用户点停止只会看到 loader 消失，没有任何反馈；
+   * - 优先按 messageId 精确匹配；匹配不到时，如果目标会话里恰好只有一个 loading
+   *   的 assistant，就收尾那一个，避免 messageId 不一致导致回执被吞掉。
+   */
+  function handleAbortMessage(msg: ServerMessage) {
+    const sessionId = (msg.sessionId || msg.session_id || '').trim();
+    if (!sessionId) return;
+
+    const session = options.getSessionById
+      ? options.getSessionById(sessionId)
+      : options.activeSession()?.id === sessionId ? options.activeSession() : null;
+    if (!session) return;
+
+    const messageId = (msg.messageId || '').trim();
+    let assistant = messageId
+      ? session.messages.find((message) => (
+        message.role === 'assistant' && message.messageId === messageId
+      ))
+      : undefined;
+
+    if (!assistant) {
+      const loading = session.messages.filter((message) => (
+        message.role === 'assistant' && message.status === 'loading'
+      ));
+      if (loading.length === 1) assistant = loading[0];
+    }
+
+    if (!assistant || assistant.status !== 'loading') return;
+
+    assistant.status = 'stopped';
+    const statusMessage = extractAbortMessage(msg);
+    if (statusMessage) assistant.statusMessage = statusMessage;
+
+    if (assistant.messageId) {
+      clearNoResponseTimer(assistant.messageId);
+      pendingTurns.value.delete(assistant.messageId);
+    }
+    options.touchSession(session);
+    options.registerSession();
+  }
+
+  /**
+   * 后端 `close` 的语义是「放弃这一轮」，
    * 但它并不总是针对正在流式输出的那一轮：
    * go.php 会在处理下一条用户消息前，对残留的 `curr_message_id` 补发一次 close，
    * 而 `curr_message_id` 只有在最后一次 content/think 缓冲 flush 成功时才会被清空——
@@ -1301,6 +1352,15 @@ function unwrapActContent(msg: ServerMessage): { act: string; content: unknown }
     act: msg.act || '',
     content: msg.content ?? msg.data ?? msg.message ?? '',
   };
+}
+
+function extractAbortMessage(msg: ServerMessage): string {
+  if (typeof msg.data === 'string' && msg.data.trim()) return msg.data.trim();
+  if (isRecord(msg.data)) {
+    const message = asString(msg.data.message).trim();
+    if (message) return message;
+  }
+  return asString(msg.message).trim();
 }
 
 function hasAssistantOutput(message: ChatMessage): boolean {
