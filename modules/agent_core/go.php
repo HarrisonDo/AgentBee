@@ -950,8 +950,13 @@ class go extends Factory
                     $data['sessionId']
                 );
 
-                $this->core->sendMessage($this->message->buildFeedback($data['content'], $marker), $other_clients);
-                unset($marker);
+                $feedback = $this->message->buildFeedback($data['content'], $marker);
+
+                if ([] !== $feedback) {
+                    $this->core->sendMessage($feedback, $other_clients);
+                }
+
+                unset($marker, $feedback);
             }
 
             if ('memory' === $data['type']) {
