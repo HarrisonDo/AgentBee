@@ -381,17 +381,11 @@ class go extends Factory
                                 $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
                             }
 
-                            $error = ['type' => 'error'];
-                            $error += is_array($payload['data'])
-                                ? $payload['data']
-                                : [
-                                    'sessionId' => $payload['sessionId'],
-                                    'messageId' => $payload['messageId'],
-                                    'message'   => $payload['data']
-                                ];
+                            if (is_array($payload['data']) && isset($payload['data']['message'])) {
+                                $this->core->sendMessage($payload);
+                            }
 
-                            $this->core->sendMessage($error);
-                            unset($this->utils->stream_buffers[$ext_id], $error);
+                            unset($this->utils->stream_buffers[$ext_id]);
                             break;
 
                         case 'abort':
