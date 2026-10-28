@@ -155,7 +155,7 @@ class handler extends Factory
             $agent_core->utils->OSMgr->killPid($browser_pid);
             $agent_core->utils->procMgr->close($browser_idx);
             $agent_core->utils->removePid($browser_pid);
-            return '无法获取浏览器WebSocket地址，浏览器实例已关闭。';
+            return '浏览器启动失败（未获取到WebSocket通信地址），请重试。';
         }
 
         $local_port = parse_url($browser_addr, PHP_URL_PORT);
@@ -190,7 +190,7 @@ class handler extends Factory
             $agent_core->utils->OSMgr->killPid($browser_pid);
             $agent_core->utils->procMgr->close($browser_idx);
             $agent_core->utils->removePid($browser_pid);
-            return '无法获取目标页面WebSocket地址，浏览器实例已关闭。';
+            return '浏览器启动失败（未获取到页面WebSocket地址），请重试。';
         }
 
         $this->tab_list = $tab_list;
@@ -384,7 +384,7 @@ class handler extends Factory
         ) {
             return [
                 'status' => 'error',
-                'error'  => '无法获取目标元素的有效坐标。',
+                'error'  => '无法获取元素坐标，请确认selector是否正确，或先调用`waitForSelector`等待元素出现后重试。',
             ];
         }
 
@@ -412,7 +412,7 @@ class handler extends Factory
             $result = [
                 'status'  => 'success',
                 'data'    => ['warning' => '按下已生效，释放事件上报异常，请留意页面状态'],
-                'message' => '点击已执行（释放阶段异常），请勿重复提交。',
+                'message' => '点击已执行（释放阶段异常），请勿重复提交。请调用`listTabs`检查是否有新标签页，并用`getUrl`确认当前页面状态。',
             ];
         }
 
@@ -680,7 +680,7 @@ class handler extends Factory
         ) {
             return [
                 'status' => 'error',
-                'error'  => '无法获取目标元素的有效坐标。',
+                'error'  => '无法获取元素坐标，请确认selector是否正确，或先调用`waitForSelector`等待元素出现后重试。'
             ];
         }
 
@@ -735,7 +735,7 @@ class handler extends Factory
         if ([] !== $invalid_modifiers) {
             return [
                 'status' => 'error',
-                'error'  => '不支持的修饰键：' . implode('、', $invalid_modifiers) . '。'
+                'error'  => '不支持的修饰键：' . implode('、', $invalid_modifiers) . '，仅支持：Control、Shift、Alt、Meta。'
             ];
         }
 
@@ -760,7 +760,7 @@ class handler extends Factory
         if (!in_array($key, $supported_keys, true) && 1 !== preg_match('/^[a-zA-Z0-9]$/', $key)) {
             return [
                 'status' => 'error',
-                'error'  => '不支持的按键名称：' . $key . '。',
+                'error'  => '不支持的按键名称：' . $key . '，支持单字母/数字及Enter、Tab、Escape、Backspace、空格、方向键、PageUp/Down、Home、End、Insert、Delete、F1-F12。'
             ];
         }
 
@@ -784,7 +784,7 @@ class handler extends Factory
             $result = [
                 'status'  => 'success',
                 'data'    => ['warning' => '按下已生效，释放事件上报异常，请留意页面状态'],
-                'message' => '按键已执行（释放阶段异常），请勿重复操作。',
+                'message' => '按键已执行（释放阶段异常），请勿重复操作。请调用`listTabs`检查是否有新标签页，并用`getUrl`确认当前页面状态。',
             ];
         }
 
@@ -859,22 +859,16 @@ class handler extends Factory
             $socketMgr->sendMessage($socketMgr->master_id, $socketMgr->wsEncode($message, false, true));
         }
 
-        $write    = $except = null;
-        $read     = $socketMgr->master_sock;
-        $selected = stream_select($read, $write, $except, 3);
+        $write = $except = null;
+        $read  = $socketMgr->master_sock;
 
-        if (false !== $selected && 0 < $selected) {
-            while ('' !== $socketMgr->readMessage($socketMgr->master_id, true)) {
-                // Drop Injection responses
-            }
-        }
-
+        stream_select($read, $write, $except, 3);
         Factory::destroy($socketMgr);
 
         $this->tab_list[$target_id]['injected'] = true;
         $agent_core->utils->debug('Browser: Injection commands sent to ' . $target_id, 'trace');
 
-        unset($target_id, $agent_core, $ws_addr, $source, $socketMgr, $commands, $command, $cmd_id, $message, $write, $except, $read, $selected);
+        unset($target_id, $agent_core, $ws_addr, $source, $socketMgr, $commands, $command, $cmd_id, $message, $write, $except, $read);
     }
 
     /**
@@ -965,7 +959,7 @@ class handler extends Factory
     public function handleCreateTab(array $payload_data, array $msg_data, agent_core $agent_core): array
     {
         if (!isset($msg_data['result']['targetId'])) {
-            return ['status' => 'error', 'error' => '创建标签页失败：未返回targetId。'];
+            return ['status' => 'error', 'error' => '创建标签页失败（无targetId），请重试。'];
         }
 
         $ws_addr   = '';
@@ -982,7 +976,7 @@ class handler extends Factory
         }
 
         if ('' === $ws_addr) {
-            return ['status' => 'error', 'error' => '创建标签页失败：无法获取新标签页的WebSocket地址。'];
+            return ['status' => 'error', 'error' => '创建标签页失败（无WebSocket地址），请重试。'];
         }
 
         $this->tab_list[$target_id] = [
@@ -995,13 +989,6 @@ class handler extends Factory
         ];
 
         $this->curr_id = $target_id;
-
-        try {
-            $this->injectScript($target_id, $agent_core);
-        } catch (\Throwable $throwable) {
-            $agent_core->utils->debug('Browser: Failed to inject to ' . $target_id, 'trace');
-            unset($throwable);
-        }
 
         unset($payload_data, $msg_data, $agent_core, $ws_addr, $debugger, $item);
         return [
@@ -1021,7 +1008,7 @@ class handler extends Factory
     public function handleCloseTab(array $payload_data, array $msg_data, agent_core $agent_core): array
     {
         if (isset($msg_data['result']['success']) && false === $msg_data['result']['success']) {
-            return ['status' => 'error', 'error' => '标签页关闭失败。'];
+            return ['status' => 'error', 'error' => '标签页关闭失败，请调用`listTabs`确认状态后重试。'];
         }
 
         $target_id = $payload_data['params']['target_id'] ?? '';
@@ -1442,7 +1429,7 @@ class handler extends Factory
             }
 
             if (!isset($this->tab_list[$target_id])) {
-                return ['status' => 'error', 'error' => '标签页`' . $target_id . '`不存在或已关闭。'];
+                return ['status' => 'error', 'error' => '标签页`' . $target_id . '`不存在或已关闭，请调用`listTabs`查看可用标签页。'];
             }
 
             unset($debugger, $item);
@@ -1454,13 +1441,13 @@ class handler extends Factory
             return ['status' => 'error', 'error' => '标签页`' . $target_id . '`正忙（操作: ' . $tab_info['action'] . '），请稍后重试。'];
         }
 
-        try {
-            if (!in_array($action, ['createTab', 'closeTab'], true)) {
+        if (!in_array($action, ['createTab', 'closeTab'], true)) {
+            try {
                 $this->injectScript($target_id, $agent_core);
+            } catch (\Throwable $throwable) {
+                $agent_core->utils->debug('Browser: Failed to inject: ' . $throwable->getMessage(), 'trace');
+                unset($throwable);
             }
-        } catch (\Throwable $throwable) {
-            $agent_core->utils->debug('Browser: Failed to inject to ' . $target_id, 'trace');
-            unset($throwable);
         }
 
         $this->tab_list[$target_id]['status'] = 'busy';
@@ -1582,7 +1569,7 @@ class handler extends Factory
 
                     if ([] === $this->tab_list) {
                         $this->close($payload_data, $agent_core);
-                        return ['status' => 'error', 'error' => '最后一个标签页已失效，浏览器实例已关闭。'];
+                        return ['status' => 'error', 'error' => '最后一个标签页已失效，浏览器已关闭。'];
                     }
 
                     if ($this->curr_id === $target_id) {
@@ -1596,7 +1583,7 @@ class handler extends Factory
                         unset($tab_ids);
                     }
 
-                    return ['status' => 'error', 'error' => '标签页`' . $target_id . '`已失效，已自动移除。'];
+                    return ['status' => 'error', 'error' => '标签页`' . $target_id . '`已失效，请调用`listTabs`查看剩余标签页。'];
                 }
 
                 $this->close($payload_data, $agent_core);
@@ -1674,7 +1661,7 @@ class handler extends Factory
                 if (isset($msg_data['result']['errorText'])) {
                     return [
                         'status' => 'error',
-                        'error'  => '导航失败：' . $msg_data['result']['errorText'],
+                        'error'  => '导航失败：' . $msg_data['result']['errorText'] . '，请检查URL是否正确。',
                     ];
                 }
 
@@ -1715,7 +1702,7 @@ class handler extends Factory
             unset($throwable);
             return [
                 'status' => 'error',
-                'error'  => '浏览器实例通信错误，已关闭。',
+                'error'  => '浏览器通信错误，已关闭。如有需要，请重新启动。',
             ];
         } finally {
             Factory::destroy($socketMgr);
@@ -1731,12 +1718,12 @@ class handler extends Factory
     public function getMessage(string $action): string
     {
         $messages = [
-            'navigate'              => '导航已启动，请等待页面加载完成后（可通过`waitForPageLoad`确认）再继续操作，不要频繁发起请求。',
-            'submit'                => '表单已提交，若页面发生跳转请等待加载完成，避免连续操作。',
+            'navigate'              => '导航已启动。请调用`waitForPageLoad`确认加载完成后，再用`getUrl`确认最终URL后继续，避免频繁请求。',
             'getElementPosition'    => '元素坐标已获取。',
             'focus'                 => '元素已聚焦。',
-            'click'                 => '点击操作已执行，若页面发生跳转请等待加载完成后继续。',
-            'type'                  => '文本输入成功。',
+            'submit'                => '表单已提交。若页面跳转，请调用`waitForPageLoad`等待加载完成；若无变化或内容不符，请调用`listTabs`检查新标签页并用`switchTab`切换。',
+            'click'                 => '点击已执行。若页面跳转，请调用`waitForPageLoad`等待加载完成；若无变化或内容不符，请调用`listTabs`检查新标签页并用`switchTab`切换。',
+            'type'                  => '文本输入成功。如需校验输入内容，可调用`getValue`查看。',
             'getUrl'                => '当前页面URL已获取。',
             'getTitle'              => '页面标题已获取。',
             'getContent'            => '页面内容已获取。',
@@ -1746,7 +1733,7 @@ class handler extends Factory
             'scrollIntoView'        => '元素已滚动到可视区域。',
             'selectOption'          => '选项已选择。',
             'switchTab'             => '当前标签页已切换。',
-            'evaluate'              => '脚本执行完成。',
+            'evaluate'              => '脚本已执行。若脚本包含跳转或开新窗口逻辑，请调用`listTabs`或`getUrl`确认当前状态后继续。',
             'screenshot'            => '截图已保存。',
             'waitForSelector'       => '等待条件已满足。',
             'waitForPageLoad'       => '等待条件已满足。',
@@ -1754,7 +1741,7 @@ class handler extends Factory
             'waitForElementVisible' => '等待条件已满足。',
             'waitForUrl'            => '等待条件已满足。',
             'hover'                 => '悬停操作成功。',
-            'pressKey'              => '键盘按键模拟成功。',
+            'pressKey'              => '按键已执行。若为Enter且焦点在输入框内，可能触发表单提交或页面跳转；若无变化请调用`listTabs`检查是否有新标签页。',
         ];
 
         return $messages[$action] ?? '操作已完成。';
