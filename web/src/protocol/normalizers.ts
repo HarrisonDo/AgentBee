@@ -13,12 +13,23 @@ export function normalizeServerError(msg: ServerMessage): string {
   if (!isErrorEvent) return '';
 
   const error = asRecord(msg.error);
-  const message = asString(error.message) || asString(msg.error) || msg.message || '';
+  const data = asRecord(msg.data);
+  const dataError = asRecord(data.error);
+  const message = asString(error.message)
+    || asString(dataError.message)
+    || asString(data.message)
+    || asString(data.error)
+    || asString(msg.error)
+    || msg.message
+    || (typeof msg.data === 'string' ? msg.data : '')
+    || '';
 
-  const details = [
+  const details = Array.from(new Set([
     asString(error.code),
     asString(error.type),
-  ].filter(Boolean);
+    asString(data.code),
+    asString(data.type),
+  ].filter((detail) => Boolean(detail) && detail !== 'error')));
   const suffix = details.length ? ` (${details.join(', ')})` : '';
   const act = msg.act ? `${msg.act}: ` : '';
 

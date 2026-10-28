@@ -341,9 +341,14 @@ Supported fields are `filename` / `name`, `mimeType` / `mime_type`, `content` / 
   "type": "error",
   "sessionId": "browser-local-session-id",
   "messageId": "question-message-id",
-  "message": "错误原因"
+  "data": {
+    "message": "错误原因"
+  }
 }
 ```
+
+前端优先从 `data.message` / `data.error` 取错误文案，其次读顶层 `message` 或字符串 `data`，
+按 `role: 'error'` 渲染成红色提示气泡，不会把整个 `data` 对象 JSON 化。
 
 ### Close Assistant Display
 

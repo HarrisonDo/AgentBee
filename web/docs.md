@@ -8,6 +8,7 @@
 - 前端统一发送 `type: "chat"` JSON，纯文本、图片和文本文件都放在 OpenAI-style `content` 数组中。
 - 前端每条发送到 WS 的 JSON 字符串末尾都会追加一个换行符 `\n`。
 - 后端返回 `content/status/think/tool_calls/tool_result/image/error/end` 时可以带同一个 `messageId`。
+- `error` 事件优先从 `data.message` / `data.error`（其次 `message` / 字符串 `data`）取文案，按 `role: 'error'` 渲染为红色提示气泡；不会把整个 data 对象 JSON 化。
 - 多端同步：后端把其他在线客户端的用户输入以 `feedback` 广播（`{ type:'feedback', data:'文本', sessionId, messageId, ... }`），前端按 `user` 消息渲染，不会走 assistant 兜底分支。
 - `image` 用于返回图片，`data.url` 是图片 base64，`data.prompt` 是提示词，会显示为图片下方的说明文字；图片会按容器宽度和高度上限自适应缩放，不会撑破布局。
 - `think` 会显示为类似 Codex 的思考块，超过约 3 行时默认折叠。

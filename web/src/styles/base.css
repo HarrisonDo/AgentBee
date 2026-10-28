@@ -1856,6 +1856,8 @@ body:has(.login-window-backdrop) {
 .error .bubble {
   color: var(--danger);
   background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 42%, transparent);
+  border-left-width: 3px;
 }
 
 .meta {
