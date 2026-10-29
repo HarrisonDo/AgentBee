@@ -202,17 +202,16 @@ describe('abort event handling', () => {
   // {"create_id":…,"type":"abort","data":{"message":"已停止生成"},"sessionId":…,"messageId":…}
   function abortEvent(messageId: string, sessionId: string) {
     return {
-      create_id: 1790668633450829,
+      create_id: 1793170257747867,
       type: 'abort',
       data: { message: '已停止生成' },
-      sender: 'AgentBee',
+      sender: 'Agent',
       isSubTalk: 0,
-      workerName: 'AgentBee',
+      workerName: 'Agent',
       workerRole: 'Assistant',
       sessionId,
       messageId,
       WindowName: '蜂小秘 - AgentBee',
-      socket_id: 'sock_74',
     };
   }
 
@@ -229,19 +228,46 @@ describe('abort event handling', () => {
 
     expect(assistantOf(messageId)?.content).toBe('流到一半的回答');
     expect(assistantOf(messageId)?.status).toBe('stopped');
+    expect(assistantOf(messageId)?.statusMessage).toBe('已停止生成');
     // 兜底分支会把整包 JSON 当正文再推一条 assistant 消息。
     expect(session.messages).toHaveLength(before);
     expect(assistantOf(messageId)?.content).not.toContain('已停止生成');
   });
 
-  it('drops the empty shell when the turn never produced anything', () => {
+  it('keeps an empty turn and shows the server abort message', () => {
     const { assistantOf, emit, sendUserText, session } = setupAgent();
     const messageId = sendUserText('立刻停掉');
 
     expect(assistantOf(messageId)).toBeTruthy();
     emit(abortEvent(messageId, session.id));
 
-    expect(assistantOf(messageId)).toBeUndefined();
+    // 不能把空壳删掉：用户点停止后至少要看到「已停止生成」。
+    expect(assistantOf(messageId)?.status).toBe('stopped');
+    expect(assistantOf(messageId)?.statusMessage).toBe('已停止生成');
+  });
+
+  it('closes the single loading turn when the abort messageId does not match', () => {
+    const { assistantOf, emit, sendUserText, session } = setupAgent();
+    const messageId = sendUserText('messageId 对不上');
+    emit({ type: 'content', messageId, data: 'partial' });
+    emit({ type: 'tool_result', messageId, data: { name: 'X', content: 'ok' } });
+
+    emit(abortEvent('different-id', session.id));
+
+    expect(assistantOf(messageId)?.status).toBe('stopped');
+    expect(assistantOf(messageId)?.statusMessage).toBe('已停止生成');
+  });
+
+  it('ignores an abort receipt after the turn already finished', () => {
+    const { assistantOf, emit, sendUserText, session } = setupAgent();
+    const messageId = sendUserText('已经结束');
+    emit({ type: 'content', messageId, data: 'done' });
+    emit({ type: 'end', messageId });
+
+    emit(abortEvent(messageId, session.id));
+
+    expect(assistantOf(messageId)?.status).toBe('done');
+    expect(assistantOf(messageId)?.statusMessage).toBeUndefined();
   });
 
   it('routes the abort receipt to the session that owns the turn', () => {
@@ -254,6 +280,38 @@ describe('abort event handling', () => {
 
     expect(assistantOf(messageId, session.id)?.status).toBe('stopped');
     expect(assistantOf(messageId, 'session-2')).toBeUndefined();
+  });
+});
+
+describe('error event handling', () => {
+  it('renders data.message as the error text', () => {
+    const { emit, sendUserText, session } = setupAgent();
+    const messageId = sendUserText('会失败的问题');
+
+    emit({
+      type: 'error',
+      data: { message: '模型调用失败' },
+      sessionId: session.id,
+      messageId,
+    });
+
+    const error = session.messages.find((item) => item.role === 'error');
+    expect(error?.content).toBe('模型调用失败');
+  });
+
+  it('renders a string data payload as the error text', () => {
+    const { emit, sendUserText, session } = setupAgent();
+    const messageId = sendUserText('会失败的问题');
+
+    emit({
+      type: 'error',
+      data: '网络错误',
+      sessionId: session.id,
+      messageId,
+    });
+
+    const error = session.messages.find((item) => item.role === 'error');
+    expect(error?.content).toBe('网络错误');
   });
 });
 
@@ -329,7 +387,35 @@ describe('switching sessions while a turn is streaming', () => {
 
     const abortPayload = JSON.parse(sockets[0].sent[sockets[0].sent.length - 1]);
     expect(abortPayload).toMatchObject({ type: '/abort', sessionId: 'session-1', messageId });
+    // 本地不预判停止，等服务端 abort 回执。
+    expect(assistantOf(messageId, 'session-1')?.status).toBe('loading');
+    emit({ type: 'abort', sessionId: 'session-1', messageId });
     expect(assistantOf(messageId, 'session-1')?.status).toBe('stopped');
+  });
+
+  it('keeps the turn loading until the server confirms the abort', () => {
+    const { agent, assistantOf, emit, sendUserText, session } = setupAgent();
+    const messageId = sendUserText('要停的问题');
+    emit({ type: 'content', messageId, data: 'partial' });
+    emit({ type: 'tool_result', messageId, data: { name: 'X', content: 'ok' } });
+
+    agent.stopCurrent();
+
+    // 回执到达前保持 loading，也不写本地 "Stop request sent." 日志。
+    expect(assistantOf(messageId)?.status).toBe('loading');
+    expect(session.messages.some((item) => item.content === 'Stop request sent.')).toBe(false);
+    expect(agent.hasPendingTurns.value).toBe(true);
+
+    // 停止请求发出后、回执回来前，服务端仍可能推内容；照常展示。
+    emit({ type: 'content', messageId, data: ' still streaming' });
+    emit({ type: 'tool_result', messageId, data: { name: 'X', content: 'ok' } });
+    expect(assistantOf(messageId)?.content).toBe('partial still streaming');
+    expect(assistantOf(messageId)?.status).toBe('loading');
+
+    // 最终以服务端 abort 回执为准。
+    emit({ type: 'abort', sessionId: session.id, messageId });
+    expect(assistantOf(messageId)?.status).toBe('stopped');
+    expect(agent.hasPendingTurns.value).toBe(false);
   });
 
   it('sends the chat payload with the session active at send time', () => {

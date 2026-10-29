@@ -123,19 +123,24 @@ All server messages should be JSON strings.
 
 ### Abort Receipt
 
-`type: "abort"` 是服务端「已停止生成」的回执。前端收到后按「放弃这一轮」收尾：
-保留已经流出来的内容并把状态置为 stopped，什么都没产出的空壳则删掉。
+`type: "abort"` 是服务端「已停止生成」的回执。前端按 `abort` 单独收尾：
+
+- 有内容：保留已经流出来的内容，状态置为 `stopped`，末尾显示 `data.message`；
+- 没内容：保留空壳，气泡里显示 `data.message`（不再直接删掉，否则点击停止没有任何反馈）；
+- 已结束的迟到回执：忽略。
+
 `sessionId` / `messageId` 必须带上——前者用来把回执路由回真正在跑的那个会话，
-后者用来认出是哪一轮。
+后者用来认出是哪一轮。`messageId` 对不上时，如果目标会话里只有一个 `loading` 的
+assistant，前端也会收尾它，避免回执被吞掉。
 
 ```json
 {
   "create_id": 1790668633450829,
   "type": "abort",
   "data": { "message": "已停止生成" },
-  "sender": "AgentBee",
+  "sender": "Agent",
   "isSubTalk": 0,
-  "workerName": "AgentBee",
+  "workerName": "Agent",
   "workerRole": "Assistant",
   "sessionId": "3523ec6d-9746-4d66-bf76-ae7af38dfe7c",
   "messageId": "e30827b6-cd13-4ab7-81c7-b405f36caedb",
@@ -336,9 +341,14 @@ Supported fields are `filename` / `name`, `mimeType` / `mime_type`, `content` / 
   "type": "error",
   "sessionId": "browser-local-session-id",
   "messageId": "question-message-id",
-  "message": "错误原因"
+  "data": {
+    "message": "错误原因"
+  }
 }
 ```
+
+前端优先从 `data.message` / `data.error` 取错误文案，其次读顶层 `message` 或字符串 `data`，
+按 `role: 'error'` 渲染成红色提示气泡，不会把整个 `data` 对象 JSON 化。
 
 ### Close Assistant Display
 

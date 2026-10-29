@@ -188,7 +188,13 @@ class go extends Factory
         $this->utils->debug('Ready to start ' . AGENT_NAME . ' v' . AGENT_VERSION, 'trace');
 
         $this->init();
-        $this->runWorker($this->utils->getMainIDX(), WORKER_MAIN, WORKER_MAIN, [$this, 'streamWorkerHandler']);
+
+        $this->runWorker(
+            $this->utils->getMainIDX(),
+            WORKER_MAIN,
+            WORKER_MAIN,
+            [$this, 'workerHandler']
+        );
 
         $agent_toolsets = $this->utils->fetchToolset('modules/agent_toolsets');
         $this->core->addSkills($agent_toolsets);
@@ -269,7 +275,7 @@ class go extends Factory
      * @throws \ReflectionException
      * @throws \Throwable
      */
-    public function streamWorkerHandler(string $ext_id, array $context): void
+    public function workerHandler(string $ext_id, array $context): void
     {
         $stdout_stream = $context['stdout'];
         $data_chunk    = fread($stdout_stream, 8192);
@@ -381,17 +387,11 @@ class go extends Factory
                                 $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
                             }
 
-                            $error = ['type' => 'error'];
-                            $error += is_array($payload['data'])
-                                ? $payload['data']
-                                : [
-                                    'sessionId' => $payload['sessionId'],
-                                    'messageId' => $payload['messageId'],
-                                    'message'   => $payload['data']
-                                ];
+                            if (is_array($payload['data']) && isset($payload['data']['message'])) {
+                                $this->core->sendMessage($payload);
+                            }
 
-                            $this->core->sendMessage($error);
-                            unset($this->utils->stream_buffers[$ext_id], $error);
+                            unset($this->utils->stream_buffers[$ext_id]);
                             break;
 
                         case 'abort':
@@ -956,8 +956,13 @@ class go extends Factory
                     $data['sessionId']
                 );
 
-                $this->core->sendMessage($this->message->buildFeedback($data['content'], $marker), $other_clients);
-                unset($marker);
+                $feedback = $this->message->buildFeedback($data['content'], $marker);
+
+                if ([] !== $feedback) {
+                    $this->core->sendMessage($feedback, $other_clients);
+                }
+
+                unset($marker, $feedback);
             }
 
             if ('memory' === $data['type']) {
@@ -1051,7 +1056,6 @@ class go extends Factory
             }
 
             $this->utils->debug('User: Sending ' . (count($message_list)) . ' message(s) to #' . $session_id, 'trace');
-            $this->runWorker($main_pid, WORKER_MAIN, WORKER_MAIN, [$this, 'streamWorkerHandler']);
 
             $this->core->context->refreshHistory($session_id, WORKER_MAIN);
             $this->core->context->addUserMessage($session_id, WORKER_MAIN, $message_list);

@@ -8,6 +8,7 @@
 - 前端统一发送 `type: "chat"` JSON，纯文本、图片和文本文件都放在 OpenAI-style `content` 数组中。
 - 前端每条发送到 WS 的 JSON 字符串末尾都会追加一个换行符 `\n`。
 - 后端返回 `content/status/think/tool_calls/tool_result/image/error/end` 时可以带同一个 `messageId`。
+- `error` 事件优先从 `data.message` / `data.error`（其次 `message` / 字符串 `data`）取文案，按 `role: 'error'` 渲染为红色提示气泡；不会把整个 data 对象 JSON 化。
 - 多端同步：后端把其他在线客户端的用户输入以 `feedback` 广播（`{ type:'feedback', data:'文本', sessionId, messageId, ... }`），前端按 `user` 消息渲染，不会走 assistant 兜底分支。
 - `image` 用于返回图片，`data.url` 是图片 base64，`data.prompt` 是提示词，会显示为图片下方的说明文字；图片会按容器宽度和高度上限自适应缩放，不会撑破布局。
 - `think` 会显示为类似 Codex 的思考块，超过约 3 行时默认折叠。
@@ -186,14 +187,14 @@
   `closeAssistantMessage` / 无响应超时都通过 `resolveTurnSession()` 按记录的 sessionId 找回原会话。
   所以切走之后，后端推来的 content/end 仍会写回发起这一轮的会话，而不是当前正在看的那个。
   会话列表中正在输出的那条会显示转圈标记（`streamingSessionIds`）。
-  「停止」优先停当前会话正在跑的那一轮；当前会话没有在跑的，就停最近发起的那一轮，
-  请求本身会在被停的那个会话里记一条系统日志（"Stop request sent."）。
-  发出去的报文是 `{ type: '/abort', sessionId, messageId }`（`sessionId` 顶层必填；
-  前端把收尾写回这个会话，服务端收到 `/abort` 后中止当前主 worker，
-  真正中止之后才回一条 `type: 'abort'` 事件，前端按 `close` 的语义收尾）。
-  **界面提示**：被中止的那条 assistant 气泡按 `status: 'stopped'` 渲染——
-  有内容时正文照常显示、末尾缀一条「已停止生成」（`ChatMessage` 的 `.message-stopped`）；
-  没内容时气泡里只显示这一条，而不是原来那句「未收到回复，对话已结束」。
+  「停止」优先停当前会话正在跑的那一轮；当前会话没有在跑的，就停最近发起的那一轮。
+  点击停止只发送 `{ type: '/abort', sessionId, messageId }`（`sessionId` 顶层必填），
+  不在本地写日志或收尾；服务端收到 `/abort` 后中止当前主 worker，
+  真正中止之后回一条 `type: 'abort'` 事件，前端按 `abort` 单独处理：
+  即使这一轮还没产出内容也保留气泡，并把 `data.message`（如「已停止生成」）显示在气泡里；
+  有内容时正文照常显示、末尾缀一条同样的提示（`ChatMessage` 的 `.message-stopped`）。
+  `messageId` 对不上时，如果目标会话里只有一个 loading 的 assistant，也会收尾它，
+  避免回执被吞掉、界面一直没有反馈。
   用户点停止和后端自己 abort 走的是同一条渲染路径，都能在消息上看到结果。
   注意：后端一轮只服务一个 `curr_message_id`，在 A 还在输出时又去 B 发消息，
   后端可能按「放弃上一轮」的语义把 A 那一轮 close 掉（前端会保守保留已流出的内容）。
