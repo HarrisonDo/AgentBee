@@ -235,17 +235,13 @@ class go extends Factory
 
         $this->initMain();
 
-        $write     = $except = null;
         $context   = context::new();
         $llm_tools = $this->core->llm_tools;
 
         $llm_tools['tools'] = $context->buildTools($llm_tools['tools']);
 
         while (true) {
-            $read  = [STDIN];
-            $ready = stream_select($read, $write, $except, null);
-
-            if (false === $ready || 0 === $ready) {
+            if (!$this->utils->procMgr->isStdinReady()) {
                 usleep(10000);
                 continue;
             }
@@ -299,17 +295,13 @@ class go extends Factory
 
         $this->initChild();
 
-        $write     = $except = null;
         $context   = context::new();
         $llm_tools = $this->core->llm_tools;
 
         $llm_tools['tools'] = $context->buildTools($llm_tools['tools']);
 
         while (true) {
-            $read  = [STDIN];
-            $ready = stream_select($read, $write, $except, null);
-
-            if (false === $ready || 0 === $ready) {
+            if (!$this->utils->procMgr->isStdinReady()) {
                 usleep(10000);
                 continue;
             }
