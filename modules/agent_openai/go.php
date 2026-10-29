@@ -159,6 +159,10 @@ class go extends Factory
     {
         $this->core->context->messageOnSend($session_id, false);
 
+        if (WORKER_MAIN === $worker) {
+            $this->utils->setStatus(utils::STATUS_BUSY, $session_id);
+        }
+
         try {
             $this->utils->procMgr->writeProc(
                 $proc_idx,
@@ -170,10 +174,6 @@ class go extends Factory
                     'llm_params' => $this->utils->getChildWorker($worker, $receiver, 'llm_params')
                 ], JSON_FORMAT)
             );
-
-            if (WORKER_MAIN === $worker) {
-                $this->utils->setStatus(utils::STATUS_BUSY, $session_id);
-            }
         } catch (\Throwable $throwable) {
             $this->utils->debug('Status: #' . $session_id . ' ERROR: ' . $throwable->getMessage(), 'trace');
 
@@ -183,6 +183,7 @@ class go extends Factory
 
             $this->core->context->messageOnSend($session_id, true);
             $this->core->error->exceptionHandler($throwable, false, false);
+
             unset($throwable);
             return false;
         }
