@@ -55,7 +55,6 @@ class utils extends Factory
     public array $program_list    = [];
     public array $child_workers   = [];
     public array $socket_session  = [];
-    public array $stream_buffers  = [];
     public array $message_buffers = [];
 
     /**
