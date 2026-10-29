@@ -172,13 +172,13 @@ class go extends Factory
             );
 
             if (WORKER_MAIN === $worker) {
-                $this->utils->setStatus($session_id, utils::STATUS_BUSY);
+                $this->utils->setStatus(utils::STATUS_BUSY);
             }
         } catch (\Throwable $throwable) {
             $this->utils->debug('Status: #' . $session_id . ' ERROR: ' . $throwable->getMessage(), 'trace');
 
             if (WORKER_MAIN === $worker) {
-                $this->utils->setStatus($session_id, utils::STATUS_IDLE);
+                $this->utils->setStatus(utils::STATUS_IDLE);
             }
 
             $this->core->context->messageOnSend($session_id, true);
@@ -235,16 +235,30 @@ class go extends Factory
 
         $this->initMain();
 
+        $write     = $except = null;
         $context   = context::new();
         $llm_tools = $this->core->llm_tools;
 
         $llm_tools['tools'] = $context->buildTools($llm_tools['tools']);
 
         while (true) {
+            $read  = [STDIN];
+            $ready = stream_select($read, $write, $except, null);
+
+            if (false === $ready || 0 === $ready) {
+                usleep(10000);
+                continue;
+            }
+
             $job_line = fgets(STDIN);
 
             if (false === $job_line) {
-                break;
+                if (feof(STDIN)) {
+                    break;
+                }
+
+                usleep(10000);
+                continue;
             }
 
             $job_line = trim($job_line);
@@ -285,25 +299,39 @@ class go extends Factory
 
         $this->initChild();
 
+        $write     = $except = null;
         $context   = context::new();
         $llm_tools = $this->core->llm_tools;
 
         $llm_tools['tools'] = $context->buildTools($llm_tools['tools']);
 
         while (true) {
-            $line = fgets(STDIN);
+            $read  = [STDIN];
+            $ready = stream_select($read, $write, $except, null);
 
-            if (false === $line) {
-                break;
-            }
-
-            $line = trim($line);
-
-            if ('' === $line) {
+            if (false === $ready || 0 === $ready) {
+                usleep(10000);
                 continue;
             }
 
-            $talk_data = json_decode($line, true);
+            $job_line = fgets(STDIN);
+
+            if (false === $job_line) {
+                if (feof(STDIN)) {
+                    break;
+                }
+
+                usleep(10000);
+                continue;
+            }
+
+            $job_line = trim($job_line);
+
+            if ('' === $job_line) {
+                continue;
+            }
+
+            $talk_data = json_decode($job_line, true);
 
             if (!is_array($talk_data)) {
                 continue;

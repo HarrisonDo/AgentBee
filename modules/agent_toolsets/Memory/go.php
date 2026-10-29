@@ -170,13 +170,14 @@ class go extends Factory
     }
 
     /**
-     * @param int  $session_status 0：全部；1：启用；2：禁用
-     * @param bool $keep_datetime
+     * @param int    $session_status 0：全部；1：启用；2：禁用
+     * @param string $session_id     指定获取对应 session_id 的信息
+     * @param bool   $keep_datetime
      *
      * @return array
      * @throws \ReflectionException
      */
-    public function listSessions(int $session_status = 1, bool $keep_datetime = false): array
+    public function listSessions(int $session_status = 1, string $session_id = '', bool $keep_datetime = false): array
     {
         if (!in_array($session_status, [0, 1, 2], true)) {
             $session_status = 0;
@@ -187,6 +188,10 @@ class go extends Factory
             ->table('agent_session')
             ->select('session_id', 'session_name', 'session_status', 'create_time');
 
+        if ('' !== $session_id) {
+            $query->where(['session_id', $session_id]);
+        }
+
         if (0 !== $session_status) {
             $query->where(['session_status', $session_status]);
         }
@@ -194,21 +199,22 @@ class go extends Factory
         $sessions = $query->order(['last_time' => 'DESC'])->fetchAll();
 
         foreach ($sessions as $id => $session) {
-            $sessions[$id]['create_time'] = $keep_datetime
-                ? date('Y-m-d H:i', $session['create_time'])
-                : $this->formatMicroTime($session['create_time'], $now);
-
-            $sessions[$id]['session_status'] = match ($session['session_status']) {
-                1 => '启用',
-                default => '已删除'
-            };
+            if ($keep_datetime) {
+                $sessions[$id]['create_time'] = date('Y-m-d H:i', $session['create_time']);
+            } else {
+                $sessions[$id]['create_time']    = $this->formatMicroTime($session['create_time'], $now);
+                $sessions[$id]['session_status'] = match ($session['session_status']) {
+                    1 => '启用',
+                    default => '已删除'
+                };
+            }
         }
 
         $this->session_list = array_column($sessions, 'session_id');
 
         $result = ['status' => 'success', 'sessions' => $sessions];
 
-        unset($session_status, $keep_datetime, $now, $query, $sessions, $id, $session);
+        unset($session_status, $session_id, $keep_datetime, $now, $query, $sessions, $id, $session);
         return $result;
     }
 
@@ -832,7 +838,10 @@ class go extends Factory
         $result = [];
 
         foreach ($tasks as $key => $task) {
-            $result[] = '[任务' . ($key + 1) . '] ' . $task['prompt'];
+            $result[] = [
+                'create_id' => $task['create_id'],
+                'prompt'    => '[任务' . ($key + 1) . '] ' . $task['prompt']
+            ];
 
             if ($task['repeat']) {
                 // Recurring task: calculate next run time

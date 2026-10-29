@@ -205,7 +205,7 @@ final class core extends Factory
     public function sendMessage(array $message, array $to_sockets = []): void
     {
         if (!isset($message['type'])) {
-            $this->utils->debug('Missing message type: ' . json_encode($message, JSON_FORMAT), 'trace');
+            $this->utils->debug('Missing message type: ' . json_encode($message, JSON_FORMAT), 'debug');
             return;
         }
 

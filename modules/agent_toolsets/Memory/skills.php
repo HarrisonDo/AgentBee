@@ -50,7 +50,8 @@ class skills
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
-                        'session_status' => ['type' => 'integer', 'default' => 1, 'description' => '会话状态过滤：1=启用（默认）；2=已删除；0=全部会话（含已删除）']
+                        'session_status' => ['type' => 'integer', 'default' => 1, 'description' => '会话状态过滤：1=启用（默认）；2=已删除；0=全部会话（含已删除）'],
+                        'session_id'     => ['type' => 'string', 'default' => '', 'description' => '指定查询会话ID，不传则返回会话列表']
                     ],
                     'required'   => []
                 ],
@@ -245,7 +246,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'runTask',
-                'description' => '获取当前会话所有到期任务。返回：[prompt, ...]。',
+                'description' => '获取当前会话所有到期任务。返回：[{create_id, prompt}]。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
