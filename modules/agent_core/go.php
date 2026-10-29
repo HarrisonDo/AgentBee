@@ -457,7 +457,6 @@ class go extends Factory
                 case 'context':
                     // Reset main worker status
                     if (WORKER_MAIN === $payload['sender']) {
-                        ++$this->session_calls[$payload['sessionId']];
                         $this->utils->setStatus(utils::STATUS_IDLE, $payload['sessionId']);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
