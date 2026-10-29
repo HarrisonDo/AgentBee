@@ -928,15 +928,15 @@ class go extends Factory
         foreach ($user_msg as $line) {
             $data = json_decode($line, true);
 
-            if (!is_array($data) || !isset($data['type']) || !isset($data['sessionId'])) {
+            if (!is_array($data) || !isset($data['type'])) {
                 $this->utils->debug('System: Message data ERROR: ' . $line . '.', 'debug');
                 continue;
             }
 
             if ('/abort' === $data['type']) {
                 $this->openai->abort();
-                $this->utils->setStatus(utils::STATUS_IDLE, $data['sessionId']);
                 $this->utils->debug('User: Abort signal sent. Cancelling task.', 'trace');
+                $this->utils->setStatus(utils::STATUS_IDLE, $data['sessionId'] ?? 'Unknown-Session-ID');
                 continue;
             }
 
@@ -948,7 +948,7 @@ class go extends Factory
             }
 
             // broadcast input message to all online clients
-            if ([] !== $other_clients && '' !== $data['sessionId']) {
+            if ([] !== $other_clients && '' !== ($data['sessionId'] ?? '')) {
                 $marker = $this->utils->getMarker(
                     WORKER_USER,
                     WORKER_MAIN,
@@ -971,7 +971,7 @@ class go extends Factory
                 $data['content']['memory'] = $this->memory;
             }
 
-            $result = $this->message->$type_method($data['content'], $data['sessionId']);
+            $result = $this->message->$type_method($data['content'], $data['sessionId'] ?? '');
 
             if (!$result['need_llm']) {
                 // Other actions
@@ -985,9 +985,9 @@ class go extends Factory
                     case 'reset':
                         $this->openai->reload();
                         $this->openai->getModels(true);
-                        $this->utils->setStatus(utils::STATUS_IDLE, $data['sessionId']);
                         $this->core->context->messageOnSend($data['sessionId'], false);
                         $this->core->context->removeHistory($data['sessionId'], WORKER_MAIN);
+                        $this->utils->setStatus(utils::STATUS_IDLE, $data['sessionId'] ?? 'Unknown-Session-ID');
                         break;
 
                     // Reload config
@@ -1045,7 +1045,7 @@ class go extends Factory
                 unset($msg_line);
             }
 
-            if (isset($this->core->curr_message_id[$data['sessionId']])) {
+            if (isset($data['sessionId']) && isset($this->core->curr_message_id[$data['sessionId']])) {
                 $this->core->sendClose($socket_id, $data['sessionId']);
             }
 
