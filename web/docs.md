@@ -75,15 +75,9 @@
   光一个文件名（`img_1.png`）没有位置信息，拼出来的 URL 是垃圾（`file:///img_1.png`），
   正文里顺口提到一个文件名也不该长出预览入口。
 - 正文里的 **http(s) 文件链接**（如 `workspace_url` 拼出的 `https://…/pelican_bike.html`）
-- `tool_result` 里的 `saved_files` / `file_path` / `path` 等字段 —— **但记忆类工具
-  （工具名 `Memory-*`）的结果不收**：它装的是历史（包括历史 tool_result 里的路径），
-  不是本轮的产物。不收的话 `Memory-read` 会把上一轮 docx 抽图的旧临时目录路径一起带出来，
-  和本轮新路径同名不同目录（`docxHandler` 每次读 docx 都新建 `docx_read_<uniqid>`），
-  聊天区就会冒出两个一模一样的「在侧栏预览文件 img_1.png」，其中一个还随时可能 404。
-- **裸文件名同样不收**（`hasDirectoryPart`）：后端确实会发这种字段——
-  `System-readImage` 的返回里只有 `filename`（`img_1.png`），`OfficeSuite-readDocx` 的
-  `file` 是 `basename($path)`（`Fact创刊人问卷.docx`）。它们都进了 `TOOL_PATH_KEYS`，
-  不挡掉就会和同一条结果里的**绝对路径**各生成一个入口，看起来像重复了。
+- **不读 `tool_calls` / `tool_result`**：工具调用、函数调用里的文件路径/文件名一律不生成预览入口。
+  只认 assistant 正文里的内容，`Memory-read`、`System-writeFile` 等工具结果不会在消息下面
+  冒出「在侧栏预览文件 xxx」按钮。
 
 实现位置：`src/utils/artifacts.ts`（识别与排序）、`src/utils/fileUrl.ts`（路径 → URL 解析）。
 预览入口只属于 **assistant 消息**的产物：用户自己贴的链接/路径不给按钮。
