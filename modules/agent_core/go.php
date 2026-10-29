@@ -310,8 +310,8 @@ class go extends Factory
 
             if (0 < $this->session_calls[$payload['sessionId']]) {
                 $this->utils->debug('System: Calls executed for #' . $payload['sessionId'] . '.', 'trace');
+                $this->utils->setStatus(utils::STATUS_IDLE, $payload['sessionId']);
                 $this->session_calls[$payload['sessionId']] = 0;
-                $this->utils->setStatus(utils::STATUS_IDLE);
                 \Fiber::suspend();
             }
 
@@ -322,7 +322,7 @@ class go extends Factory
             switch ($message['type']) {
                 case 'stream':
                     if (WORKER_MAIN === $payload['sender']) {
-                        $this->utils->setStatus(utils::STATUS_WAIT);
+                        $this->utils->setStatus(utils::STATUS_WAIT, $payload['sessionId']);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'streaming');
                         $this->utils->debug('Collaborator: ' . $payload['workerName'] . ' working on streaming', 'debug');
@@ -382,7 +382,7 @@ class go extends Factory
 
                         case 'error':
                             if (WORKER_MAIN === $payload['sender']) {
-                                $this->utils->setStatus(utils::STATUS_IDLE);
+                                $this->utils->setStatus(utils::STATUS_IDLE, $payload['sessionId']);
                             } else {
                                 $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
                             }
@@ -396,7 +396,7 @@ class go extends Factory
 
                         case 'abort':
                             $this->core->sendMessage($payload);
-                            $this->utils->setStatus(utils::STATUS_IDLE);
+                            $this->utils->setStatus(utils::STATUS_IDLE, $payload['sessionId']);
                             break;
 
                         default:
@@ -458,7 +458,7 @@ class go extends Factory
                     // Reset main worker status
                     if (WORKER_MAIN === $payload['sender']) {
                         ++$this->session_calls[$payload['sessionId']];
-                        $this->utils->setStatus(utils::STATUS_IDLE);
+                        $this->utils->setStatus(utils::STATUS_IDLE, $payload['sessionId']);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
                     }
@@ -560,7 +560,7 @@ class go extends Factory
 
                     if (WORKER_MAIN === $payload['sender']) {
                         ++$this->session_calls[$payload['sessionId']];
-                        $this->utils->setStatus(utils::STATUS_IDLE);
+                        $this->utils->setStatus(utils::STATUS_IDLE, $payload['sessionId']);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
                         $this->utils->debug('Collaborator: ' . $payload['workerName'] . ' reply completed, ready.', 'trace');
@@ -873,7 +873,7 @@ class go extends Factory
                 && $now_time - $this->last_response[$session_id] >= $this->utils->agent_config['reset_interval']
             ) {
                 $this->core->context->removeHistory($session_id, WORKER_MAIN);
-                $this->utils->setStatus(utils::STATUS_IDLE);
+                $this->utils->setStatus(utils::STATUS_IDLE, $session_id);
             }
 
             if ($now_time - $active_time >= $this->utils->agent_config['reset_interval']) {
@@ -885,7 +885,7 @@ class go extends Factory
                     continue;
                 }
 
-                $this->utils->setStatus(utils::STATUS_IDLE, true);
+                $this->utils->setStatus(utils::STATUS_IDLE, $session_id, true);
             }
         }
 
@@ -929,12 +929,14 @@ class go extends Factory
             $data = json_decode($line, true);
 
             if (!is_array($data) || !isset($data['type'])) {
+                $this->utils->debug('System: Message data ERROR: ' . $line . '.', 'debug');
                 continue;
             }
 
             if ('/abort' === $data['type']) {
                 $this->openai->abort();
                 $this->utils->debug('User: Abort signal sent. Cancelling task.', 'trace');
+                $this->utils->setStatus(utils::STATUS_IDLE, $data['sessionId'] ?? 'Unknown-Session-ID');
                 continue;
             }
 
@@ -946,7 +948,7 @@ class go extends Factory
             }
 
             // broadcast input message to all online clients
-            if ([] !== $other_clients && isset($data['sessionId']) && '' !== $data['sessionId']) {
+            if ([] !== $other_clients && '' !== ($data['sessionId'] ?? '')) {
                 $marker = $this->utils->getMarker(
                     WORKER_USER,
                     WORKER_MAIN,
@@ -983,9 +985,9 @@ class go extends Factory
                     case 'reset':
                         $this->openai->reload();
                         $this->openai->getModels(true);
-                        $this->utils->setStatus(utils::STATUS_IDLE);
                         $this->core->context->messageOnSend($data['sessionId'], false);
                         $this->core->context->removeHistory($data['sessionId'], WORKER_MAIN);
+                        $this->utils->setStatus(utils::STATUS_IDLE, $data['sessionId'] ?? 'Unknown-Session-ID');
                         break;
 
                     // Reload config
