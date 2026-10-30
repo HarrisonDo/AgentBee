@@ -221,7 +221,6 @@ class go extends Factory
             }
 
             $this->core->context->messageOnSend($session_id, true);
-            $this->core->error->exceptionHandler($throwable, false, false);
 
             unset($throwable);
             return false;
