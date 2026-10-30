@@ -59,8 +59,39 @@ class go extends Factory
     {
         $this->init($reload);
 
-        $agent_toolsets = $this->utils->fetchToolset('modules/agent_toolsets');
-        $this->core->addSkills($agent_toolsets);
+        if (!$this->utils->config->config['sandbox_mode']) {
+            $agent_toolsets = $this->utils->fetchToolset('modules/agent_toolsets');
+            $this->core->addSkills($agent_toolsets);
+        } else {
+            $agent_toolsets = $this->utils->fetchToolset(
+                'modules/agent_toolsets',
+                'System',
+                [
+                    'cleanContext',
+                    'loadSkill',
+                    'notification',
+                    'readImage',
+                    'readFile',
+                    'writeFile',
+                    'copyFile',
+                    'deleteFile',
+                    'getFileSize',
+                    'searchFiles',
+                    'listDirectory',
+                    'createDirectory',
+                    'copyDirectory',
+                    'deleteDirectory',
+                ]
+            );
+
+            $this->core->addSkills($agent_toolsets);
+
+            foreach (['Browser', 'Collaborator', 'HttpFetcher', 'ImageMaker', 'Memory', 'OfficeSuite'] as $core_skill) {
+                $agent_toolsets = $this->utils->fetchToolset('modules/agent_toolsets', $core_skill);
+                $this->core->addSkills($agent_toolsets);
+            }
+        }
+
         $custom_skills = $this->utils->fetchToolset('skills');
         $this->core->addSkills($custom_skills);
 
@@ -88,10 +119,18 @@ class go extends Factory
             'modules/agent_toolsets',
             'System',
             [
-                'loadSkill', 'getTime',
-                'readImage', 'readFile', 'writeFile',
-                'copyFile', 'deleteFile', 'getFileSize', 'searchFiles',
-                'listDirectory', 'createDirectory', 'copyDirectory', 'deleteDirectory',
+                'loadSkill',
+                'readImage',
+                'readFile',
+                'writeFile',
+                'copyFile',
+                'deleteFile',
+                'getFileSize',
+                'searchFiles',
+                'listDirectory',
+                'createDirectory',
+                'copyDirectory',
+                'deleteDirectory',
             ]
         );
 
@@ -234,11 +273,10 @@ class go extends Factory
     {
         ini_set('memory_limit', $this->utils->agent_config['memory_limit'] ?? '4G');
 
+        $context = context::new();
+
         $this->initMain();
-
-        $context   = context::new();
-        $llm_tools = $this->core->llm_tools;
-
+        $llm_tools          = $this->core->llm_tools;
         $llm_tools['tools'] = $context->buildTools($llm_tools['tools']);
 
         while (true) {
@@ -262,6 +300,8 @@ class go extends Factory
 
             if (self::CMD_RELOAD === $job_line) {
                 $this->initMain(true);
+                $llm_tools          = $this->core->llm_tools;
+                $llm_tools['tools'] = $context->buildTools($llm_tools['tools']);
                 continue;
             }
 
@@ -294,11 +334,10 @@ class go extends Factory
     {
         ini_set('memory_limit', $this->utils->agent_config['memory_limit'] ?? '4G');
 
+        $context = context::new();
+
         $this->initChild();
-
-        $context   = context::new();
-        $llm_tools = $this->core->llm_tools;
-
+        $llm_tools          = $this->core->llm_tools;
         $llm_tools['tools'] = $context->buildTools($llm_tools['tools']);
 
         while (true) {
