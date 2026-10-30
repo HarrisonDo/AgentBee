@@ -40,6 +40,7 @@ class go extends Factory
 
     public bool $ctx_warning = false;
 
+    public array $session_list  = [];
     public array $session_calls = [];
     public array $last_response = [];
 
@@ -195,6 +196,8 @@ class go extends Factory
             WORKER_MAIN,
             [$this, 'workerHandler']
         );
+
+        $this->session_list = array_column($this->memory->listSessions(0)['sessions'], 'session_id');
 
         $agent_toolsets = $this->utils->fetchToolset('modules/agent_toolsets');
         $this->core->addSkills($agent_toolsets);
@@ -1006,8 +1009,19 @@ class go extends Factory
                 return;
             }
 
+            // Save to misc memory
             if (isset($result['saves']) && [] !== $result['saves']) {
-                $this->memory->save('misc', 'user', implode(' ', $result['saves']), 0, $data['sessionId']);
+                $memory = implode(' ', $result['saves']);
+
+                // Save to session
+                if (!in_array($data['sessionId'], $this->session_list)) {
+                    $this->session_list[] = $data['sessionId'];
+                    $this->memory->createSession($data['sessionId'], mb_substr($memory, 0, 32, 'UTF-8'));
+                }
+
+                $this->memory->save('misc', 'user', $memory, 0, $data['sessionId']);
+
+                unset($memory);
             }
 
             if (isset($result['errors']) && [] !== $result['errors']) {
