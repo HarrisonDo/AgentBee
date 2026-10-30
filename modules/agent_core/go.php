@@ -277,26 +277,26 @@ class go extends Factory
      */
     public function workerHandler(string $ext_id, array $context): void
     {
+        $stdout_buffer = [];
         $stdout_stream = $context['stdout'];
-        $data_chunk    = fread($stdout_stream, 8192);
 
-        if (false === $data_chunk || '' === $data_chunk) {
-            unset($this->utils->stream_buffers[$ext_id]);
-            return;
-        }
-
-        $buffer = &$this->utils->stream_buffers[$ext_id];
-        $buffer .= $data_chunk;
-
-        while (false !== ($line_pos = strpos($buffer, "\n"))) {
-            $line   = substr($buffer, 0, $line_pos);
-            $buffer = substr($buffer, $line_pos + 1);
-            $line   = trim($line);
+        // Free the stdout pipe by reading all data immediately.
+        while (false !== ($line = fgets($stdout_stream))) {
+            $line = trim($line);
 
             if ('' === $line) {
                 continue;
             }
 
+            $stdout_buffer[] = $line;
+        }
+
+        if ([] === $stdout_buffer) {
+            return;
+        }
+
+        // Process buffer frames
+        foreach ($stdout_buffer as $line) {
             $message = json_decode($line, true);
 
             if (!is_array($message) || !isset($message['payload']['sessionId'])) {
@@ -391,7 +391,6 @@ class go extends Factory
                                 $this->core->sendMessage($payload);
                             }
 
-                            unset($this->utils->stream_buffers[$ext_id]);
                             break;
 
                         case 'abort':
@@ -687,7 +686,7 @@ class go extends Factory
 
                         case 'end':
                             if (WORKER_MAIN === $payload['sender']) {
-                                if (0 < $new_messages) {
+                                if (0 < $new_messages || $this->core->context->isMessageOnSend($payload['sessionId'])) {
                                     $metadata = $this->utils->getMarker(
                                         $payload['sender'],
                                         $payload['workerName'],
@@ -758,11 +757,7 @@ class go extends Factory
             }
         }
 
-        if (is_resource($stdout_stream) && feof($stdout_stream)) {
-            unset($this->utils->stream_buffers[$ext_id]);
-        }
-
-        unset($ext_id, $context, $stdout_stream, $data_chunk, $buffer, $line_pos, $line, $message, $payload, $payload_type, $worker_info, $llm_params, $metadata);
+        unset($ext_id, $context, $stdout_buffer, $stdout_stream, $line, $message, $payload, $payload_type, $worker_info, $llm_params, $metadata);
     }
 
     /**
