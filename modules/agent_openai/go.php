@@ -391,6 +391,7 @@ class go extends Factory
         $this->core->initCore($reload);
 
         if ($reload) {
+            $this->core->resetSkills();
             Factory::destroy($this->libOpenAI);
         }
 
