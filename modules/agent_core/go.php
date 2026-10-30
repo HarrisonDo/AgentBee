@@ -686,7 +686,7 @@ class go extends Factory
 
                         case 'end':
                             if (WORKER_MAIN === $payload['sender']) {
-                                if (0 < $new_messages) {
+                                if (0 < $new_messages || $this->core->context->isMessageOnSend($payload['sessionId'])) {
                                     $metadata = $this->utils->getMarker(
                                         $payload['sender'],
                                         $payload['workerName'],
