@@ -40,6 +40,7 @@ class go extends Factory
 
     public bool $ctx_warning = false;
 
+    public array $session_list  = [];
     public array $session_calls = [];
     public array $last_response = [];
 
@@ -196,6 +197,8 @@ class go extends Factory
             [$this, 'workerHandler']
         );
 
+        $this->session_list = array_column($this->memory->listSessions(0)['sessions'], 'session_id');
+
         $agent_toolsets = $this->utils->fetchToolset('modules/agent_toolsets');
         $this->core->addSkills($agent_toolsets);
         $custom_skills = $this->utils->fetchToolset('skills');
@@ -277,26 +280,26 @@ class go extends Factory
      */
     public function workerHandler(string $ext_id, array $context): void
     {
+        $stdout_buffer = [];
         $stdout_stream = $context['stdout'];
-        $data_chunk    = fread($stdout_stream, 8192);
 
-        if (false === $data_chunk || '' === $data_chunk) {
-            unset($this->utils->stream_buffers[$ext_id]);
-            return;
-        }
-
-        $buffer = &$this->utils->stream_buffers[$ext_id];
-        $buffer .= $data_chunk;
-
-        while (false !== ($line_pos = strpos($buffer, "\n"))) {
-            $line   = substr($buffer, 0, $line_pos);
-            $buffer = substr($buffer, $line_pos + 1);
-            $line   = trim($line);
+        // Free the stdout pipe by reading all data immediately.
+        while (false !== ($line = fgets($stdout_stream))) {
+            $line = trim($line);
 
             if ('' === $line) {
                 continue;
             }
 
+            $stdout_buffer[] = $line;
+        }
+
+        if ([] === $stdout_buffer) {
+            return;
+        }
+
+        // Process buffer frames
+        foreach ($stdout_buffer as $line) {
             $message = json_decode($line, true);
 
             if (!is_array($message) || !isset($message['payload']['sessionId'])) {
@@ -310,8 +313,8 @@ class go extends Factory
 
             if (0 < $this->session_calls[$payload['sessionId']]) {
                 $this->utils->debug('System: Calls executed for #' . $payload['sessionId'] . '.', 'trace');
+                $this->utils->setStatus(utils::STATUS_IDLE, $payload['sessionId']);
                 $this->session_calls[$payload['sessionId']] = 0;
-                $this->utils->setStatus(utils::STATUS_IDLE);
                 \Fiber::suspend();
             }
 
@@ -322,7 +325,7 @@ class go extends Factory
             switch ($message['type']) {
                 case 'stream':
                     if (WORKER_MAIN === $payload['sender']) {
-                        $this->utils->setStatus(utils::STATUS_WAIT);
+                        $this->utils->setStatus(utils::STATUS_WAIT, $payload['sessionId']);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'streaming');
                         $this->utils->debug('Collaborator: ' . $payload['workerName'] . ' working on streaming', 'debug');
@@ -382,7 +385,7 @@ class go extends Factory
 
                         case 'error':
                             if (WORKER_MAIN === $payload['sender']) {
-                                $this->utils->setStatus(utils::STATUS_IDLE);
+                                $this->utils->setStatus(utils::STATUS_IDLE, $payload['sessionId']);
                             } else {
                                 $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
                             }
@@ -391,12 +394,11 @@ class go extends Factory
                                 $this->core->sendMessage($payload);
                             }
 
-                            unset($this->utils->stream_buffers[$ext_id]);
                             break;
 
                         case 'abort':
                             $this->core->sendMessage($payload);
-                            $this->utils->setStatus(utils::STATUS_IDLE);
+                            $this->utils->setStatus(utils::STATUS_IDLE, $payload['sessionId']);
                             break;
 
                         default:
@@ -457,8 +459,7 @@ class go extends Factory
                 case 'context':
                     // Reset main worker status
                     if (WORKER_MAIN === $payload['sender']) {
-                        ++$this->session_calls[$payload['sessionId']];
-                        $this->utils->setStatus(utils::STATUS_IDLE);
+                        $this->utils->setStatus(utils::STATUS_IDLE, $payload['sessionId']);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
                     }
@@ -560,7 +561,7 @@ class go extends Factory
 
                     if (WORKER_MAIN === $payload['sender']) {
                         ++$this->session_calls[$payload['sessionId']];
-                        $this->utils->setStatus(utils::STATUS_IDLE);
+                        $this->utils->setStatus('tools' === $payload_type ? utils::STATUS_BUSY : utils::STATUS_IDLE, $payload['sessionId']);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
                         $this->utils->debug('Collaborator: ' . $payload['workerName'] . ' reply completed, ready.', 'trace');
@@ -688,7 +689,7 @@ class go extends Factory
 
                         case 'end':
                             if (WORKER_MAIN === $payload['sender']) {
-                                if (0 < $new_messages) {
+                                if (0 < $new_messages || $this->core->context->isMessageOnSend($payload['sessionId'])) {
                                     $metadata = $this->utils->getMarker(
                                         $payload['sender'],
                                         $payload['workerName'],
@@ -759,11 +760,7 @@ class go extends Factory
             }
         }
 
-        if (is_resource($stdout_stream) && feof($stdout_stream)) {
-            unset($this->utils->stream_buffers[$ext_id]);
-        }
-
-        unset($ext_id, $context, $stdout_stream, $data_chunk, $buffer, $line_pos, $line, $message, $payload, $payload_type, $worker_info, $llm_params, $metadata);
+        unset($ext_id, $context, $stdout_buffer, $stdout_stream, $line, $message, $payload, $payload_type, $worker_info, $llm_params, $metadata);
     }
 
     /**
@@ -873,7 +870,7 @@ class go extends Factory
                 && $now_time - $this->last_response[$session_id] >= $this->utils->agent_config['reset_interval']
             ) {
                 $this->core->context->removeHistory($session_id, WORKER_MAIN);
-                $this->utils->setStatus(utils::STATUS_IDLE);
+                $this->utils->setStatus(utils::STATUS_IDLE, $session_id);
             }
 
             if ($now_time - $active_time >= $this->utils->agent_config['reset_interval']) {
@@ -885,7 +882,7 @@ class go extends Factory
                     continue;
                 }
 
-                $this->utils->setStatus(utils::STATUS_IDLE, true);
+                $this->utils->setStatus(utils::STATUS_IDLE, $session_id, true);
             }
         }
 
@@ -929,12 +926,14 @@ class go extends Factory
             $data = json_decode($line, true);
 
             if (!is_array($data) || !isset($data['type'])) {
+                $this->utils->debug('System: Message data ERROR: ' . $line . '.', 'debug');
                 continue;
             }
 
             if ('/abort' === $data['type']) {
                 $this->openai->abort();
                 $this->utils->debug('User: Abort signal sent. Cancelling task.', 'trace');
+                $this->utils->setStatus(utils::STATUS_IDLE, $data['sessionId'] ?? 'Unknown-Session-ID');
                 continue;
             }
 
@@ -946,7 +945,7 @@ class go extends Factory
             }
 
             // broadcast input message to all online clients
-            if ([] !== $other_clients && isset($data['sessionId']) && '' !== $data['sessionId']) {
+            if ([] !== $other_clients && '' !== ($data['sessionId'] ?? '')) {
                 $marker = $this->utils->getMarker(
                     WORKER_USER,
                     WORKER_MAIN,
@@ -983,9 +982,9 @@ class go extends Factory
                     case 'reset':
                         $this->openai->reload();
                         $this->openai->getModels(true);
-                        $this->utils->setStatus(utils::STATUS_IDLE);
                         $this->core->context->messageOnSend($data['sessionId'], false);
                         $this->core->context->removeHistory($data['sessionId'], WORKER_MAIN);
+                        $this->utils->setStatus(utils::STATUS_IDLE, $data['sessionId'] ?? 'Unknown-Session-ID');
                         break;
 
                     // Reload config
@@ -1010,8 +1009,19 @@ class go extends Factory
                 return;
             }
 
+            // Save to misc memory
             if (isset($result['saves']) && [] !== $result['saves']) {
-                $this->memory->save('misc', 'user', implode(' ', $result['saves']), 0, $data['sessionId']);
+                $memory = implode(' ', $result['saves']);
+
+                // Save to session
+                if (!in_array($data['sessionId'], $this->session_list)) {
+                    $this->session_list[] = $data['sessionId'];
+                    $this->memory->createSession($data['sessionId'], mb_substr($memory, 0, 32, 'UTF-8'));
+                }
+
+                $this->memory->save('misc', 'user', $memory, 0, $data['sessionId']);
+
+                unset($memory);
             }
 
             if (isset($result['errors']) && [] !== $result['errors']) {

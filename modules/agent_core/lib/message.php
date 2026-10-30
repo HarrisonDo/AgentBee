@@ -187,11 +187,11 @@ class message extends Factory
 
             case 'renameSession':
                 if ('' !== $session_id && '' !== ($data_content['session_name'] ?? '')) {
-                    $content = $data_content['memory']->createSession($session_id, $data_content['session_name']);
+                    $session_name = mb_substr($data_content['session_name'], 0, 32, 'UTF-8');
 
-                    if ('success' === $content['status']) {
-                        $content = $data_content['memory']->renameSession($session_id, $data_content['session_name']);
-                    }
+                    $content = [] === $data_content['memory']->listSessions(0, $session_id, true)['sessions']
+                        ? $data_content['memory']->createSession($session_id, $session_name)
+                        : $data_content['memory']->renameSession($session_id, $session_name);
                 } else {
                     $content = ['status' => 'error', 'error' => '缺少会话ID'];
                 }

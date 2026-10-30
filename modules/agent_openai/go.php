@@ -159,6 +159,10 @@ class go extends Factory
     {
         $this->core->context->messageOnSend($session_id, false);
 
+        if (WORKER_MAIN === $worker) {
+            $this->utils->setStatus(utils::STATUS_BUSY, $session_id);
+        }
+
         try {
             $this->utils->procMgr->writeProc(
                 $proc_idx,
@@ -170,19 +174,16 @@ class go extends Factory
                     'llm_params' => $this->utils->getChildWorker($worker, $receiver, 'llm_params')
                 ], JSON_FORMAT)
             );
-
-            if (WORKER_MAIN === $worker) {
-                $this->utils->setStatus(utils::STATUS_BUSY);
-            }
         } catch (\Throwable $throwable) {
             $this->utils->debug('Status: #' . $session_id . ' ERROR: ' . $throwable->getMessage(), 'trace');
 
             if (WORKER_MAIN === $worker) {
-                $this->utils->setStatus(utils::STATUS_IDLE);
+                $this->utils->setStatus(utils::STATUS_IDLE, $session_id);
             }
 
             $this->core->context->messageOnSend($session_id, true);
             $this->core->error->exceptionHandler($throwable, false, false);
+
             unset($throwable);
             return false;
         }
@@ -235,17 +236,13 @@ class go extends Factory
 
         $this->initMain();
 
-        $write     = $except = null;
         $context   = context::new();
         $llm_tools = $this->core->llm_tools;
 
         $llm_tools['tools'] = $context->buildTools($llm_tools['tools']);
 
         while (true) {
-            $read  = [STDIN];
-            $ready = stream_select($read, $write, $except, null);
-
-            if (false === $ready || 0 === $ready) {
+            if (!$this->utils->procMgr->isStdinReady()) {
                 usleep(10000);
                 continue;
             }
@@ -299,17 +296,13 @@ class go extends Factory
 
         $this->initChild();
 
-        $write     = $except = null;
         $context   = context::new();
         $llm_tools = $this->core->llm_tools;
 
         $llm_tools['tools'] = $context->buildTools($llm_tools['tools']);
 
         while (true) {
-            $read  = [STDIN];
-            $ready = stream_select($read, $write, $except, null);
-
-            if (false === $ready || 0 === $ready) {
+            if (!$this->utils->procMgr->isStdinReady()) {
                 usleep(10000);
                 continue;
             }

@@ -55,7 +55,6 @@ class utils extends Factory
     public array $program_list    = [];
     public array $child_workers   = [];
     public array $socket_session  = [];
-    public array $stream_buffers  = [];
     public array $message_buffers = [];
 
     /**
@@ -870,18 +869,17 @@ class utils extends Factory
     }
 
     /**
-     * @param int  $status
-     * @param bool $timeout
+     * @param int    $status
+     * @param string $session_id
+     * @param bool   $timeout
      *
      * @return void
      */
-    public function setStatus(int $status, bool $timeout = false): void
+    public function setStatus(int $status, string $session_id, bool $timeout = false): void
     {
         if (self::STATUS_IDLE === $status) {
-            $this->debug('Status: ' . WORKER_MAIN . ' IDLE (' . (!$timeout ? 'stream ended' : 'response timeout') . ')', 'trace');
+            $this->debug('Status: #' . $session_id . ' IDLE (' . (!$timeout ? 'stream ended' : 'response timeout') . ')', 'trace');
             $this->wait_status = $status;
-
-            unset($status, $timeout);
             return;
         }
 
@@ -890,17 +888,17 @@ class utils extends Factory
         if (($this->wait_status & $status) !== $status) {
             switch ($status) {
                 case self::STATUS_BUSY:
-                    $this->debug('Status: ' . WORKER_MAIN . ' BUSY (waiting for response)', 'trace');
+                    $this->debug('Status: #' . $session_id . ' BUSY (waiting for response)', 'trace');
                     break;
                 case self::STATUS_WAIT:
-                    $this->debug('Status: ' . WORKER_MAIN . ' WAIT (receiving stream data)', 'trace');
+                    $this->debug('Status: #' . $session_id . ' WAIT (receiving stream data)', 'trace');
                     break;
             }
 
             $this->wait_status |= $status;
         }
 
-        unset($status, $timeout);
+        unset($status, $session_id, $timeout);
     }
 
     /**
