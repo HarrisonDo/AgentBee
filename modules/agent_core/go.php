@@ -558,7 +558,7 @@ class go extends Factory
 
                     if (WORKER_MAIN === $payload['sender']) {
                         ++$this->session_calls[$payload['sessionId']];
-                        $this->utils->setStatus(utils::STATUS_IDLE, $payload['sessionId']);
+                        $this->utils->setStatus('tools' === $payload_type ? utils::STATUS_BUSY : utils::STATUS_IDLE, $payload['sessionId']);
                     } else {
                         $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
                         $this->utils->debug('Collaborator: ' . $payload['workerName'] . ' reply completed, ready.', 'trace');
