@@ -323,7 +323,7 @@ class utils extends Factory
         }
 
         $available = [];
-        $name_list = ['7z', 'git', 'curl', 'php', 'python', 'pip', 'uv', 'node', 'npm', 'npx', 'ffmpeg'];
+        $name_list = ['7z', 'git', 'curl', 'php', 'python', 'python3', 'pip', 'pip3', 'uv', 'node', 'npm', 'npx', 'ffmpeg'];
 
         foreach ($name_list as $name) {
             $paths = $this->OSMgr->findPath($name);
