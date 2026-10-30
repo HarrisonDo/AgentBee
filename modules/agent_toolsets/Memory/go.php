@@ -40,8 +40,6 @@ class go extends Factory
     private string $db_path;
     private bool   $fts_enabled = true;
 
-    private array $session_list = [];
-
     private const ROLES      = ['system', 'user', 'assistant', 'tool'];
     private const LEVELS     = ['system', 'important', 'daily', 'misc'];
     private const ALL_LEVELS = ['system', 'important', 'daily', 'misc', 'all'];
@@ -124,8 +122,6 @@ class go extends Factory
 
         $this->initDatabase();
         $this->purgeExpired();
-
-        $this->listSessions(0);
     }
 
     // =========================================================================
@@ -141,31 +137,30 @@ class go extends Factory
      */
     public function createSession(string $session_id, string $session_name): array
     {
-        if (in_array($session_id, $this->session_list, true)) {
-            return ['status' => 'success', 'session_id' => $session_id];
-        }
-
         $now_time = time();
 
-        $saved = $this->libSQLite->table('agent_session')
-            ->replace([
-                'session_id'     => $session_id,
-                'session_name'   => $session_name,
-                'session_status' => 1,
-                'create_time'    => $now_time,
-                'last_time'      => $now_time
-            ])
-            ->execute();
+        try {
+            $saved = $this->libSQLite->table('agent_session')
+                ->insert([
+                    'session_id'     => $session_id,
+                    'session_name'   => $session_name,
+                    'session_status' => 1,
+                    'create_time'    => $now_time,
+                    'last_time'      => $now_time
+                ])
+                ->execute();
 
-        if ($saved) {
-            $this->session_list[] = $session_id;
+            $result = $saved
+                ? ['status' => 'success', 'session_id' => $session_id]
+                : ['status' => 'error', 'error' => '会话`' . $session_id . '`保存失败'];
 
-            $result = ['status' => 'success', 'session_id' => $session_id];
-        } else {
-            $result = ['status' => 'error', 'error' => '会话`' . $session_id . '`保存失败'];
+            unset($saved);
+        } catch (\Throwable $throwable) {
+            $result = ['status' => 'error', 'error' => '会话`' . $session_id . '`保存失败：' . $throwable->getMessage()];
+            unset($throwable);
         }
 
-        unset($session_id, $session_name, $now_time, $saved);
+        unset($session_id, $session_name, $now_time);
         return $result;
     }
 
@@ -209,8 +204,6 @@ class go extends Factory
                 };
             }
         }
-
-        $this->session_list = array_column($sessions, 'session_id');
 
         $result = ['status' => 'success', 'sessions' => $sessions];
 
@@ -354,8 +347,6 @@ class go extends Factory
         }
 
         if ('' !== $session_id) {
-            $this->createSession($session_id, mb_substr($content, 0, 16, 'UTF-8'));
-
             $this->libSQLite->table('agent_session')
                 ->update(['last_time' => $now_time])
                 ->where(['session_id', $session_id])
