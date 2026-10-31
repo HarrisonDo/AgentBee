@@ -36,7 +36,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
    * 「本次打开还没有落点」。
    *
    * 窗口刚打开时不存在「用户正在某个会话里」这回事，所以第一份 `listSessions` 回来后
-   * 应该直接站到列表第一条（后端按 `create_time DESC` 返回，即最近一条），
+   * 应该直接站到列表第一条（按最后活动时间排序，即最近一条），
    * 而不是停在本地缓存里的某条上、更不该凭空造一个新的。
    *
    * 一旦用户自己动过（发消息 / 新建 / 切换 / 删除 / 改名），这个标记立刻作废：
@@ -44,16 +44,11 @@ export function useSessions(options: UseSessionsOptions = {}) {
    */
   let initialPlacementPending = true;
   /**
-   * 后端上一份 `listSessions` 返回的会话顺序（新的在前）。
+   * 后端上一份 `listSessions` 返回的会话顺序。
    *
-   * **列表顺序以后端为准**：后端按 `create_time DESC` 返回，这个顺序是稳定的
-   * （`agent_session` 表里没有 update_time，所以不会因为「最近说过话」而变化），
-   * 前端不再按本地活动时间重排。本地新建、还没入库的会话不属于任何远端顺序，
-   * 一律排在最前面。
+   * 列表按 `updatedAt` 倒序（最新的在前）；时间相同时才用这份顺序做 tiebreaker。
    */
   let remoteOrder: string[] = [];
-  /** 是否已经拿到过后端顺序（拿到过就以它为准，空数组也算）。 */
-  let remoteOrderLoaded = false;
 
   /** 用户自己决定了落点（或已经在某个会话里活动过）：放弃首次自动定位。 */
   function markPlacementDecided() {
@@ -142,6 +137,8 @@ export function useSessions(options: UseSessionsOptions = {}) {
     // 顺手清掉历史遗留的空壳（含早期版本存下来的兜底占位、以及没用过的「新建会话」）：
     // 不清就会每次打开都看见一条凭空多出来的空会话（连不上后端时也一样）。
     sessions.value = restoreSessions().filter((session) => !isUnusedEmptySession(session));
+    // 缓存里的顺序也按最后活动时间重排，保证离线打开时也是最新的在前。
+    reorderSessions();
     activeSessionId.value = sessions.value.length ? sessions.value[0].id : '';
     // 本地一条都没有时，兜底会话必须是干净的：否则会把上一轮的残留消息渲染出来。
     if (!sessions.value.length) fallbackSession.value = createEmptySession(resolveDefaultTitle());
@@ -191,7 +188,6 @@ export function useSessions(options: UseSessionsOptions = {}) {
     initialPlacementPending = true;
     // 本地历史清掉了，后端的顺序也一并作废：下次 listSessions 回来重新建立。
     remoteOrder = [];
-    remoteOrderLoaded = false;
     localStorage.removeItem(LEGACY_STORAGE_KEY);
     localStorage.removeItem(SINGLE_SESSION_STORAGE_KEY);
     localStorage.removeItem(STORAGE_KEY);
@@ -234,9 +230,8 @@ export function useSessions(options: UseSessionsOptions = {}) {
     if (session.keepEmpty) delete session.keepEmpty;
     applyFirstMessageTitle(session, message, resolveDefaultTitle());
     touchSession(session);
-    // 顺序以后端为准（见 `reorderSessions()`），所以这里**不再**把刚说过话的会话顶到最前；
-    // 只有还没拿到后端顺序时（离线 / 后端没有任何历史）才按本地活动时间重排。
-    if (!remoteOrderLoaded) sortSessions();
+    // 刚说过话的会话排到最前（列表按最后活动时间倒序）。
+    reorderSessions();
     registerSession();
     return message;
   }
@@ -349,11 +344,12 @@ export function useSessions(options: UseSessionsOptions = {}) {
    * - 本地标着「来自后端」、后端却没有 → 服务端已删，本地跟着删（否则会复活）。
    * - 本地空占位 → 丢掉（早期版本会把兜底占位存进 localStorage）。
    *
-   * **顺序也以后端为准**：列表按 `remote` 的数组顺序排（后端 `create_time DESC`），
-   * 本地未入库的新会话排在最前。见 `reorderSessions()`。
+   * **顺序按最后活动时间倒序**：`updatedAt` 优先取后端 `last_time`，没有则 `create_time`；
+   * 时间相同才用 `remote` 数组顺序做 tiebreaker。本地未入库的新会话自然排在最前。
+   * 见 `reorderSessions()`。
    *
    * 落点：**本次打开的第一份 listSessions 会直接定位到排序后的第一条**
-   * （后端按 `create_time DESC` 返回，即最近一条）；用户自己动过之后（发过消息 /
+   * （最近活动的一条）；用户自己动过之后（发过消息 /
    * 新建 / 切换 / 删除 / 改名）就不再有自动定位，手动刷新和断线重连都不会把他踢走。
    * 后端也没有历史就保持空列表，由用户自己点「新建会话」，不再凭空造一条。
    * 只有用户主动点「新建会话」留的空壳（`keepEmpty`）在本次打开期间会被保留。
@@ -404,6 +400,11 @@ export function useSessions(options: UseSessionsOptions = {}) {
           if (!existing.titleEdited) existing.title = name;
           changed = true;
         }
+        const remoteUpdatedAt = toIsoTime(item.last_time) || toIsoTime(item.create_time);
+        if (remoteUpdatedAt && Date.parse(remoteUpdatedAt) > (Date.parse(existing.updatedAt) || 0)) {
+          existing.updatedAt = remoteUpdatedAt;
+          changed = true;
+        }
         return;
       }
 
@@ -412,20 +413,18 @@ export function useSessions(options: UseSessionsOptions = {}) {
         title: name || resolveDefaultTitle(),
         remoteName: name || undefined,
         createdAt: toIsoTime(item.create_time),
-        updatedAt: toIsoTime(item.create_time) || new Date().toISOString(),
+        updatedAt: toIsoTime(item.last_time) || toIsoTime(item.create_time) || new Date().toISOString(),
         messages: [],
       });
       changed = true;
     });
 
-    // 顺序以后端返回的数组顺序为准（后端 `create_time DESC`）。先把这份顺序记下来：
-    // 无论这次有没有合并出内容变化，它都是列表该有的顺序。
+    // 记下后端顺序：列表按 updatedAt 倒序，时间相同时用它做 tiebreaker。
     const nextOrder = remote
       .map((item) => String(item.session_id || '').trim())
       .filter(Boolean);
     const orderChanged = nextOrder.join('\n') !== remoteOrder.join('\n');
     remoteOrder = nextOrder;
-    remoteOrderLoaded = true;
 
     // 没新增会话、也没有要清理的：这时候只有顺序可能变，不需要走下面的落点逻辑。
     if (!changed && !placeholderIds.size && !missingRemoteIds.size) {
@@ -436,7 +435,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
       return;
     }
 
-    // 顺序：远端会话按接口顺序，本地未入库的排在最前。
+    // 按最后活动时间倒序；本地新建的 updatedAt 是当前时间，自然排在最前。
     reorderSessions();
 
     // 丢掉空占位（含历史遗留：早期版本会把兜底占位一起存进 localStorage），
@@ -450,7 +449,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
 
     // 本次打开还没有落点（第一份 listSessions），或者本地本来就没有真实历史、
     // 或者当前就停在一个空占位上：直接落到排序后的第一条
-    // （后端按 create_time DESC 返回，即最近的一条会话）。
+    // （按最后活动时间倒序，即最近的一条会话）。
     // 没有任何历史时列表就保持为空，由用户自己点「新建会话」。
     if (pendingInitialPlacement || !localHasRealContent || activeIsBlankPlaceholder) {
       activeSessionId.value = '';
@@ -462,33 +461,19 @@ export function useSessions(options: UseSessionsOptions = {}) {
     registerSession();
   }
 
-  /** 纯本地排序：按最后活动时间倒序。只在还没拿到后端顺序时使用。 */
-  function sortSessions() {
+  /**
+   * 按最后活动时间倒序重排列表（最新的在前）。
+   *
+   * 时间相同（例如后端没给 `last_time`）时用后端顺序做 tiebreaker；
+   * 本地新建、还没入库的会话 `updatedAt` 是当前时间，自然排在最前。
+   */
+  function reorderSessions() {
+    const position = new Map(remoteOrder.map((id, index) => [id, index]));
     sessions.value.sort((left, right) => {
       const leftTime = Date.parse(left.updatedAt) || 0;
       const rightTime = Date.parse(right.updatedAt) || 0;
-      return rightTime - leftTime;
-    });
-  }
+      if (leftTime !== rightTime) return rightTime - leftTime;
 
-  /**
-   * 按「后端顺序优先」重排列表（拿到 `listSessions` 后调用）。
-   *
-   * - 后端返回过的会话：严格按接口给的数组顺序（`create_time DESC`）。
-   * - 本地新建、还没入库的：排在最前面，彼此按创建时间倒序（它们都是刚建的）。
-   * - 还没拿到过后端顺序（离线 / 后端没有任何历史）：退回纯本地排序。
-   *
-   * 刻意**不**按本地 `updatedAt` 重排：那样一旦在某个会话里说了话就把它顶到最前，
-   * 顺序立刻和接口不一致。顺序只能有一个来源，就是后端。
-   */
-  function reorderSessions() {
-    if (!remoteOrderLoaded) {
-      sortSessions();
-      return;
-    }
-
-    const position = new Map(remoteOrder.map((id, index) => [id, index]));
-    sessions.value.sort((left, right) => {
       const leftIndex = position.get(left.id);
       const rightIndex = position.get(right.id);
       if (leftIndex === undefined && rightIndex === undefined) {

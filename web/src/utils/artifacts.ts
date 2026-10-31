@@ -1,15 +1,14 @@
-import type { ChatFile, ChatMessage, ToolEvent } from '../protocol/types';
+import type { ChatFile, ChatMessage } from '../protocol/types';
 import { inferMimeType } from '../protocol/normalizers';
 
 /**
  * 从后端返回的消息里提取「可预览产物」。
  *
- * 后端目前不发 file/html/document 事件，所以这里负责从已有信号里推断：
+ * 只从 assistant 的正文推断，不读 tool_calls / tool_result：
  *  - content 里的完整 HTML 文档
  *  - content 里的 ```html / ```md 围栏块
  *  - content 里的长 Markdown 文档
  *  - content 正文里出现的文件路径
- *  - tool_result 里的 saved_files / file_path / path 等字段
  */
 
 const FULL_HTML_DOCUMENT = /^\s*(?:<!doctype\s+html\b[^>]*>\s*)?<html\b[\s\S]*?<\/html>\s*$/i;
@@ -23,8 +22,6 @@ const MARKDOWN_DOC_MIN_LEN = 400;
 const MARKDOWN_DOC_MIN_HEADINGS = 2;
 const MAX_PATH_ARTIFACTS = 8;
 const MAX_URL_ARTIFACTS = 6;
-const MAX_TOOL_DEPTH = 6;
-const MAX_TOOL_ARTIFACTS = 20;
 
 const PREVIEWABLE_EXTENSIONS = [
   'html', 'htm', 'xhtml', 'md', 'markdown', 'txt', 'json', 'csv', 'tsv', 'pdf',
@@ -50,19 +47,12 @@ const URL_SCAN_PATTERN = /https?:\/\/[^\s<>"'`[\](){}，。；、：！？、“
 /** URL 末尾的句子标点，属于正文而非地址本身。 */
 const URL_TRAILING_JUNK = /[.,;:!?、。，；：！？'"”’)\]}]+$/;
 
-const TOOL_PATH_KEYS = new Set([
-  'file_path', 'filepath', 'path', 'save_path', 'output_path', 'full_path',
-  'saved_files', 'files', 'file', 'filename', 'file_name',
-]);
-
 /**
  * 必须带目录部分，光一个文件名不算路径。
  *
  * `PATH_EXPRESSION` 的前缀是可选的，所以 `img_1.png` 这种**只有文件名**的字符串也能通过
- * ——但它没有位置信息，拼出来的 URL 是垃圾（`file:///img_1.png`）。后端确实会发这种字段：
- * `System-readImage` 的返回里只有 `filename`，`OfficeSuite-readDocx` 的 `file` 是
- * `basename($path)`，两个都会被 `TOOL_PATH_KEYS` 收走，于是同一个文件多出一个点了没用的入口
- * （正文里顺口提到的文件名同理）。
+ * ——但它没有位置信息，拼出来的 URL 是垃圾（`file:///img_1.png`）。
+ * 正文里顺口提到的文件名同样不该生成入口。
  */
 function hasDirectoryPart(value: string): boolean {
   return /[\\/]/.test(value);
@@ -123,20 +113,19 @@ function pickByRank(files: ChatFile[]): ChatFile | null {
   return best;
 }
 
-/** 只从正文和工具结果里推断的产物，不含后端直接下发的 file 事件。 */
+/**
+ * 只从正文推断的产物，不含后端直接下发的 file 事件。
+ * `toolEvents` 仅为兼容旧调用方保留，工具调用/结果不再参与推断。
+ */
 export function extractContentArtifacts(
   message: Pick<ChatMessage, 'content' | 'toolEvents'>,
 ): ChatFile[] {
   const found: ChatFile[] = [];
-  const content = message.content || '';
-
-  collectContentArtifacts(content, found);
-  collectToolEventArtifacts(message.toolEvents, found);
-
+  collectContentArtifacts(message.content || '', found);
   return sortByRank(dedupe(found));
 }
 
-/** 消息上所有可预览产物：后端 file 事件 + 正文/工具推断。 */
+/** 消息上所有可预览产物：后端 file 事件 + 正文推断。 */
 export function extractMessageArtifacts(
   message: Pick<ChatMessage, 'content' | 'files' | 'toolEvents'>,
 ): ChatFile[] {
@@ -282,60 +271,6 @@ function fileNameFromUrl(url: string): string {
   } catch {
     return last;
   }
-}
-
-/**
- * 记忆类工具（工具名形如 `Memory-read`，见后端 `utils.php` 的
- * `$toolset . '-' . $method`）。
- *
- * 它们的结果里装的是**历史**——包括历史消息里的 tool_result 和其中的文件路径，
- * 而不是本轮的产物。收进来会冒出指向旧临时目录的入口：实测 `Memory-read` 会把
- * 上一轮 docx 抽图的路径一起带出来，和本轮新路径同名不同目录，于是聊天区出现
- * 两个一模一样的「在侧栏预览文件 img_1.png」，其中一个随时可能 404。
- * 前端本来就是这个原则：`contentArtifacts` 不看 `isRemoteHistory` 的消息，
- * `pickInlinePreviewArtifact` 也不收纯路径。
- */
-const MEMORY_TOOL_NAME = /^memory[-_]/i;
-
-function collectToolEventArtifacts(toolEvents: ToolEvent[] | undefined, found: ChatFile[]) {
-  if (!toolEvents?.length) return;
-  const seen = new Set<string>();
-
-  toolEvents.forEach((event) => {
-    if (event.kind !== 'tool_result') return;
-    if (MEMORY_TOOL_NAME.test((event.name || '').trim())) return;
-    const parsed = parseJsonMaybe(event.data);
-    if (parsed === null) return;
-    walkToolData(parsed, found, seen, 0);
-  });
-}
-
-function walkToolData(value: unknown, found: ChatFile[], seen: Set<string>, depth: number) {
-  if (depth > MAX_TOOL_DEPTH || found.length >= MAX_TOOL_ARTIFACTS) return;
-
-  if (Array.isArray(value)) {
-    value.forEach((item) => walkToolData(item, found, seen, depth + 1));
-    return;
-  }
-  if (!value || typeof value !== 'object') return;
-
-  Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => {
-    if (entry && typeof entry === 'object') {
-      walkToolData(entry, found, seen, depth + 1);
-      return;
-    }
-    if (typeof entry !== 'string') return;
-    if (!TOOL_PATH_KEYS.has(key.toLowerCase())) return;
-
-    const candidate = entry.replace(/\\/g, '/').trim();
-    if (!hasDirectoryPart(candidate)) return;
-    if (!PATH_EXPRESSION.test(candidate)) return;
-
-    const dedupeKey = candidate.toLowerCase();
-    if (seen.has(dedupeKey)) return;
-    seen.add(dedupeKey);
-    found.push(buildPathArtifact(candidate));
-  });
 }
 
 /** 判断某个位置是否落在带协议头的 URL 里；URL 不当作本地文件产物。 */
