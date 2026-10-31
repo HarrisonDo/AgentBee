@@ -46,9 +46,10 @@ export function useSessions(options: UseSessionsOptions = {}) {
   /**
    * 后端上一份 `listSessions` 返回的会话顺序。
    *
-   * 列表按 `updatedAt` 倒序（最新的在前）；时间相同时才用这份顺序做 tiebreaker。
+   * 仅首次远端同步用于建立基准顺序；之后列表顺序由本地消息活动维护。
    */
   let remoteOrder: string[] = [];
+  let remoteOrderInitialized = false;
 
   /** 用户自己决定了落点（或已经在某个会话里活动过）：放弃首次自动定位。 */
   function markPlacementDecided() {
@@ -188,6 +189,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
     initialPlacementPending = true;
     // 本地历史清掉了，后端的顺序也一并作废：下次 listSessions 回来重新建立。
     remoteOrder = [];
+    remoteOrderInitialized = false;
     localStorage.removeItem(LEGACY_STORAGE_KEY);
     localStorage.removeItem(SINGLE_SESSION_STORAGE_KEY);
     localStorage.removeItem(STORAGE_KEY);
@@ -199,6 +201,8 @@ export function useSessions(options: UseSessionsOptions = {}) {
 
   function touchSession(session: ChatSession) {
     session.updatedAt = new Date().toISOString();
+    const index = sessions.value.findIndex((item) => item.id === session.id);
+    if (index > 0) sessions.value.unshift(...sessions.value.splice(index, 1));
   }
 
   function addMessage(role: MessageRole, content: string, extra: Partial<ChatMessage> = {}): ChatMessage {
@@ -230,8 +234,6 @@ export function useSessions(options: UseSessionsOptions = {}) {
     if (session.keepEmpty) delete session.keepEmpty;
     applyFirstMessageTitle(session, message, resolveDefaultTitle());
     touchSession(session);
-    // 刚说过话的会话排到最前（列表按最后活动时间倒序）。
-    reorderSessions();
     registerSession();
     return message;
   }
@@ -344,8 +346,7 @@ export function useSessions(options: UseSessionsOptions = {}) {
    * - 本地标着「来自后端」、后端却没有 → 服务端已删，本地跟着删（否则会复活）。
    * - 本地空占位 → 丢掉（早期版本会把兜底占位存进 localStorage）。
    *
-   * **顺序按最后活动时间倒序**：`updatedAt` 优先取后端 `last_time`，没有则 `create_time`；
-   * 时间相同才用 `remote` 数组顺序做 tiebreaker。本地未入库的新会话自然排在最前。
+   * **后端会话严格保持 `remote` 数组顺序**；本地未入库的新会话排在后端会话之前。
    * 见 `reorderSessions()`。
    *
    * 落点：**本次打开的第一份 listSessions 会直接定位到排序后的第一条**
@@ -419,24 +420,19 @@ export function useSessions(options: UseSessionsOptions = {}) {
       changed = true;
     });
 
-    // 记下后端顺序：列表按 updatedAt 倒序，时间相同时用它做 tiebreaker。
+    // 记下后端返回顺序；渲染顺序必须与该数组一致。
     const nextOrder = remote
       .map((item) => String(item.session_id || '').trim())
       .filter(Boolean);
-    const orderChanged = nextOrder.join('\n') !== remoteOrder.join('\n');
+    const shouldApplyRemoteOrder = !remoteOrderInitialized;
     remoteOrder = nextOrder;
+    remoteOrderInitialized = true;
 
-    // 没新增会话、也没有要清理的：这时候只有顺序可能变，不需要走下面的落点逻辑。
-    if (!changed && !placeholderIds.size && !missingRemoteIds.size) {
-      if (orderChanged) {
-        reorderSessions();
-        registerSession();
-      }
-      return;
-    }
+    // 后续刷新只合并字段，不覆盖本地消息活动形成的顺序。
+    if (!changed && !placeholderIds.size && !missingRemoteIds.size) return;
 
-    // 按最后活动时间倒序；本地新建的 updatedAt 是当前时间，自然排在最前。
-    reorderSessions();
+    // 仅首次获取列表时严格采用后端数组顺序；之后由本地消息活动维护顺序。
+    if (shouldApplyRemoteOrder) reorderSessions();
 
     // 丢掉空占位（含历史遗留：早期版本会把兜底占位一起存进 localStorage），
     // 以及服务端已经不存在的本地记录。
@@ -462,23 +458,15 @@ export function useSessions(options: UseSessionsOptions = {}) {
   }
 
   /**
-   * 按最后活动时间倒序重排列表（最新的在前）。
-   *
-   * 时间相同（例如后端没给 `last_time`）时用后端顺序做 tiebreaker；
-   * 本地新建、还没入库的会话 `updatedAt` 是当前时间，自然排在最前。
+   * 后端会话严格按 `listSessions` 返回的数组顺序排列。
+   * 本地新建且尚未入库的会话保持原有相对顺序，并排在后端会话之前。
    */
   function reorderSessions() {
     const position = new Map(remoteOrder.map((id, index) => [id, index]));
     sessions.value.sort((left, right) => {
-      const leftTime = Date.parse(left.updatedAt) || 0;
-      const rightTime = Date.parse(right.updatedAt) || 0;
-      if (leftTime !== rightTime) return rightTime - leftTime;
-
       const leftIndex = position.get(left.id);
       const rightIndex = position.get(right.id);
-      if (leftIndex === undefined && rightIndex === undefined) {
-        return (Date.parse(right.createdAt) || 0) - (Date.parse(left.createdAt) || 0);
-      }
+      if (leftIndex === undefined && rightIndex === undefined) return 0;
       if (leftIndex === undefined) return -1;
       if (rightIndex === undefined) return 1;
       return leftIndex - rightIndex;
