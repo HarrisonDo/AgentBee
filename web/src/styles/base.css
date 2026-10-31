@@ -2572,7 +2572,7 @@ body:has(.login-window-backdrop) {
   display: inline-block;
   width: max-content;
   min-width: 6rem;
-  max-width: 36ch;
+  max-width: 32ch;
   white-space: normal;
   overflow-wrap: anywhere;
   vertical-align: top;
