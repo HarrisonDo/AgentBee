@@ -104,6 +104,14 @@ final class core extends Factory
     }
 
     /**
+     * @return void
+     */
+    public function resetSkills(): void
+    {
+        $this->llm_tools = [];
+    }
+
+    /**
      * @param array $fetched_skills
      *
      * @return void

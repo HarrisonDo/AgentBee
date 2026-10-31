@@ -127,11 +127,11 @@ All server messages should be JSON strings.
 
 - 有内容：保留已经流出来的内容，状态置为 `stopped`，末尾显示 `data.message`；
 - 没内容：保留空壳，气泡里显示 `data.message`（不再直接删掉，否则点击停止没有任何反馈）；
-- 已结束的迟到回执：忽略。
+- 已结束的迟到回执：如果本地没有停止请求就忽略；用户点过停止时，即使这一轮已经被 `end` 收尾，也按 `stopped` 收尾并显示 `data.message`。
 
 `sessionId` / `messageId` 必须带上——前者用来把回执路由回真正在跑的那个会话，
-后者用来认出是哪一轮。`messageId` 对不上时，如果目标会话里只有一个 `loading` 的
-assistant，前端也会收尾它，避免回执被吞掉。
+后者用来认出是哪一轮。点击停止时前端会记住最近一轮的 `messageId`，回执里对不上也能找回目标；
+如果目标会话里只有一个 `loading` 的 assistant，也会收尾它，避免回执被吞掉。
 
 ```json
 {

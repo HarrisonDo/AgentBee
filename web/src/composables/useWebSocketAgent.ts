@@ -29,6 +29,7 @@ const AUTO_CONNECT_BASE_RETRY_MS = 1000;
 const AUTO_CONNECT_MAX_RETRY_MS = 15_000;
 const FOREGROUND_RECONNECT_THRESHOLD_MS = 30_000;
 const STREAM_FLUSH_MS = 80;
+const STOP_REQUEST_TTL_MS = 15_000;
 const WS_TOKEN_STORAGE_KEY = 'agentbee.wsToken';
 /** 会话请求走哪个 type；后端目前只在 process_memory 里实现了这两个 act。 */
 const SESSION_REQUEST_TYPE: 'memory' | 'session' = 'memory';
@@ -80,6 +81,12 @@ interface PendingTurn {
   sessionId: string;
 }
 
+/** 用户点击停止后等待服务端 abort 回执的本地目标。 */
+interface StopRequest {
+  messageId: string;
+  requestedAt: number;
+}
+
 interface UseWebSocketAgentOptions {
   activeSession: () => ChatSession | null;
   addMessage: (role: ChatMessage['role'], content: string, extra?: Partial<ChatMessage>) => ChatMessage;
@@ -107,6 +114,8 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   const socket = ref<WebSocket | null>(null);
   // 保留已结束轮次的归属，迟到事件也不能回退到当前会话。
   const turnSessionIds = new Map<string, string>();
+  // 用户点击停止后，服务端 abort 回执可能晚于 end 到达；按会话记住要收尾的那一轮。
+  const stopRequests = new Map<string, StopRequest>();
   const noResponseTimers = new Map<string, number>();
   const pendingStreamUpdates = new Map<string, PendingStreamUpdate>();
   let streamFlushTimer: number | null = null;
@@ -369,6 +378,8 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
 
     const session = options.activeSession();
     if (!session) return false;
+    // 新的一轮开始，上一轮还没等到回执的停止请求作废。
+    stopRequests.delete(session.id);
 
     const messageId = makeId();
     // `/reset` 是指令不是聊天内容：照常发出去、照常等后端那句确认，
@@ -451,16 +462,23 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
   function stopCurrent() {
     if (!canSend.value) return;
     // 优先停当前会话正在跑的那一轮；当前会话没有在跑的，就停最近发起的那一轮。
-    const messageId = getActiveSessionPendingMessageId() || getLatestPendingMessageId();
+    const pendingMessageId = getActiveSessionPendingMessageId() || getLatestPendingMessageId();
     // 有在途轮次时，归属会话取**那一轮自己的**会话：用户可能已经切走了，
     // 要停的必须是真正在跑的那一轮。只有没有在途轮次时才退回当前会话
     // ——这样 sessionId 永远不会是 null。
-    const session = resolveTurnSession(messageId).session || options.activeSession();
+    const session = resolveTurnSession(pendingMessageId).session || options.activeSession();
     if (!session) return false;
+
+    // 没有 pendingTurn 时（比如工具段落的 end 刚把这一轮收尾），
+    // 用最近一轮的 messageId 作为停止目标；abort 回执到达时据此找回气泡。
+    const targetMessageId = pendingMessageId || getLatestTurnMessageId(session);
+    if (targetMessageId) {
+      stopRequests.set(session.id, { messageId: targetMessageId, requestedAt: Date.now() });
+    }
 
     // 后端把 `/abort` 当作指令前缀处理（`go.php` 里 `'/abort' === $data['type']`），
     // 不会反射成 `process_abort`；服务端「已停止生成」的回执仍然是 `type: 'abort'`。
-    sendJson({ type: '/abort', sessionId: session.id, messageId: messageId || makeId() });
+    sendJson({ type: '/abort', sessionId: session.id, messageId: targetMessageId || makeId() });
 
     // 不在本地收尾，也不写 "Stop request sent." 日志：
     // 服务端收到 `/abort` 后会回 `type: 'abort'`（或 close/end），由那条回执决定
@@ -605,6 +623,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
     discardPendingStreamUpdates();
     pendingTurns.value.clear();
     turnSessionIds.clear();
+    stopRequests.clear();
   }
 
   function sendJson(payload: ClientMessage) {
@@ -968,12 +987,19 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       : options.activeSession()?.id === sessionId ? options.activeSession() : null;
     if (!session) return;
 
+    const stopRequest = getActiveStopRequest(session.id);
     const messageId = (msg.messageId || '').trim();
-    let assistant = messageId
+    let assistant = stopRequest
       ? session.messages.find((message) => (
-        message.role === 'assistant' && message.messageId === messageId
+        message.role === 'assistant' && message.messageId === stopRequest.messageId
       ))
       : undefined;
+
+    if (!assistant && messageId) {
+      assistant = session.messages.find((message) => (
+        message.role === 'assistant' && message.messageId === messageId
+      ));
+    }
 
     if (!assistant) {
       const loading = session.messages.filter((message) => (
@@ -982,7 +1008,22 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       if (loading.length === 1) assistant = loading[0];
     }
 
-    if (!assistant || assistant.status !== 'loading') return;
+    // 用户点过停止时，即使这一轮已经被 end 提前标成 done，也按回执收尾；
+    // 没有停止请求的迟到 abort 仍然忽略，避免把已完成的回复改回去。
+    if (!assistant) {
+      const statusMessage = extractAbortMessage(msg);
+      if (stopRequest && statusMessage) {
+        session.messages.push({
+          id: makeId(), role: 'system', content: statusMessage, time: nowTime(),
+        });
+        options.touchSession(session);
+        options.registerSession();
+      }
+      stopRequests.delete(session.id);
+      return;
+    }
+
+    if (assistant.status !== 'loading' && !stopRequest) return;
 
     assistant.status = 'stopped';
     const statusMessage = extractAbortMessage(msg);
@@ -992,6 +1033,7 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       clearNoResponseTimer(assistant.messageId);
       pendingTurns.value.delete(assistant.messageId);
     }
+    stopRequests.delete(session.id);
     options.touchSession(session);
     options.registerSession();
   }
@@ -1194,6 +1236,41 @@ export function useWebSocketAgent(options: UseWebSocketAgentOptions) {
       if (turn?.sessionId === activeId) found = messageId;
     });
     return found;
+  }
+
+  /** 当前会话里最近一条用户消息的 messageId：没有 pendingTurn 时用它作为停止目标。 */
+  function getLatestUserMessageId(session: ChatSession): string | null {
+    for (let index = session.messages.length - 1; index >= 0; index -= 1) {
+      const message = session.messages[index];
+      if (message.role === 'user' && message.messageId) return message.messageId;
+    }
+    return null;
+  }
+
+  /** 没有 pendingTurn 时的停止目标：优先最近一条有 assistant 的用户消息，其次最近 assistant。 */
+  function getLatestTurnMessageId(session: ChatSession): string | null {
+    const userId = getLatestUserMessageId(session);
+    if (userId && session.messages.some((message) => (
+      message.role === 'assistant' && message.messageId === userId
+    ))) {
+      return userId;
+    }
+    for (let index = session.messages.length - 1; index >= 0; index -= 1) {
+      const message = session.messages[index];
+      if (message.role === 'assistant' && message.messageId) return message.messageId;
+    }
+    return userId;
+  }
+
+  /** 取还没过期的停止请求；超过 TTL 视为迟到，忽略。 */
+  function getActiveStopRequest(sessionId: string): StopRequest | null {
+    const request = stopRequests.get(sessionId);
+    if (!request) return null;
+    if (Date.now() - request.requestedAt > STOP_REQUEST_TTL_MS) {
+      stopRequests.delete(sessionId);
+      return null;
+    }
+    return request;
   }
 
   /**

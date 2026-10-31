@@ -120,10 +120,7 @@ const contentArtifacts = computed<ChatFile[]>(() => {
   if (props.message.role !== 'assistant') return [];
   // 服务端记忆里的历史回复不再派生预览入口，避免整屏都是按钮。
   if (props.message.isRemoteHistory) return [];
-  return extractContentArtifacts({
-    content: props.message.content || '',
-    toolEvents: props.message.toolEvents,
-  });
+  return extractContentArtifacts({ content: props.message.content || '' });
 });
 
 const previewEntries = computed<ChatFile[]>(() => {
@@ -143,10 +140,7 @@ const historyPreviewArtifact = computed<ChatFile | null>(() => {
   if (!props.message.memoryCreateId) return null;
   // 用户那条记忆记录里贴的链接不算产物，不给预览按钮（删除按钮仍保留）。
   if (props.message.role === 'user') return null;
-  return pickInlinePreviewArtifact({
-    content: props.message.content || '',
-    toolEvents: props.message.toolEvents,
-  });
+  return pickInlinePreviewArtifact({ content: props.message.content || '' });
 });
 
 const senderIdentity = computed(() => {
