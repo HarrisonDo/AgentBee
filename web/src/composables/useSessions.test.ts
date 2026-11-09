@@ -303,29 +303,28 @@ describe('标题的来源', () => {
   });
 });
 
-describe('会话顺序以后端为准', () => {
-  it('renders the list in the order listSessions returned', () => {
+describe('会话顺序按最后活动时间倒序', () => {
+  it('renders the newest session first even if listSessions returns the opposite order', () => {
     const sessions = useSessions({ defaultTitle: () => '新对话' });
     sessions.applyRemoteSessions([
-      { session_id: 'b', session_name: '第二个', create_time: '2026-09-14 09:00:00' },
-      { session_id: 'a', session_name: '第一个', create_time: '2026-09-14 10:00:00' },
+      { session_id: 'b', session_name: '第二个', create_time: '2026-09-14 09:00:00', last_time: '2026-09-14 09:00:00' },
+      { session_id: 'a', session_name: '第一个', create_time: '2026-09-14 10:00:00', last_time: '2026-09-14 10:00:00' },
     ]);
 
-    // 顺序就是接口给的数组顺序，不按 create_time 重新排。
-    expect(sessions.sessions.value.map((session) => session.id)).toEqual(['b', 'a']);
+    expect(sessions.sessions.value.map((session) => session.id)).toEqual(['a', 'b']);
   });
 
-  it('does not move a session to the top just because it was used', () => {
+  it('moves a session to the top after it is used', () => {
     const sessions = useSessions({ defaultTitle: () => '新对话' });
     sessions.applyRemoteSessions([
-      { session_id: 'newest', session_name: '最新的', create_time: '2026-09-14 10:00:00' },
-      { session_id: 'older', session_name: '早一点的', create_time: '2026-09-14 09:00:00' },
+      { session_id: 'newest', session_name: '最新的', create_time: '2026-09-14 10:00:00', last_time: '2026-09-14 10:00:00' },
+      { session_id: 'older', session_name: '早一点的', create_time: '2026-09-14 09:00:00', last_time: '2026-09-14 09:00:00' },
     ]);
 
     sessions.switchSession('older');
     sessions.addMessage('user', '在这里说一句话');
 
-    expect(sessions.sessions.value.map((session) => session.id)).toEqual(['newest', 'older']);
+    expect(sessions.sessions.value.map((session) => session.id)).toEqual(['older', 'newest']);
   });
 
   it('puts a locally created session in front of the backend ones', () => {
@@ -339,18 +338,19 @@ describe('会话顺序以后端为准', () => {
     expect(sessions.sessions.value.map((session) => session.id)).toEqual([created.id, 'r1']);
   });
 
-  it('re-follows the backend when the order changes on a later refresh', () => {
+  it('uses the backend order as a tiebreaker when timestamps are equal', () => {
     const sessions = useSessions({ defaultTitle: () => '新对话' });
+    const sameTime = '2026-09-14 10:00:00';
     sessions.applyRemoteSessions([
-      { session_id: 'x', session_name: '甲' },
-      { session_id: 'y', session_name: '乙' },
+      { session_id: 'x', session_name: '甲', create_time: sameTime, last_time: sameTime },
+      { session_id: 'y', session_name: '乙', create_time: sameTime, last_time: sameTime },
     ]);
     expect(sessions.sessions.value.map((session) => session.id)).toEqual(['x', 'y']);
 
-    // 内容没变化、只有顺序变了：也要跟着走。
+    // updatedAt 相同，按后端顺序。
     sessions.applyRemoteSessions([
-      { session_id: 'y', session_name: '乙' },
-      { session_id: 'x', session_name: '甲' },
+      { session_id: 'y', session_name: '乙', create_time: sameTime, last_time: sameTime },
+      { session_id: 'x', session_name: '甲', create_time: sameTime, last_time: sameTime },
     ]);
     expect(sessions.sessions.value.map((session) => session.id)).toEqual(['y', 'x']);
   });

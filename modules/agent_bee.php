@@ -20,11 +20,11 @@
 
 declare(strict_types = 1);
 
-const AGENT_VERSION = '2.0.30';
+const AGENT_VERSION = '2.1.0';
 const AGENT_NAME    = '蜂小秘 - AgentBee';
 
 const WORKER_USER  = 'User';
-const WORKER_MAIN  = 'Agent';
+const WORKER_MAIN  = 'AgentBee';
 const WORKER_CHILD = 'Collaborator';
 
 use Nervsys\Core\Lib\App;

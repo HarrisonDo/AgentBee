@@ -181,7 +181,7 @@ class go extends Factory
         $now   = time();
         $query = $this->libSQLite
             ->table('agent_session')
-            ->select('session_id', 'session_name', 'session_status', 'create_time');
+            ->select('session_id', 'session_name', 'session_status', 'create_time', 'last_time');
 
         if ('' !== $session_id) {
             $query->where(['session_id', $session_id]);

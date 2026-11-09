@@ -270,6 +270,32 @@ describe('abort event handling', () => {
     expect(assistantOf(messageId)?.statusMessage).toBeUndefined();
   });
 
+  it('renders abort feedback when the turn already ended before the stop click', () => {
+    const { agent, assistantOf, emit, sendUserText, session, sockets } = setupAgent();
+    const messageId = sendUserText('已经 end 的轮次');
+    emit({
+      type: 'tool_calls',
+      messageId,
+      data: [{ id: 'call-1', function: { name: 'Memory-read', arguments: '{}' } }],
+    });
+    emit({
+      type: 'tool_result',
+      messageId,
+      data: { call_id: 'call-1', function_name: 'Memory-read', content: '{}' },
+    });
+    emit({ type: 'end', messageId });
+    expect(assistantOf(messageId)?.status).toBe('done');
+
+    // 用户点停止时这一轮已经被 end 收尾；停止请求要记住目标，回执到达后仍给出反馈。
+    agent.stopCurrent();
+    const abortPayload = JSON.parse(sockets[0].sent[sockets[0].sent.length - 1]);
+    expect(abortPayload).toMatchObject({ type: '/abort', sessionId: session.id, messageId });
+
+    emit(abortEvent(messageId, session.id));
+    expect(assistantOf(messageId)?.status).toBe('stopped');
+    expect(assistantOf(messageId)?.statusMessage).toBe('已停止生成');
+  });
+
   it('routes the abort receipt to the session that owns the turn', () => {
     const { assistantOf, createSession, emit, sendUserText, session, switchTo } = setupAgent();
     const messageId = sendUserText('第一个会话的问题');

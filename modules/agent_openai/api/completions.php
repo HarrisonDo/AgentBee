@@ -26,7 +26,8 @@ class completions extends stream
 {
     public array $tool_calls = [];
 
-    public string $reasons_content   = '';
+    public string $tool_content      = '';
+    public string $reason_content    = '';
     public string $assistant_content = '';
 
     public string $message_type  = 'content';
@@ -66,7 +67,7 @@ class completions extends stream
                     break;
 
                 case 'assistant':
-                    if ('' !== $event['content']) {
+                    if (isset($event['content']) && '' !== $event['content']) {
                         $contents['content'] = $event['content'];
                     }
 
@@ -172,22 +173,23 @@ class completions extends stream
         }
 
         if (isset($data['error'])) {
+            $this->tool_calls    = [];
             $this->finish_reason = 'error';
-            $this->output('stream', 'error', $metadata, $data['error']);
+            $this->output('end', 'error', $metadata, $data['error']);
             return;
         }
 
         if (isset($data['status']) && 'aborted' === $data['status']) {
-            $this->finish_reason = 'abort';
             $this->tool_calls    = [];
-            $this->output('stream', 'abort', $metadata, ['message' => '已停止生成']);
+            $this->finish_reason = 'abort';
+            $this->output('end', 'abort', $metadata, ['message' => '已停止生成']);
             return;
         }
 
         $this->finishStream($metadata);
 
         $this->tool_calls        = [];
-        $this->reasons_content   = '';
+        $this->reason_content    = '';
         $this->assistant_content = '';
         $this->message_type      = 'content';
         $this->finish_reason     = 'undefined';
@@ -214,20 +216,20 @@ class completions extends stream
                 $this->message_type = 'think';
             } elseif ('<channel|>' === $delta['content']) {
                 $this->message_type = 'content';
-            } elseif ('content' === $this->message_type || 'thought' !== $delta['content'] || '' !== $this->reasons_content) {
+            } elseif ('content' === $this->message_type || 'thought' !== $delta['content'] || '' !== $this->reason_content) {
                 if ('content' === $this->message_type) {
                     $this->assistant_content .= $delta['content'];
                 } elseif ('think' === $this->message_type) {
-                    $this->reasons_content .= $delta['content'];
+                    $this->reason_content .= $delta['content'];
                 }
-
-                $this->output('stream', $this->message_type, $metadata, $delta['content']);
             }
+
+            $this->output('stream', $this->message_type, $metadata, $delta['content']);
         }
 
         if (isset($delta['reasoning_content']) && '' !== $delta['reasoning_content']) {
             if ($this->core->utils->agent_config['agent_llm']['keep_reasons'] ?? false) {
-                $this->reasons_content .= $delta['reasoning_content'];
+                $this->reason_content .= $delta['reasoning_content'];
             }
 
             $this->output('stream', 'think', $metadata, $delta['reasoning_content']);
@@ -251,7 +253,12 @@ class completions extends stream
     {
         switch ($this->finish_reason) {
             case 'stop':
-                if ('' !== $this->assistant_content || '' !== $this->reasons_content) {
+                if ('' !== $this->tool_content) {
+                    $this->output('memory', 'save', $metadata, $this->tool_content);
+                    $this->tool_content = '';
+                }
+
+                if ('' !== $this->assistant_content || '' !== $this->reason_content) {
                     $this->output('history', 'addAssistantMessage', $metadata, $this->buildAssistantEvent());
                 }
 
@@ -259,7 +266,6 @@ class completions extends stream
                     $this->output('memory', 'save', $metadata, $this->assistant_content);
                 }
 
-                $this->output('stream', 'end', $metadata);
                 $this->output('end', 'end', $metadata, $this->assistant_content);
                 break;
 
@@ -277,7 +283,7 @@ class completions extends stream
                     $this->output('memory', 'save', $metadata, $this->assistant_content);
                 }
 
-                $this->output('stream', 'length', $metadata, '[系统提示] 内容过长被截断。');
+                $this->output('end', 'length', $metadata, '[系统提示] 内容过长被截断。');
                 break;
 
             case 'tool_calls':
@@ -287,6 +293,10 @@ class completions extends stream
                 $correct_calls = [];
                 $tool_results  = [];
                 $handler_calls = [];
+
+                if ('' !== $this->assistant_content) {
+                    $this->tool_content .= $this->assistant_content;
+                }
 
                 foreach ($this->tool_calls as $fn_call) {
                     if (!str_contains($fn_call['function']['name'], '-')) {
@@ -315,10 +325,9 @@ class completions extends stream
                         ],
                     ];
 
-                    $this->output('stream', 'tool_calls', $metadata, $tool_call);
-
                     try {
                         $exec_result = $this->core->execTools($fn_call['id'], $fn_call['function']['name'], $tool_args);
+                        $this->output('stream', 'tool_calls', $metadata, $tool_call);
                     } catch (\Throwable $throwable) {
                         $this->output('stream', 'tool_result', $metadata, [
                             'call_id'       => $fn_call['id'],
@@ -362,22 +371,20 @@ class completions extends stream
                     }
                 }
 
-                $assistant_message = $this->buildAssistantEvent();
-
                 if ([] !== $correct_calls) {
-                    $assistant_message['tool_calls'] = $correct_calls;
-                }
-
-                if ('' !== $this->assistant_content || '' !== $this->reasons_content || [] !== $correct_calls) {
-                    $this->output('history', 'addAssistantMessage', $metadata, $assistant_message);
+                    $this->output('history', 'addToolCalls', $metadata,
+                        $this->buildAssistantEvent() + ['tool_calls' => $correct_calls]
+                    );
+                } elseif ('' !== $this->assistant_content || '' !== $this->reason_content) {
+                    $this->output('history', 'addAssistantMessage', $metadata, $this->buildAssistantEvent());
                 }
 
                 foreach ($tool_results as $tool_result) {
-                    $this->output('history', 'addToolResult', $metadata, $tool_result);
+                    $this->output('history', 'addToolResults', $metadata, $tool_result);
                 }
 
                 if ([] !== $handler_calls) {
-                    $this->output('context', 'callHandler', $metadata, $handler_calls);
+                    $this->output('toolCalls', 'callHandler', $metadata, $handler_calls);
                 }
 
                 $error_types = [];
@@ -404,14 +411,13 @@ class completions extends stream
                     ]);
                 }
 
-                $this->output('stream', 'end', $metadata);
                 $this->output('end', 'tools', $metadata, $correct_calls);
 
-                unset($error_args, $error_names, $error_calls, $correct_calls, $tool_results, $handler_calls, $fn_call, $tool_args, $tool_call, $exec_result, $result_data, $assistant_message, $tool_result, $error_types);
+                unset($error_args, $error_names, $error_calls, $correct_calls, $tool_results, $handler_calls, $fn_call, $tool_args, $tool_call, $exec_result, $result_data, $tool_result, $error_types);
                 break;
 
             case 'content_filter':
-                $this->output('stream', 'error', $metadata, ['message' => '[系统提示] 内容被安全策略过滤，已终止生成。']);
+                $this->output('end', 'error', $metadata, ['message' => '[系统提示] 内容被安全策略过滤，已终止生成。']);
                 $this->finish_reason = 'error';
                 break;
 
@@ -426,12 +432,12 @@ class completions extends stream
                     ]);
                 }
 
-                $this->output('stream', 'error', $metadata, ['message' => '[系统提示] 生成异常中断。']);
+                $this->output('end', 'error', $metadata, ['message' => '[系统提示] 生成异常中断。']);
                 $this->finish_reason = 'error';
                 break;
 
             default:
-                $this->output('stream', 'error', $metadata, ['message' => '[系统提示] 未知的结束原因（' . $this->finish_reason . '），已终止生成。']);
+                $this->output('end', 'error', $metadata, ['message' => '[系统提示] 未知的结束原因（' . $this->finish_reason . '），已终止生成。']);
                 $this->finish_reason = 'error';
                 break;
         }
@@ -446,8 +452,8 @@ class completions extends stream
     {
         $event = ['role' => 'assistant', 'content' => $this->assistant_content];
 
-        if ('' !== $this->reasons_content) {
-            $event['reasoning_content'] = $this->reasons_content;
+        if ('' !== $this->reason_content) {
+            $event['reasoning_content'] = $this->reason_content;
         }
 
         return $event;

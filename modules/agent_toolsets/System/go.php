@@ -251,9 +251,17 @@ class go extends Factory
      */
     public function exec(string $program, array|string $argv = [], int $timeout = 30, string $descriptor = 'socket', string $work_path = ''): array
     {
+        if ($this->utils->config->config['sandbox_mode'] ?? true) {
+            return [
+                'status' => 'error',
+                'error'  => '沙箱模式已开启，无法调用exec工具，请关闭沙箱模式后执行。'
+            ];
+        }
+
         $result = [
-            'output' => '',
-            'error'  => ''
+            'status' => 'success',
+            'stdout' => '',
+            'stderr' => ''
         ];
 
         $work_path = '' === $work_path
@@ -295,11 +303,11 @@ class go extends Factory
                 $output = trim($output);
 
                 if ('' !== $output) {
-                    if ('' !== $result['output']) {
-                        $result['output'] .= "\n";
+                    if ('' !== $result['stdout']) {
+                        $result['stdout'] .= "\n";
                     }
 
-                    $result['output'] .= $output;
+                    $result['stdout'] .= $output;
                 }
 
                 unset($output);
@@ -310,11 +318,11 @@ class go extends Factory
                 $output = trim($output);
 
                 if ('' !== $output) {
-                    if ('' !== $result['error']) {
-                        $result['error'] .= "\n";
+                    if ('' !== $result['stderr']) {
+                        $result['stderr'] .= "\n";
                     }
 
-                    $result['error'] .= $output;
+                    $result['stderr'] .= $output;
                 }
 
                 unset($output);
@@ -328,11 +336,8 @@ class go extends Factory
                 if (time() - $active > $timeout) {
                     $this->utils->OSMgr->killPid($proc_pid);
 
-                    if ('' !== $result['error']) {
-                        $result['error'] .= "\n";
-                    }
-
-                    $result['error'] .= 'Process has been killed due to timeout reached.';
+                    $result['status'] = 'error';
+                    $result['error']  = '进程超时，已被终止。';
                 }
             }
         );

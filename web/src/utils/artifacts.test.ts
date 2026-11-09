@@ -92,7 +92,7 @@ describe('extractContentArtifacts', () => {
     expect(artifacts.map((file) => file.name)).not.toContain('style.css');
   });
 
-  it('extracts files from tool_result payloads', () => {
+  it('does not extract files from tool_result payloads', () => {
     const data = JSON.stringify({
       status: 'success',
       saved_files: [
@@ -100,9 +100,7 @@ describe('extractContentArtifacts', () => {
       ],
     });
     const artifacts = extractContentArtifacts({ content: '图片已生成。', toolEvents: [toolResult(data)] });
-    const image = artifacts.find((file) => file.name === '2026-09-11_001.png');
-    expect(image).toBeTruthy();
-    expect(image?.mimeType).toBe('image/png');
+    expect(artifacts).toEqual([]);
   });
 });
 
@@ -283,33 +281,30 @@ describe('extractMessageArtifacts', () => {
   });
 });
 
-describe('记忆类工具的结果不收成产物', () => {
-  it('Memory-read 里翻出来的历史路径不算本轮的产物', () => {
+describe('工具结果不再生成文件产物', () => {
+  it('Memory-read / OfficeSuite 的路径都不收', () => {
     const oldPath = '/Users/me/ws/OfficeTemp/docx_read_old/img_1.png';
     const newPath = '/Users/me/ws/OfficeTemp/docx_read_new/img_1.png';
     const files = extractContentArtifacts({
       content: '',
       toolEvents: [
-        // 记忆里存着上一轮 readDocx 的结果，file_path 是旧临时目录
         toolResult(
           JSON.stringify({ messages: [{ role: 'assistant', tool_result: { file_path: oldPath } }] }),
           'Memory-read',
         ),
-        // 本轮又读了一次，落在新临时目录，文件名相同
         toolResult(JSON.stringify({ saved_files: [{ file_path: newPath }] }), 'OfficeSuite-readDocx'),
       ],
     });
-    // 只该剩本轮那一个，否则聊天区会出现两个同名的「在侧栏预览文件」
-    expect(files.map((file) => file.path)).toEqual([newPath]);
+    expect(files).toEqual([]);
   });
 
-  it('其它工具的结果照旧收', () => {
+  it('其它工具的结果也不收', () => {
     const path = '/Users/me/ws/OfficeTemp/img_1.png';
     const files = extractContentArtifacts({
       content: '',
       toolEvents: [toolResult(JSON.stringify({ file_path: path }), 'System-readImage')],
     });
-    expect(files.map((file) => file.path)).toEqual([path]);
+    expect(files).toEqual([]);
   });
 });
 
@@ -329,7 +324,7 @@ describe('裸文件名不算路径', () => {
     expect(files).toEqual([]);
   });
 
-  it('readDocx 的 file 是裸名，只有 images 里的绝对路径算数', () => {
+  it('readDocx 的路径也不再生成入口', () => {
     const absolute = '/Users/me/ws/OfficeTemp/docx_read_x/img_1.png';
     const files = extractContentArtifacts({
       content: '',
@@ -340,7 +335,7 @@ describe('裸文件名不算路径', () => {
         images_temp_dir: '/Users/me/ws/OfficeTemp/docx_read_x',
       }), 'OfficeSuite-readDocx')],
     });
-    expect(files.map((file) => file.path)).toEqual([absolute]);
+    expect(files).toEqual([]);
   });
 
   it('正文里顺口提到的裸文件名也不给入口', () => {

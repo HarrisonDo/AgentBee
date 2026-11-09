@@ -75,15 +75,9 @@
   光一个文件名（`img_1.png`）没有位置信息，拼出来的 URL 是垃圾（`file:///img_1.png`），
   正文里顺口提到一个文件名也不该长出预览入口。
 - 正文里的 **http(s) 文件链接**（如 `workspace_url` 拼出的 `https://…/pelican_bike.html`）
-- `tool_result` 里的 `saved_files` / `file_path` / `path` 等字段 —— **但记忆类工具
-  （工具名 `Memory-*`）的结果不收**：它装的是历史（包括历史 tool_result 里的路径），
-  不是本轮的产物。不收的话 `Memory-read` 会把上一轮 docx 抽图的旧临时目录路径一起带出来，
-  和本轮新路径同名不同目录（`docxHandler` 每次读 docx 都新建 `docx_read_<uniqid>`），
-  聊天区就会冒出两个一模一样的「在侧栏预览文件 img_1.png」，其中一个还随时可能 404。
-- **裸文件名同样不收**（`hasDirectoryPart`）：后端确实会发这种字段——
-  `System-readImage` 的返回里只有 `filename`（`img_1.png`），`OfficeSuite-readDocx` 的
-  `file` 是 `basename($path)`（`Fact创刊人问卷.docx`）。它们都进了 `TOOL_PATH_KEYS`，
-  不挡掉就会和同一条结果里的**绝对路径**各生成一个入口，看起来像重复了。
+- **不读 `tool_calls` / `tool_result`**：工具调用、函数调用里的文件路径/文件名一律不生成预览入口。
+  只认 assistant 正文里的内容，`Memory-read`、`System-writeFile` 等工具结果不会在消息下面
+  冒出「在侧栏预览文件 xxx」按钮。
 
 实现位置：`src/utils/artifacts.ts`（识别与排序）、`src/utils/fileUrl.ts`（路径 → URL 解析）。
 预览入口只属于 **assistant 消息**的产物：用户自己贴的链接/路径不给按钮。
@@ -164,12 +158,14 @@
   前端对 `type: 'session'` 的响应也兼容（`useWebSocketAgent.ts` 里的 `SESSION_REQUEST_TYPE` 可切换）。
 - **拉取时机**：连接成功后和 `getConfig` / `getModels` / memory read 一起自动发一次 `listSessions`；
   面板上的刷新按钮可手动再拉。
+- **会话顺序**：按 `updatedAt` 倒序（最新的在前）；`updatedAt` 优先取后端 `last_time`，
+  没有则回退 `create_time`。时间相同才用后端数组顺序做 tiebreaker；发消息后会立刻把当前会话顶到最前。
 - **新建会话**：`sessionId` 由前端 `makeId()`（UUID）生成，每次 chat 请求都会带上；
   后端收到第一条消息后自动入库，会话名取第一句话的前 8 个字。前端本地标题也按同样的 8 字规则生成。
 - **打开窗口时的落点**：会话列表**可以为空**，不会为了「让界面有东西可渲染」凭空造一条空会话——
   只有 `activeSession` 会退回内存兜底（不进列表、不落盘）。
   `loadSessions()` 先把落点定在缓存里的第一条，第一份 `listSessions` 回来后**再定位到列表第一条**
-  （后端按 `create_time DESC` 返回，即最近一条）。这就是「打开就直接进最近那个会话，不新建」。
+  （按最后活动时间倒序，即最近一条）。这就是「打开就直接进最近那个会话，不新建」。
   一旦用户自己动过（发消息 / 新建 / 切换 / 删除 / 改名，`markPlacementDecided()`），
   自动定位立刻作废：之后的手动刷新、断线重连都不会把用户从正在聊的会话里拽走。
   后端也没有历史就保持空列表并提示「还没有会话」，由用户自己点新建。
@@ -195,6 +191,8 @@
   有内容时正文照常显示、末尾缀一条同样的提示（`ChatMessage` 的 `.message-stopped`）。
   `messageId` 对不上时，如果目标会话里只有一个 loading 的 assistant，也会收尾它，
   避免回执被吞掉、界面一直没有反馈。
+  点击停止时会记住最近一轮的 `messageId`；即使这一轮已经被 `end` 收尾（比如工具调用段落的 end），
+  `abort` 回执到达后仍会按 `stopped` 收尾并显示提示；没有本地停止请求的迟到回执才忽略。
   用户点停止和后端自己 abort 走的是同一条渲染路径，都能在消息上看到结果。
   注意：后端一轮只服务一个 `curr_message_id`，在 A 还在输出时又去 B 发消息，
   后端可能按「放弃上一轮」的语义把 A 那一轮 close 掉（前端会保守保留已流出的内容）。

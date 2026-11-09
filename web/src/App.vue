@@ -1462,11 +1462,14 @@ function parseRemoteSessions(value: unknown): RemoteSession[] {
       .find((candidate): candidate is string => typeof candidate === 'string' && candidate.trim() !== '');
     const time = [item.create_time, item.createTime, item.created_at]
       .find((candidate) => typeof candidate === 'string' || typeof candidate === 'number');
+    const lastTime = [item.last_time, item.lastTime, item.updated_at, item.update_time]
+      .find((candidate) => typeof candidate === 'string' || typeof candidate === 'number');
 
     return [{
       session_id: id,
       session_name: name,
       create_time: time as string | number | undefined,
+      last_time: lastTime as string | number | undefined,
     }];
   });
 }

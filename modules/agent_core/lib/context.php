@@ -34,9 +34,9 @@ class context extends Factory
     public array $tools   = [];
     public array $history = [];
 
-    public array $session_list   = [];
-    public array $message_queue  = [];
-    public array $message_onsend = [];
+    public array $session_list    = [];
+    public array $message_queue   = [];
+    public array $message_pending = [];
 
     /**
      * @throws \ReflectionException
@@ -116,12 +116,11 @@ class context extends Factory
      * @param string $session_id
      * @param string $worker_name
      * @param string $content
-     * @param array  $tool_calls
      * @param string $reasoning_content
      *
      * @return void
      */
-    public function addAssistantMessage(string $session_id, string $worker_name, string $content = '', array $tool_calls = [], string $reasoning_content = ''): void
+    public function addAssistantMessage(string $session_id, string $worker_name, string $content = '', string $reasoning_content = ''): void
     {
         $message = ['role' => 'assistant', 'content' => $content];
 
@@ -129,14 +128,42 @@ class context extends Factory
             $message['reasoning_content'] = $reasoning_content;
         }
 
-        if ([] !== $tool_calls) {
-            $message['tool_calls'] = array_map(fn(array $tool_call): array => $this->normalizeToolCall($tool_call), $tool_calls);
+        $this->history[$session_id][$worker_name]   ??= [];
+        $this->history[$session_id][$worker_name][] = $message;
+
+        unset($session_id, $worker_name, $content, $reasoning_content, $message);
+    }
+
+    /**
+     * Add an assistant tool call message.
+     *
+     * @param string $session_id
+     * @param string $worker_name
+     * @param array  $tool_calls
+     * @param string $content
+     * @param string $reasoning_content
+     *
+     * @return void
+     */
+    public function addToolCalls(string $session_id, string $worker_name, array $tool_calls, string $content = '', string $reasoning_content = ''): void
+    {
+        $message = [
+            'role'       => 'assistant',
+            'tool_calls' => array_map(fn(array $tool_call): array => $this->normalizeToolCall($tool_call), $tool_calls)
+        ];
+
+        if ('' !== $content) {
+            $message['content'] = $content;
+        }
+
+        if ('' !== $reasoning_content) {
+            $message['reasoning_content'] = $reasoning_content;
         }
 
         $this->history[$session_id][$worker_name]   ??= [];
         $this->history[$session_id][$worker_name][] = $message;
 
-        unset($session_id, $worker_name, $content, $tool_calls, $reasoning_content, $message);
+        unset($session_id, $worker_name, $tool_calls, $content, $reasoning_content, $message);
     }
 
     /**
@@ -149,7 +176,7 @@ class context extends Factory
      *
      * @return void
      */
-    public function addToolResult(string $session_id, string $worker_name, string $call_id, string $content): void
+    public function addToolResults(string $session_id, string $worker_name, string $call_id, string $content): void
     {
         $this->history[$session_id][$worker_name]   ??= [];
         $this->history[$session_id][$worker_name][] = [
@@ -306,7 +333,12 @@ class context extends Factory
      */
     public function refreshHistory(string $session_id, string $worker_name): int
     {
-        if (!isset($this->message_queue[$session_id][$worker_name]) || [] === $this->message_queue[$session_id][$worker_name]) {
+        if (!isset($this->message_queue[$session_id][$worker_name])) {
+            return 0;
+        }
+
+        if ([] === $this->message_queue[$session_id][$worker_name]) {
+            unset($this->message_queue[$session_id][$worker_name]);
             return 0;
         }
 
@@ -321,7 +353,7 @@ class context extends Factory
             $this->addUserMessage($session_id, $worker_name, $messages);
         }
 
-        unset($session_id, $worker_name, $messages, $message);
+        unset($this->message_queue[$session_id][$worker_name], $session_id, $worker_name, $messages, $message);
         return $count_messages;
     }
 
@@ -480,19 +512,19 @@ class context extends Factory
 
     /**
      * @param string $session_id
-     * @param bool   $on_send
+     * @param bool   $pending
      *
      * @return void
      */
-    public function messageOnSend(string $session_id, bool $on_send = true): void
+    public function messagePending(string $session_id, bool $pending = true): void
     {
-        if ($on_send) {
-            $this->message_onsend[$session_id] = time();
+        if ($pending) {
+            $this->message_pending[$session_id] = time();
         } else {
-            unset($this->message_onsend[$session_id]);
+            unset($this->message_pending[$session_id]);
         }
 
-        unset($session_id, $on_send);
+        unset($session_id, $pending);
     }
 
     /**
@@ -500,10 +532,10 @@ class context extends Factory
      *
      * @return bool
      */
-    public function isMessageOnSend(string $session_id): bool
+    public function isMessagePending(string $session_id): bool
     {
-        if (isset($this->message_onsend[$session_id])) {
-            $on_send = time() - $this->message_onsend[$session_id] > 15;
+        if (isset($this->message_pending[$session_id])) {
+            $on_send = time() - $this->message_pending[$session_id] > 20;
         } else {
             $on_send = false;
         }

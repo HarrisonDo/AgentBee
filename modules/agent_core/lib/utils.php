@@ -40,17 +40,15 @@ class utils extends Factory
     public libFileIO $libFileIO;
     public config    $config;
 
-    public int $main_idx    = 0;
-    public int $proc_idx    = 10;
-    public int $worker_idx  = 1000;
-    public int $wait_until  = 0;
-    public int $wait_status = self::STATUS_IDLE;
+    public int $main_idx   = 0;
+    public int $proc_idx   = 10;
+    public int $worker_idx = 1000;
 
     public array  $agent_config;
     public string $pid_file_path;
 
-    public string $memory_buffer = '';
-
+    public array $wait_until      = [];
+    public array $wait_status     = [];
     public array $model_list      = [];
     public array $program_list    = [];
     public array $child_workers   = [];
@@ -323,7 +321,7 @@ class utils extends Factory
         }
 
         $available = [];
-        $name_list = ['7z', 'git', 'curl', 'php', 'python', 'pip', 'uv', 'node', 'npm', 'npx', 'ffmpeg'];
+        $name_list = ['7z', 'git', 'curl', 'php', 'python', 'python3', 'pip', 'pip3', 'uv', 'node', 'npm', 'npx', 'ffmpeg'];
 
         foreach ($name_list as $name) {
             $paths = $this->OSMgr->findPath($name);
@@ -668,15 +666,6 @@ class utils extends Factory
         $prompts[] = '## 工具';
         $prompts[] = '- 网页操作：动态/交互用Browser，静态/API用HttpFetcher，不确定用Browser。';
         $prompts[] = '- 失败处理：工具失败修正后重试，最多2次；仍失败如实说明。';
-        $prompts[] = '- 执行：`exec`前校验参数，禁止将未经处理的用户输入拼入命令；目标达成即停，避免重复。';
-
-        $prompts[] = '';
-        $prompts[] = '## 外部程序（exec调用）';
-        $programs  = $this->fetchPrograms();
-        if ([] !== $programs) {
-            $prompts[] = '- 可直接调用（已存在于 PATH）：' . implode('、', $programs);
-        }
-        $prompts[] = '- 调用其他外部程序前，先用`where`（Windows）或`which`（Unix）探测路径，确认存在后再调用。';
 
         $prompts[] = '';
         $prompts[] = '## 记忆';
@@ -718,14 +707,22 @@ class utils extends Factory
         }
 
         $prompts[] = '';
-        $prompts[] = '## 安全';
+        $prompts[] = '## 执行安全';
         if ($this->agent_config['sandbox_mode']) {
             $prompts[] = '- 沙箱开启：文件操作仅限工作区`' . $work_path . '`，禁止`../`或符号链接逃逸。';
         } else {
             $prompts[] = '- 沙箱关闭：优先使用工作区目录或绝对路径；禁止借`../`或符号链接访问系统关键目录。';
+            $prompts[] = '- 调用`exec`前校验参数，禁止将未经处理的用户输入拼入命令；目标达成即停，避免重复。';
+
+            $programs = $this->fetchPrograms();
+            if ([] !== $programs) {
+                $prompts[] = '- 可直接调用（已存在于 PATH）：' . implode('、', $programs);
+            }
+
+            $prompts[] = '- 调用其他外部程序前，先用`where`（Windows）或`which`（Unix）探测路径，确认存在后再调用。';
         }
-        $prompts[] = '- 高风险操作：删除/覆盖/批量修改/改配置/高影响命令/装卸软件前，须说明风险并取得确认；批量不超100项，先列清单确认。';
-        $prompts[] = '- 绝对禁止：执行破坏性系统命令；泄露敏感信息。';
+        $prompts[] = '- 高风险操作：删除/覆盖/批量修改/改配置/高影响命令/装卸软件前，须说明风险并取得确认；批量不超20项，先列清单确认。';
+        $prompts[] = '- 绝对禁止：删除或修改系统关键文件；执行破坏性系统命令；泄露敏感信息。';
 
         $prompts[] = '';
         $prompts[] = '## 文件链接';
@@ -875,39 +872,60 @@ class utils extends Factory
      *
      * @return void
      */
-    public function setStatus(int $status, string $session_id, bool $timeout = false): void
+    public function setPipeStatus(int $status, string $session_id, bool $timeout = false): void
     {
+        $this->wait_until[$session_id]  ??= 0;
+        $this->wait_status[$session_id] ??= self::STATUS_IDLE;
+
         if (self::STATUS_IDLE === $status) {
-            $this->debug('Status: #' . $session_id . ' IDLE (' . (!$timeout ? 'stream ended' : 'response timeout') . ')', 'trace');
-            $this->wait_status = $status;
+            if ($this->wait_status[$session_id] !== $status) {
+                $this->debug('Status', '#' . $session_id . ' IDLE (' . (!$timeout ? 'stream ended' : 'response timeout') . ')', 'trace');
+            }
+
+            $this->wait_status[$session_id] = $status;
             return;
         }
 
-        $this->wait_until = time() + ($this->agent_config['agent_llm']['timeout']);
+        $this->wait_until[$session_id] = time() + ($this->agent_config['agent_llm']['wait_timeout'] ?? 600);
 
-        if (($this->wait_status & $status) !== $status) {
+        if (($this->wait_status[$session_id] & $status) !== $status) {
             switch ($status) {
                 case self::STATUS_BUSY:
-                    $this->debug('Status: #' . $session_id . ' BUSY (waiting for response)', 'trace');
+                    $this->debug('Status', '#' . $session_id . ' BUSY (waiting for response)', 'trace');
                     break;
                 case self::STATUS_WAIT:
-                    $this->debug('Status: #' . $session_id . ' WAIT (receiving stream data)', 'trace');
+                    $this->debug('Status', '#' . $session_id . ' WAIT (receiving stream data)', 'trace');
                     break;
             }
 
-            $this->wait_status |= $status;
+            $this->wait_status[$session_id] |= $status;
         }
 
         unset($status, $session_id, $timeout);
     }
 
     /**
-     * @param string $string
+     * @param string $session_id
+     *
+     * @return bool
+     */
+    public function isPipeIdle(string $session_id = ''): bool
+    {
+        if ('' !== $session_id) {
+            return (self::STATUS_IDLE === ($this->wait_until[$session_id] ?? self::STATUS_IDLE));
+        }
+
+        return 0 === count(array_intersect($this->wait_status, [self::STATUS_BUSY, self::STATUS_WAIT, self::STATUS_BUSY | self::STATUS_WAIT]));
+    }
+
+    /**
+     * @param string $title
+     * @param string $content
      * @param string $level Debug level (none, trace, debug)
      *
      * @return void
      */
-    public function debug(string $string, string $level = 'trace'): void
+    public function debug(string $title, string $content, string $level = 'trace'): void
     {
         $debug_level = strtolower($this->agent_config['agent_debug']);
 
@@ -919,7 +937,13 @@ class utils extends Factory
             return;
         }
 
-        echo '[' . date('Y-m-d H:i:s') . '][' . strtoupper($level) . '] ' . $string . PHP_EOL;
-        unset($string, $level, $debug_level);
+        $debug_content = '[' . date('Y-m-d H:i:s') . '][' . strtoupper($level) . '] '
+            . str_pad($title, (int)ceil(strlen($title) / 5) * 5) . ': '
+            . $content . "\n";
+
+        fwrite(STDOUT, $debug_content);
+        fflush(STDOUT);
+
+        unset($title, $content, $level, $debug_level, $debug_content);
     }
 }

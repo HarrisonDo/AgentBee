@@ -76,7 +76,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'exec',
-                'description' => '执行系统命令（仅当无专用工具时可用）。program必须为可执行文件或脚本，不支持cmd内部命令（如dir、echo）。argv为参数数组，timeout为超时时长（默认30秒，0禁用超时），descriptor为I/O类型（默认"socket"），work_path为程序运行时的当前工作目录（需根据程序需求设置，留空则使用默认工作区）。返回：{output, error}。',
+                'description' => '执行系统命令（仅当无专用工具时可用）。program必须为可执行文件或脚本，不支持cmd内部命令（如dir、echo）。argv为参数数组，timeout为超时时长（默认30秒，0禁用超时），descriptor为I/O类型（默认"socket"），work_path为程序运行时的当前工作目录（需根据程序需求设置，留空则使用默认工作区）。返回：{status, stdout, stderr}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
@@ -109,7 +109,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'readFile',
-                'description' => '读取文件内容。offset起始偏移字节（默认0），limit读取字节数（默认0=全部，小文件一次读取，大文件分块读取）。返回：{status, content, file_path} 或 {status, error}。',
+                'description' => '读取文件内容。offset起始偏移字节（默认0），limit读取字节数（默认0=全部，小文件一次读取，大文件分块读取）。返回：{status, content, file_path}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
@@ -125,7 +125,7 @@ class skills
             'type'     => 'function',
             'function' => [
                 'name'        => 'writeFile',
-                'description' => '写入文件（自动创建目录）。append=false时覆盖，小文件一次写入，大文件分批追加。返回：{status, file_path, bytes_written} 或 {status, error}。',
+                'description' => '写入文件（自动创建目录）。append=false时覆盖，小文件一次写入，大文件分批追加。返回：{status, file_path, bytes_written}或{status, error}。',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [

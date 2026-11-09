@@ -67,21 +67,21 @@ class go extends Factory
      */
     public function init(bool $reload = false): void
     {
-        $this->utils->debug($reload ? 'Reloading...' : 'Initializing...', 'trace');
         $this->core->initCore($reload);
 
-        $this->utils->debug('WS-Token: ' . ($this->utils->agent_config['agent_server']['ws_token'] ?? 'NONE'), 'trace');
-        $this->utils->debug('API-URL: ' . ($this->utils->agent_config['agent_llm']['api_url'] ?? 'NONE'), 'trace');
-        $this->utils->debug('API-Type: ' . $this->utils->agent_config['agent_llm']['api_type'], 'trace');
-        $this->utils->debug('Model-ID: ' . ($this->utils->agent_config['agent_llm']['model_id'] ?? 'NONE'), 'trace');
-        $this->utils->debug('SandBox mode: ' . ($this->utils->agent_config['sandbox_mode'] ? 'ON' : 'OFF'), 'trace');
+        $this->utils->debug('System', $reload ? 'Reloading...' : 'Initializing...', 'trace');
+        $this->utils->debug('SandBox', $this->utils->agent_config['sandbox_mode'] ? 'ON' : 'OFF', 'trace');
+        $this->utils->debug('API-URL', $this->utils->agent_config['agent_llm']['api_url'] ?? 'NONE', 'trace');
+        $this->utils->debug('API-Type', $this->utils->agent_config['agent_llm']['api_type'], 'trace');
+        $this->utils->debug('Model-ID', $this->utils->agent_config['agent_llm']['model_id'] ?? 'NONE', 'trace');
+        $this->utils->debug('WS-Token', $this->utils->agent_config['agent_server']['ws_token'] ?? 'NONE', 'trace');
 
         $workspace_path = $this->utils->agent_config['workspace_path'] ?? '';
-        $this->utils->debug('Workspace path: ' . $workspace_path, 'trace');
+        $this->utils->debug('Workspace', $workspace_path, 'trace');
 
         if ('' !== $workspace_path && !is_dir($workspace_path)) {
             try {
-                $this->utils->debug('Creating workspace: ' . $workspace_path, 'trace');
+                $this->utils->debug('Creating', $workspace_path, 'trace');
                 mkdir($workspace_path, 0777, true);
             } catch (\Throwable) {
             }
@@ -127,8 +127,8 @@ class go extends Factory
             ]
         );
 
-        $this->utils->debug($worker_type . ' started with pid: ' . $worker_pid, 'trace');
-        $this->utils->debug('Register Output Handler', 'debug');
+        $this->utils->debug($worker_type, 'Started with pid ' . $worker_pid, 'trace');
+        $this->utils->debug('System', 'Register Output Handler', 'debug');
 
         $this->core->socketMgr->addExternalProc(
             $this->core->utils->procMgr->getProc($proc_idx, 'stdout', 'process'),
@@ -136,7 +136,7 @@ class go extends Factory
         );
 
         if (WORKER_MAIN === $worker_type) {
-            $this->utils->debug('Create shared memory for ' . $worker_type, 'debug');
+            $this->utils->debug('System', 'Create shared memory for ' . $worker_type, 'debug');
         }
 
         unset($worker_type, $worker_name, $output_handler, $worker_status, $worker_pid);
@@ -155,7 +155,7 @@ class go extends Factory
         $flock_fp  = fopen($boot_file, 'c+');
 
         if (!flock($flock_fp, LOCK_EX | LOCK_NB)) {
-            $this->utils->debug('AgentBee already running, exit!', 'debug');
+            $this->utils->debug('System', 'AgentBee already running, exit!', 'debug');
             return;
         }
 
@@ -173,7 +173,7 @@ class go extends Factory
         $occupied_pids = $this->core->OSMgr->findPidsByPortState($this->utils->agent_config['agent_server']['port'], 'LISTEN');
 
         if ([] !== $occupied_pids) {
-            $this->utils->debug('AgentBee failed to start. Port ' . $this->utils->agent_config['agent_server']['port'] . ' is occupied.', 'trace');
+            $this->utils->debug('System', 'AgentBee failed to start. Port ' . $this->utils->agent_config['agent_server']['port'] . ' is occupied.', 'trace');
             return;
         }
 
@@ -185,8 +185,8 @@ class go extends Factory
 
         ini_set('memory_limit', $memory_limit);
 
-        $this->utils->debug('Set memory limit to: ' . $memory_limit, 'trace');
-        $this->utils->debug('Ready to start ' . AGENT_NAME . ' v' . AGENT_VERSION, 'trace');
+        $this->utils->debug('System', 'Set memory limit to ' . $memory_limit, 'trace');
+        $this->utils->debug('System', 'Ready to start ' . AGENT_NAME . ' v' . AGENT_VERSION, 'trace');
 
         $this->init();
 
@@ -194,7 +194,7 @@ class go extends Factory
             $this->utils->getMainIDX(),
             WORKER_MAIN,
             WORKER_MAIN,
-            [$this, 'workerHandler']
+            [$this, 'stdoutHandler']
         );
 
         $this->session_list = array_column($this->memory->listSessions(0)['sessions'], 'session_id');
@@ -206,19 +206,19 @@ class go extends Factory
 
         try {
             $server_host = 'tcp://' . $this->utils->agent_config['agent_server']['host'] . ':' . $this->utils->agent_config['agent_server']['port'];
-            $this->utils->debug('Local IP address: ' . implode(', ', $this->core->OSMgr->getIPv4()), 'trace');
-            $this->utils->debug('Ready to start server: ' . $server_host, 'trace');
+            $this->utils->debug('Local-IP', implode(', ', $this->core->OSMgr->getIPv4()), 'trace');
+            $this->utils->debug('System', 'Ready to start server on ' . $server_host, 'trace');
             $this->core->socketMgr
+                ->setUserFuncInterval(10)
                 ->setAliveTimeout($this->utils->agent_config['agent_server']['ping_interval'])
-                ->setEventListener('onUserFunc', [$this, 'scheduleTask'])
+                ->setEventListener('onUserFunc', [$this, 'scheduler'])
                 ->setEventListener('onHandshake', [$this, 'onHandshake'])
-                ->setEventListener('onHeartbeat', [$this, 'onHeartbeat'])
                 ->setEventListener('onMessage', [$this, 'onMessage'])
                 ->setEventListener('onSendString', [$this, 'onSendString'])
                 ->setEventListener('onClose', [$this, 'onClose'])
                 ->listenTo($server_host, true);
         } catch (\Throwable $throwable) {
-            $this->utils->debug('Failed to start server: ' . $throwable->getMessage(), 'trace');
+            $this->utils->debug('System', 'Failed to start server: ' . $throwable->getMessage(), 'trace');
         }
     }
 
@@ -234,7 +234,7 @@ class go extends Factory
     public function getSystemPrompt(string $session_id): string
     {
         $prompt   = $this->utils->getMainPrompt();
-        $memories = $this->memory->read('system');
+        $memories = $this->memory->read('system', 0, 0, 0);
 
         if ([] !== $memories['data']) {
             $memory = ['## 用户与人物设定'];
@@ -278,536 +278,155 @@ class go extends Factory
      * @throws \ReflectionException
      * @throws \Throwable
      */
-    public function workerHandler(string $ext_id, array $context): void
+    public function stdoutHandler(string $ext_id, array $context): void
     {
-        $stdout_buffer = [];
+        $message_lines = [];
+        $stdout_buffer = '';
         $stdout_stream = $context['stdout'];
 
         // Free the stdout pipe by reading all data immediately.
-        while (false !== ($line = fgets($stdout_stream))) {
-            $line = trim($line);
+        while (false !== ($raw_line = fgets($stdout_stream))) {
+            $stdout_buffer .= $raw_line;
 
-            if ('' === $line) {
-                continue;
+            while (false !== ($line_pos = strpos($stdout_buffer, "\n"))) {
+                $buffer_line   = substr($stdout_buffer, 0, $line_pos);
+                $stdout_buffer = substr($stdout_buffer, $line_pos + 1);
+                $buffer_line   = trim($buffer_line);
+
+                if ('' === $buffer_line) {
+                    continue;
+                }
+
+                $message = json_decode($buffer_line, true);
+
+                if (!is_array($message) || !isset($message['payload']['sessionId'])) {
+                    continue;
+                }
+
+                $message_lines[] = $message;
             }
-
-            $stdout_buffer[] = $line;
         }
 
-        if ([] === $stdout_buffer) {
+        if ([] === $message_lines) {
             return;
         }
 
         // Process buffer frames
-        foreach ($stdout_buffer as $line) {
-            $message = json_decode($line, true);
+        foreach ($message_lines as $message) {
+            $payload     = $message['payload'];
+            $worker_info = $this->utils->getChildWorker($payload['sender'], $payload['workerName']);
 
-            if (!is_array($message) || !isset($message['payload']['sessionId'])) {
+            if ([] === $worker_info) {
+                $this->utils->debug($payload['sender'], $payload['workerName'] . ' already closed.', 'trace');
                 continue;
             }
 
-            $payload      = $message['payload'];
-            $payload_type = $payload['type'];
+            $llm_params = $worker_info['llm_params'];
 
             $this->session_calls[$payload['sessionId']] ??= 0;
 
+            $this->parsePayload($message['type'], $payload, $llm_params, $worker_info);
+
             if (0 < $this->session_calls[$payload['sessionId']]) {
-                $this->utils->debug('System: Calls executed for #' . $payload['sessionId'] . '.', 'trace');
-                $this->utils->setStatus(utils::STATUS_IDLE, $payload['sessionId']);
-                $this->session_calls[$payload['sessionId']] = 0;
-                \Fiber::suspend();
-            }
-
-            $this->utils->debug($payload['workerName'] . ': ' . $message['type'] . '->' . $payload_type, 'debug');
-            $worker_info = $this->utils->getChildWorker($payload['sender'], $payload['workerName']);
-            $llm_params  = $worker_info['llm_params'] ?? [];
-
-            switch ($message['type']) {
-                case 'stream':
-                    if (WORKER_MAIN === $payload['sender']) {
-                        $this->utils->setStatus(utils::STATUS_WAIT, $payload['sessionId']);
-                    } else {
-                        $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'streaming');
-                        $this->utils->debug('Collaborator: ' . $payload['workerName'] . ' working on streaming', 'debug');
-                    }
-
-                    switch ($payload_type) {
-                        case 'length':
-                            $tool_count    = $this->core->context->countHistory($payload['sessionId'], $payload['workerName'], 'tool');
-                            $history_count = $this->core->context->countHistory($payload['sessionId'], $payload['workerName']);
-
-                            $this->core->context->cleanHistory($payload['sessionId'], $payload['workerName'], ceil($history_count * 0.6), ceil($tool_count * 0.4));
-
-                            $this->utils->debug('System: Context auto-truncated to resume (length limit reached).', 'trace');
-
-                            $llm_params['max_tokens'] = 12288;
-
-                            $this->utils->setChildWorker($payload['sender'], $payload['workerName'], 'llm_params', $llm_params);
-
-                            $metadata = $this->utils->getMarker(
-                                $payload['sender'],
-                                $payload['workerName'],
-                                $payload['workerRole'],
-                                $payload['workerName'],
-                                $payload['isSubTalk'],
-                                $payload['sessionId'],
-                                $payload['messageId']
-                            );
-
-                            if (WORKER_MAIN === $payload['sender']) {
-                                $this->openai->talkTo(
-                                    $payload['sender'],
-                                    WORKER_MAIN,
-                                    $payload['sessionId'],
-                                    $this->utils->getMainIDX(),
-                                    $this->getSystemPrompt($payload['sessionId']),
-                                    'talk',
-                                    $metadata
-                                );
-                            } else {
-                                if (isset($worker_info['proc_idx'])) {
-                                    $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'busy');
-
-                                    $this->openai->talkTo(
-                                        $payload['sender'],
-                                        $payload['workerName'],
-                                        $payload['sessionId'],
-                                        $worker_info['proc_idx'],
-                                        $this->getSystemPrompt($payload['sessionId']),
-                                        'talk',
-                                        $metadata
-                                    );
-                                }
-                            }
-
-                            unset($tool_count, $history_count);
-                            break;
-
-                        case 'error':
-                            if (WORKER_MAIN === $payload['sender']) {
-                                $this->utils->setStatus(utils::STATUS_IDLE, $payload['sessionId']);
-                            } else {
-                                $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
-                            }
-
-                            if (is_array($payload['data']) && isset($payload['data']['message'])) {
-                                $this->core->sendMessage($payload);
-                            }
-
-                            break;
-
-                        case 'abort':
-                            $this->core->sendMessage($payload);
-                            $this->utils->setStatus(utils::STATUS_IDLE, $payload['sessionId']);
-                            break;
-
-                        default:
-                            $this->core->sendMessage($payload);
-                            break;
-                    }
-                    break;
-
-                case 'history':
-                    switch ($payload_type) {
-                        case 'addUserMessage':
-                            $this->core->context->addUserMessage(
-                                $payload['sessionId'],
-                                $payload['workerName'],
-                                $payload['data']['content']
-                            );
-                            break;
-
-                        case 'addAssistantMessage':
-                            $this->core->context->addAssistantMessage(
-                                $payload['sessionId'],
-                                $payload['workerName'],
-                                $payload['data']['content'],
-                                $payload['data']['tool_calls'] ?? [],
-                                $payload['data']['reasoning_content'] ?? ''
-                            );
-                            break;
-
-                        case 'addToolResult':
-                            $this->core->context->addToolResult(
-                                $payload['sessionId'],
-                                $payload['workerName'],
-                                $payload['data']['call_id'],
-                                $payload['data']['content']
-                            );
-                            break;
-                    }
-                    break;
-
-                case 'memory':
-                    if (WORKER_MAIN !== $payload['sender'] || '' === ($payload['data'] ?? '')) {
-                        break;
-                    }
-
-                    switch ($payload_type) {
-                        case 'add':
-                            $this->utils->memory_buffer .= $payload['data'];
-                            break;
-
-                        case 'save':
-                            $this->utils->memory_buffer .= $payload['data'];
-                            $this->memory->save('misc', 'assistant', $this->utils->memory_buffer, 0, $payload['sessionId']);
-                            $this->utils->memory_buffer = '';
-                            break;
-                    }
-                    break;
-
-                case 'context':
-                    // Reset main worker status
-                    if (WORKER_MAIN === $payload['sender']) {
-                        $this->utils->setStatus(utils::STATUS_IDLE, $payload['sessionId']);
-                    } else {
-                        $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
-                    }
-
-                    switch ($payload_type) {
-                        case 'callHandler':
-                            $tool_calls   = [];
-                            $tool_results = [];
-
-                            foreach ($payload['data'] as $data) {
-                                if (!isset($data['handler_args']['action'])) {
-                                    $this->utils->debug('Handler: handler or action NOT found!', 'trace');
-                                    continue;
-                                }
-
-                                $this->utils->debug('Handler: Calling ' . $data['tool_calls']['name'], 'trace');
-
-                                try {
-                                    $this->core->IOData->src_cmd  = $data['tool_calls']['name'];
-                                    $this->core->IOData->src_argv = $data['handler_args'];
-
-                                    $data['handler_args']['ext_id'] = $context['ext_id'];
-
-                                    $handler = $data['handler_args']['handler']::new();
-                                    $result  = $handler->{$data['handler_args']['action']}($data['handler_args'], $this) ?? '工具执行完成，但未返回数据。';
-                                } catch (\Throwable $throwable) {
-                                    $result = [
-                                        'status' => 'error',
-                                        'error'  => $throwable->getMessage(),
-                                    ];
-
-                                    $this->utils->debug('Handler ERROR: ' . $data['tool_calls']['name'] . ' => ' . $throwable->getMessage(), 'trace');
-                                    $this->core->error->exceptionHandler($throwable, false, false);
-                                    unset($throwable);
-                                }
-
-                                $this->core->IOData->src_cmd  = '';
-                                $this->core->IOData->src_argv = [];
-
-                                if (!is_string($result)) {
-                                    $result = json_encode($result, JSON_FORMAT);
-
-                                    if (false === $result) {
-                                        $result = 'Handler ERROR: ' . $data['tool_calls']['name'] . ' -> ' . json_last_error_msg();
-                                    }
-                                }
-
-                                $tool_calls[]   = $data['tool_calls'];
-                                $tool_results[] = [
-                                    'call_id'     => $data['tool_calls']['id'],
-                                    'call_name'   => $data['tool_calls']['name'],
-                                    'call_result' => $result
-                                ];
-                            }
-
-                            if ([] === $tool_calls) {
-                                break;
-                            }
-
-                            $metadata = $this->utils->getMarker(
-                                $payload['sender'],
-                                $payload['workerName'],
-                                $payload['workerRole'],
-                                $payload['workerName'],
-                                $payload['isSubTalk'],
-                                $payload['sessionId'],
-                                $payload['messageId']
-                            );
-
-                            $this->core->context->addAssistantMessage($payload['sessionId'], $payload['workerName'], '', $tool_calls);
-
-                            foreach ($tool_results as $tool_result) {
-                                $this->core->context->addToolResult(
-                                    $payload['sessionId'],
-                                    $payload['workerName'],
-                                    $tool_result['call_id'],
-                                    $tool_result['call_result']
-                                );
-
-                                $msg_data = [
-                                    'type' => 'tool_result',
-                                    'data' => [
-                                        'call_id'       => $tool_result['call_id'],
-                                        'function_name' => $tool_result['call_name'],
-                                        'content'       => $tool_result['call_result'],
-                                    ]
-                                ];
-
-                                $this->core->sendMessage($metadata + $msg_data);
-                            }
-
-                            unset($tool_calls, $tool_results, $data, $handler, $result, $metadata, $assistant_message, $tool_result, $msg_data);
-                            break;
-                    }
-                    break;
-
-                case 'end':
-                    $this->last_response[$payload['sessionId']] = time();
-
-                    if (WORKER_MAIN === $payload['sender']) {
-                        ++$this->session_calls[$payload['sessionId']];
-                        $this->utils->setStatus('tools' === $payload_type ? utils::STATUS_BUSY : utils::STATUS_IDLE, $payload['sessionId']);
-                    } else {
-                        $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
-                        $this->utils->debug('Collaborator: ' . $payload['workerName'] . ' reply completed, ready.', 'trace');
-                    }
-
-                    $new_messages = $this->core->context->refreshHistory($payload['sessionId'], $payload['workerName']);
-
-                    if (isset($worker_info['proc_idx'])) {
-                        for ($i = 0; $i < 3; ++$i) {
-                            $remain_tokens = $this->core->getMaxTokens($payload['sender'], $payload['sessionId'], $payload['workerName'], $llm_params);
-                            $this->utils->debug($payload['sender'] . ': Token remains ' . $remain_tokens . ' for #' . $payload['sessionId'] . '.', 'trace');
-
-                            // Skip when token > 1024
-                            if (1024 < $remain_tokens) {
-                                if (WORKER_MAIN === $payload['sender']) {
-                                    $this->ctx_warning = false;
-                                    $this->keep_pairs  = 2;
-                                }
-
-                                break;
-                            }
-
-                            // Send notice when token > 256
-                            if (256 < $remain_tokens) {
-                                $this->utils->debug($payload['sender'] . ': Remain tokens too low (' . $remain_tokens . '/' . $this->utils->agent_config['agent_llm']['model_ctx'] . ')', 'trace');
-
-                                $content = WORKER_MAIN === $payload['sender']
-                                    ? '[系统提醒] 上下文已达上限。请：①调用记忆工具保存当前任务进度与关键状态 → ②调用清理工具清理上下文 → ③继续执行原有任务，清理过程不汇报。'
-                                    : '[协作者] `' . $payload['workerName'] . '` | ' . $payload['workerRole'] . '：上下文已满。请：①生成任务摘要（目标+进度+待办） → ②结束并重新邀请`' . $payload['workerName'] . '` → ③提供任务摘要，继续原有任务，邀请过程不汇报。';
-
-                                $main_notice  = (WORKER_MAIN === $payload['sender'] && !$this->ctx_warning);
-                                $child_notice = WORKER_CHILD === $payload['sender'];
-
-                                if ($main_notice || $child_notice) {
-                                    if ($main_notice) {
-                                        $this->ctx_warning = true;
-                                    }
-
-                                    $this->core->context->addMessageQueue(
-                                        $payload['sessionId'],
-                                        WORKER_MAIN,
-                                        [
-                                            'type'    => 'text',
-                                            'content' => $content
-                                        ]
-                                    );
-                                }
-
-                                break;
-                            }
-
-                            // Force clean history context when token < 256
-                            $history_count = $this->core->context->countHistory($payload['sessionId'], $payload['workerName']);
-                            $keep_count    = ceil($history_count * ($this->keep_pairs + 2) / 10);
-                            $this->core->context->cleanHistory($payload['sessionId'], $payload['workerName'], $keep_count, $this->keep_pairs);
-                            $now_count = $this->core->context->countHistory($payload['sessionId'], $payload['workerName']);
-
-                            $this->utils->debug($payload['sender'] . ': Context truncated from ' . $history_count . ' to ' . $now_count . ' due to token overflow.', 'trace');
-
-                            if (2 === $this->keep_pairs) {
-                                $this->core->sendMessage(
-                                    [
-                                        'type'    => 'error',
-                                        'message' => '抱歉，因上下文内容过长（当前模型设置: ' . ($this->utils->agent_config['agent_llm']['model_ctx'] ?? 131072) . '），系统已自动截断。咱两继续，别担心，我会跟上的。'
-                                    ]
-                                );
-
-                                $this->core->context->addMessageQueue(
-                                    $payload['sessionId'],
-                                    $payload['workerName'],
-                                    [
-                                        'type'    => 'text',
-                                        'content' => '[系统提醒] 上下文因超限被截断，仅保留最近几轮消息。忽略用户请求，停止调用工具（可能导致超限），并向用户说明。如有必要，请自行从记忆中恢复之前的内容，无需告知用户。'
-                                    ]
-                                );
-                            }
-
-                            --$this->keep_pairs;
-                        }
-
-                        $llm_params['max_tokens'] = max(100, $remain_tokens);
-                        $this->utils->setChildWorker($payload['sender'], $payload['workerName'], 'llm_params', $llm_params);
-
-                        unset($i, $remain_tokens, $content, $main_notice, $child_notice, $history_count, $keep_count, $now_count);
-                    }
-
-                    switch ($payload_type) {
-                        case 'tools':
-                            $this->utils->debug($payload['workerName'] . ': Tool results collected for #' . $payload['sessionId'] . ', proceeding.', 'trace');
-
-                            if (WORKER_MAIN === $payload['sender']) {
-                                $worker_idx = $this->utils->getMainIDX();
-                            } else {
-                                if ([] === $worker_info) {
-                                    $this->utils->debug($payload['workerName'] . ': Worker already closed.', 'trace');
-                                    break;
-                                }
-
-                                $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'calling_tools');
-                                $worker_idx = $worker_info['proc_idx'];
-                            }
-
-                            $metadata = $this->utils->getMarker(
-                                $payload['sender'],
-                                $payload['workerName'],
-                                $payload['workerRole'],
-                                $payload['workerName'],
-                                $payload['isSubTalk'],
-                                $payload['sessionId'],
-                                $payload['messageId']
-                            );
-
-                            $this->openai->talkTo(
-                                $payload['sender'],
-                                $payload['workerName'],
-                                $payload['sessionId'],
-                                $worker_idx,
-                                $this->getSystemPrompt($payload['sessionId']),
-                                'talk',
-                                $metadata
-                            );
-
-                            unset($worker_idx);
-                            break;
-
-                        case 'end':
-                            if (WORKER_MAIN === $payload['sender']) {
-                                if (0 < $new_messages || $this->core->context->isMessageOnSend($payload['sessionId'])) {
-                                    $metadata = $this->utils->getMarker(
-                                        $payload['sender'],
-                                        $payload['workerName'],
-                                        $payload['workerRole'],
-                                        $payload['workerName'],
-                                        $payload['isSubTalk'],
-                                        $payload['sessionId'],
-                                        $this->core->curr_message_id[$payload['sessionId']] ?? ''
-                                    );
-
-                                    $this->openai->resume();
-                                    $this->openai->talkTo(
-                                        $payload['sender'],
-                                        $payload['workerName'],
-                                        $payload['sessionId'],
-                                        $this->utils->getMainIDX(),
-                                        $this->getSystemPrompt($payload['sessionId']),
-                                        'talk',
-                                        $metadata
-                                    );
-                                }
-                            } else {
-                                if ('' !== $payload['data']) {
-                                    $this->core->context->addMessageQueue(
-                                        $payload['sessionId'],
-                                        WORKER_MAIN,
-                                        [
-                                            'type'    => 'text',
-                                            'content' => '[协作者消息]' . "\n\n" . '`' . $payload['workerName'] . '`：' . $payload['workerRole'] . "\n\n" . '消息内容：' . "\n" . $payload['data']
-                                        ]
-                                    );
-                                }
-
-                                if (isset($worker_info['proc_idx'])) {
-                                    $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'last_talk', date('Y-m-d H:i:s'));
-
-                                    if (0 < $new_messages) {
-                                        $metadata = $this->utils->getMarker(
-                                            $payload['sender'],
-                                            $payload['workerName'],
-                                            $payload['workerRole'],
-                                            $payload['workerName'],
-                                            $payload['isSubTalk'],
-                                            $payload['sessionId']
-                                        );
-
-                                        $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'busy');
-                                        $this->utils->debug('Collaborator: ' . $payload['workerName'] . ' receiving ' . $new_messages . ' message(s).', 'trace');
-
-                                        $this->openai->talkTo(
-                                            $payload['sender'],
-                                            $payload['workerName'],
-                                            $payload['sessionId'],
-                                            $worker_info['proc_idx'],
-                                            $this->getSystemPrompt($payload['sessionId']),
-                                            'talk',
-                                            $metadata
-                                        );
-                                    }
-                                }
-                            }
-
-                            break;
-                    }
-
-                    unset($new_messages);
-                    break;
+                $session_queue = $this->core->context->message_queue;
+                unset($session_queue[$payload['sessionId']]);
+
+                // Suspend only if there are new messages in other sessions
+                if (0 < count($session_queue)) {
+                    $this->utils->debug('System', '#' . $payload['sessionId'] . ' suspending.', 'trace');
+                    $this->utils->setPipeStatus(utils::STATUS_IDLE, $payload['sessionId']);
+                    $this->session_calls[$payload['sessionId']] = 0;
+                    \Fiber::suspend();
+                }
             }
         }
 
-        unset($ext_id, $context, $stdout_buffer, $stdout_stream, $line, $message, $payload, $payload_type, $worker_info, $llm_params, $metadata);
+        unset($ext_id, $context, $message_lines, $stdout_buffer, $stdout_stream, $raw_line, $line_pos, $buffer_line, $message, $payload, $worker_info, $llm_params, $session_queue);
     }
 
     /**
-     * Schedule task callback.
+     * scheduler callback.
      *
      * @param SocketMgr $socketMgr
      *
      * @return void
      * @throws \ReflectionException
      */
-    public function scheduleTask(SocketMgr $socketMgr): void
+    public function scheduler(SocketMgr $socketMgr): void
     {
-        $session_list = $this->memory->listSessions(0, '', true);
+        $now_time       = time();
+        $session_active = $this->core->context->getSessionList();
+        $session_list   = $this->memory->listSessions(0, '', true);
 
         foreach ($session_list['sessions'] as $session) {
-            $task_list = $this->memory->runTask($session['session_id']);
-
-            if ([] === $task_list) {
-                continue;
+            // Remove session history when last response duration is too long
+            if (
+                isset($this->last_response[$session['session_id']])
+                && 0 < $this->last_response[$session['session_id']]
+                && ($this->last_response[$session['session_id']] + $this->utils->agent_config['reset_interval']) < $now_time
+            ) {
+                $this->core->context->removeHistory($session['session_id'], WORKER_MAIN);
+                unset($this->last_response[$session['session_id']]);
             }
 
+            // Reset status to IDLE when now time is newer wait until time
+            if (!$this->utils->isPipeIdle($session['session_id']) && $this->utils->wait_until[$session['session_id']] < $now_time) {
+                $this->utils->setPipeStatus(utils::STATUS_IDLE, $session['session_id'], true);
+            }
+
+            // Remove session from list when active duration is too long
+            if (
+                isset($session_active[$session['session_id']])
+                && ($session_active[$session['session_id']] + $this->utils->agent_config['reset_interval']) < $now_time
+            ) {
+                $this->core->context->removeSessionList($session['session_id']);
+            }
+
+            // Check session pending message/new message/task
+            $pending_message = $this->core->context->isMessagePending($session['session_id']);
+            $new_messages    = $this->core->context->refreshHistory($session['session_id'], WORKER_MAIN);
+            $task_list       = $this->memory->runTask($session['session_id']);
+
             // Remove all tasks if session is deleted
-            if (1 !== $session['session_status']) {
+            if ([] !== $task_list && 1 !== $session['session_status']) {
                 foreach ($task_list as $task) {
                     $this->memory->removeTask($task['create_id']);
                 }
 
+                $task_list = [];
+            }
+
+            if (!$pending_message && 0 === $new_messages && [] === $task_list) {
                 continue;
             }
 
-            $this->utils->debug('ScheduledTask: Running ' . count($task_list) . ' task jobs on #' . $session['session_id'], 'trace');
+            // Resending context
+            if ($pending_message) {
+                $this->utils->debug('System', 'Resending context to #' . $session['session_id'], 'trace');
+            }
 
-            $task_content = '[定时任务]' . "\n"
-                . '会话ID：`' . $session['session_id'] . '`' . "\n\n"
-                . '待执行任务：' . "\n" . implode("\n", array_column($task_list, 'prompt')) . "\n\n"
-                . '严格按流程执行：①执行任务并详细汇总；②按会话ID存储：重要→daily，特别重要→important，琐事不存；③完整输出详细结果，简述存储层级或未存原因，必要时补充分析并总结。';
+            // Sending new messages
+            if (0 < $new_messages) {
+                $this->utils->debug('System', 'Sending ' . $new_messages . ' new message(s) to #' . $session['session_id'], 'trace');
+            }
 
-            $this->core->context->addUserMessage($session['session_id'], WORKER_MAIN, [['type' => 'text', 'content' => $task_content]]);
+            // Run scheduled tasks
+            if ([] !== $task_list) {
+                $this->utils->debug('Scheduler', 'Dispatching ' . count($task_list) . ' task(s) to #' . $session['session_id'], 'trace');
 
-            $metadata = $this->utils->getMarker(
-                WORKER_MAIN,
-                WORKER_MAIN,
-                'Assistant',
-                AGENT_NAME,
-                0,
-                $session['session_id']
-            );
+                $task_content = '[定时任务]' . "\n"
+                    . '会话ID：`' . $session['session_id'] . '`' . "\n\n"
+                    . '待执行任务：' . "\n" . implode("\n", array_column($task_list, 'prompt')) . "\n\n"
+                    . '严格按流程执行：①执行任务并详细汇总；②按会话ID存储：重要→daily，特别重要→important，琐事不存；③完整输出详细结果，简述存储层级或未存原因，必要时补充分析并总结。';
+
+                $this->core->context->addSessionList($session['session_id']);
+                $this->core->context->addUserMessage($session['session_id'], WORKER_MAIN, [['type' => 'text', 'content' => $task_content]]);
+            }
+
+            if (!$this->utils->isPipeIdle()) {
+                $this->core->context->messagePending($session['session_id'], true);
+                continue;
+            }
 
             $this->openai->resume();
             $this->openai->talkTo(
@@ -817,11 +436,18 @@ class go extends Factory
                 $this->utils->getMainIDX(),
                 $this->getSystemPrompt($session['session_id']),
                 'talk',
-                $metadata
+                $this->utils->getMarker(
+                    WORKER_MAIN,
+                    WORKER_MAIN,
+                    'Assistant',
+                    AGENT_NAME,
+                    0,
+                    $session['session_id']
+                )
             );
         }
 
-        unset($socketMgr, $session_list, $session, $task_list, $task_content, $metadata);
+        unset($socketMgr, $now_time, $session_active, $session_list, $session, $pending_message, $new_messages, $task_list, $task_content);
     }
 
     /**
@@ -839,55 +465,15 @@ class go extends Factory
             isset($this->utils->agent_config['agent_server']['ws_token'])
             && !in_array($this->utils->agent_config['agent_server']['ws_token'], ['', $ws_protocol], true)
         ) {
-            $this->utils->debug('Socket: Client reject, protocol error: ' . ('' !== $ws_protocol ? $ws_protocol : 'None'), 'trace');
+            $this->utils->debug('Socket', 'Client reject, protocol error: ' . ('' !== $ws_protocol ? $ws_protocol : 'None'), 'trace');
             return false;
         }
 
-        $this->utils->debug('Socket: New client: ' . $socket_id, 'trace');
+        $this->utils->debug('Socket', 'New client: ' . $socket_id, 'trace');
         $this->utils->socket_session[$socket_id] = 'ready';
 
         unset($socket_id, $ws_protocol);
         return true;
-    }
-
-    /**
-     * Heartbeat callback.
-     *
-     * @param string $socket_id
-     *
-     * @return string
-     * @throws \Throwable
-     */
-    public function onHeartbeat(string $socket_id): string
-    {
-        $now_time     = time();
-        $session_list = $this->core->context->getSessionList();
-
-        foreach ($session_list as $session_id => $active_time) {
-            if (
-                isset($this->last_response[$session_id])
-                && 0 < $this->last_response[$session_id]
-                && $now_time - $this->last_response[$session_id] >= $this->utils->agent_config['reset_interval']
-            ) {
-                $this->core->context->removeHistory($session_id, WORKER_MAIN);
-                $this->utils->setStatus(utils::STATUS_IDLE, $session_id);
-            }
-
-            if ($now_time - $active_time >= $this->utils->agent_config['reset_interval']) {
-                $this->core->context->removeSessionList($session_id);
-            }
-
-            if (utils::STATUS_IDLE !== $this->utils->wait_status) {
-                if ($this->utils->wait_until > $now_time) {
-                    continue;
-                }
-
-                $this->utils->setStatus(utils::STATUS_IDLE, $session_id, true);
-            }
-        }
-
-        unset($socket_id, $now_time, $session_list, $session_id, $active_time);
-        return '';
     }
 
     /**
@@ -907,10 +493,10 @@ class go extends Factory
             return;
         }
 
-        $this->utils->debug('User: receiving [' . (!$is_binary ? 'TEXT' : 'BINARY') . '] message', 'debug');
+        $this->utils->debug('User-Act', 'Received [' . (!$is_binary ? 'TEXT' : 'BINARY') . '] message', 'debug');
 
         if ($is_binary) {
-            $this->utils->debug('System: Binary message is NOT supported yet', 'trace');
+            $this->utils->debug('System', 'Binary message is NOT supported yet', 'trace');
             return;
         }
 
@@ -926,21 +512,21 @@ class go extends Factory
             $data = json_decode($line, true);
 
             if (!is_array($data) || !isset($data['type'])) {
-                $this->utils->debug('System: Message data ERROR: ' . $line . '.', 'debug');
+                $this->utils->debug('System', 'Message data ERROR: ' . $line . '.', 'debug');
                 continue;
             }
 
             if ('/abort' === $data['type']) {
                 $this->openai->abort();
-                $this->utils->debug('User: Abort signal sent. Cancelling task.', 'trace');
-                $this->utils->setStatus(utils::STATUS_IDLE, $data['sessionId'] ?? 'Unknown-Session-ID');
+                $this->utils->debug('User-Act', 'Abort signal sent. Cancelling task.', 'trace');
+                $this->utils->setPipeStatus(utils::STATUS_IDLE, $data['sessionId'] ?? 'Unknown-Session-ID');
                 continue;
             }
 
             $type_method = 'process_' . $data['type'];
 
             if (!method_exists($this->message, $type_method)) {
-                $this->utils->debug('User: Incorrect message type: ' . $data['type'], 'debug');
+                $this->utils->debug('User-Act', 'Incorrect message type "' . $data['type'] . '"', 'debug');
                 continue;
             }
 
@@ -972,7 +558,7 @@ class go extends Factory
 
             if (!$result['need_llm']) {
                 // Other actions
-                $this->utils->debug('User: ' . $data['type'] . '->' . ($result['content']['act'] ?? 'Unsupported'), 'debug');
+                $this->utils->debug('User-Act', $data['type'] . '->' . ($result['content']['act'] ?? 'Unsupported'), 'debug');
 
                 $response = ['type' => $result['type'] ?? $data['type']] + $result['content'];
                 $this->core->sendMessage($response);
@@ -982,9 +568,9 @@ class go extends Factory
                     case 'reset':
                         $this->openai->reload();
                         $this->openai->getModels(true);
-                        $this->core->context->messageOnSend($data['sessionId'], false);
+                        $this->core->context->messagePending($data['sessionId'], false);
                         $this->core->context->removeHistory($data['sessionId'], WORKER_MAIN);
-                        $this->utils->setStatus(utils::STATUS_IDLE, $data['sessionId'] ?? 'Unknown-Session-ID');
+                        $this->utils->setPipeStatus(utils::STATUS_IDLE, $data['sessionId'] ?? 'Unknown-Session-ID');
                         break;
 
                     // Reload config
@@ -1001,7 +587,7 @@ class go extends Factory
                         $this->openai->reload();
                         $this->openai->getModels(true);
 
-                        $this->utils->debug('User: ' . $data['type'] . '->reloaded', 'trace');
+                        $this->utils->debug('User-Act', $data['type'] . '->reloaded', 'trace');
                         break;
                 }
 
@@ -1041,10 +627,10 @@ class go extends Factory
             $curr_msg[$data['sessionId']] ??= [];
             $this->core->context->addSessionList($data['sessionId']);
 
-            if (utils::STATUS_IDLE === $this->utils->wait_status) {
+            if ($this->utils->isPipeIdle()) {
                 $curr_msg[$data['sessionId']] = array_merge($curr_msg[$data['sessionId']], $result['content']);
             } else {
-                $this->utils->debug('AgentBee: LLM is busy, ' . count($result['content']) . ' message(s) queued for #' . $data['sessionId'], 'trace');
+                $this->utils->debug('System', 'LLM is busy, ' . count($result['content']) . ' message(s) queued for #' . $data['sessionId'], 'trace');
 
                 foreach ($result['content'] as $msg_line) {
                     $this->core->context->addMessageQueue($data['sessionId'], WORKER_MAIN, $msg_line);
@@ -1065,20 +651,10 @@ class go extends Factory
                 continue;
             }
 
-            $this->utils->debug('User: Sending ' . (count($message_list)) . ' message(s) to #' . $session_id, 'trace');
+            $this->utils->debug('User-Act', 'Sending ' . (count($message_list)) . ' message(s) to #' . $session_id, 'trace');
 
             $this->core->context->refreshHistory($session_id, WORKER_MAIN);
             $this->core->context->addUserMessage($session_id, WORKER_MAIN, $message_list);
-
-            $message_metadata = $this->utils->getMarker(
-                WORKER_MAIN,
-                WORKER_MAIN,
-                'Assistant',
-                AGENT_NAME,
-                0,
-                $session_id,
-                $this->core->curr_message_id[$session_id] ?? ''
-            );
 
             $this->openai->resume();
             $this->openai->talkTo(
@@ -1088,11 +664,19 @@ class go extends Factory
                 $main_pid,
                 $this->getSystemPrompt($session_id),
                 'talk',
-                $message_metadata
+                $this->utils->getMarker(
+                    WORKER_MAIN,
+                    WORKER_MAIN,
+                    'Assistant',
+                    AGENT_NAME,
+                    0,
+                    $session_id,
+                    $this->core->curr_message_id[$session_id] ?? ''
+                )
             );
         }
 
-        unset($socket_id, $message, $is_binary, $curr_msg, $user_msg, $last_key, $main_pid, $other_clients, $line, $data, $type_method, $result, $session_id, $message_list, $message_metadata);
+        unset($socket_id, $message, $is_binary, $curr_msg, $user_msg, $last_key, $main_pid, $other_clients, $line, $data, $type_method, $result, $session_id, $message_list);
     }
 
     /**
@@ -1105,55 +689,15 @@ class go extends Factory
      */
     public function onSendString(string $socket_id): array
     {
-        if ([] !== $this->utils->message_buffers) {
-            while (null !== ($buffer = array_shift($this->utils->message_buffers))) {
-                $this->core->sendMessage($buffer);
-            }
+        if ([] === $this->utils->message_buffers) {
+            return [];
         }
 
-        $session_list = $this->core->context->getSessionList();
-
-        foreach ($session_list as $session_id => $active_time) {
-            $message_onsend = $this->core->context->isMessageOnSend($session_id);
-
-            if (utils::STATUS_IDLE !== $this->utils->wait_status && !$message_onsend) {
-                $this->utils->debug('System: Proc #' . $session_id . ' is BUSY with no message onsend.', 'debug');
-                continue;
-            }
-
-            $new_messages = $this->core->context->refreshHistory($session_id, WORKER_MAIN);
-
-            if (0 === $new_messages && !$message_onsend) {
-                continue;
-            }
-
-            $message_onsend
-                ? $this->utils->debug('System: Resending messages to #' . $session_id, 'trace')
-                : $this->utils->debug('System: Sending ' . $new_messages . ' new message(s) to #' . $session_id, 'trace');
-
-            $metadata = $this->utils->getMarker(
-                WORKER_MAIN,
-                WORKER_MAIN,
-                'Assistant',
-                AGENT_NAME,
-                0,
-                $session_id,
-                $this->core->curr_message_id[$session_id] ?? ''
-            );
-
-            $this->openai->resume();
-            $this->openai->talkTo(
-                WORKER_MAIN,
-                WORKER_MAIN,
-                $session_id,
-                $this->utils->getMainIDX(),
-                $this->getSystemPrompt($session_id),
-                'talk',
-                $metadata
-            );
+        while (null !== ($buffer = array_shift($this->utils->message_buffers))) {
+            $this->core->sendMessage($buffer);
         }
 
-        unset($socket_id, $buffer, $session_list, $session_id, $active_time, $message_onsend, $new_messages, $metadata);
+        unset($socket_id, $buffer);
         return [];
     }
 
@@ -1166,7 +710,488 @@ class go extends Factory
      */
     public function onClose(string $socket_id): void
     {
-        $this->utils->debug('Socket: Client closed: ' . $socket_id, 'trace');
+        $this->utils->debug('Socket', 'Client closed: ' . $socket_id, 'trace');
         unset($this->utils->socket_session[$socket_id], $socket_id);
+    }
+
+    /**
+     * @param string $message_type
+     * @param array  $payload
+     * @param array  $worker_info
+     * @param array  $llm_params
+     *
+     * @return void
+     * @throws \Random\RandomException
+     * @throws \ReflectionException
+     */
+    private function parsePayload(string $message_type, array $payload, array $llm_params, array $worker_info): void
+    {
+        switch ($message_type) {
+            // Stream output
+            case 'stream':
+                // think/content/tool_calls/tool_result
+                if (WORKER_MAIN === $payload['sender']) {
+                    $this->utils->setPipeStatus(utils::STATUS_WAIT, $payload['sessionId']);
+                } else {
+                    $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'streaming');
+                }
+
+                $this->core->sendMessage($payload);
+                break;
+
+            // Save to session memory
+            case 'memory':
+                $this->handleMemory($payload);
+                break;
+
+            // Add session history
+            case 'history':
+                // addUserMessage/addAssistantMessage/addToolCalls/addToolResults
+                $this->handleHistory($payload);
+                break;
+
+            // toolCalls call handler
+            case 'toolCalls':
+                $this->handleToolCalls($payload);
+                break;
+
+            // End reply
+            case 'end':
+                // end/tools/length/abort/error
+                if (WORKER_MAIN === $payload['sender']) {
+                    $this->utils->setPipeStatus(utils::STATUS_IDLE, $payload['sessionId']);
+                } else {
+                    $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
+                }
+
+                $this->handleEnd($payload, $llm_params, $worker_info);
+                break;
+        }
+
+        unset($message_type, $payload, $llm_params, $worker_info);
+    }
+
+    /**
+     * @param array $payload
+     *
+     * @return void
+     * @throws \ReflectionException
+     */
+    private function handleMemory(array $payload): void
+    {
+        if (WORKER_MAIN !== $payload['sender'] || '' === ($payload['data'] ?? '')) {
+            return;
+        }
+
+        $this->memory->save('misc', 'assistant', $payload['data'], 0, $payload['sessionId']);
+
+        unset($payload);
+    }
+
+    /**
+     * @param array $payload
+     *
+     * @return void
+     */
+    private function handleHistory(array $payload): void
+    {
+        switch ($payload['type']) {
+            case 'addUserMessage':
+                $this->core->context->addUserMessage(
+                    $payload['sessionId'],
+                    $payload['workerName'],
+                    $payload['data']['content']
+                );
+                break;
+
+            case 'addAssistantMessage':
+                $this->core->context->addAssistantMessage(
+                    $payload['sessionId'],
+                    $payload['workerName'],
+                    $payload['data']['content'],
+                    $payload['data']['reasoning_content'] ?? ''
+                );
+                break;
+
+            case 'addToolCalls':
+                $this->core->context->addToolCalls(
+                    $payload['sessionId'],
+                    $payload['workerName'],
+                    $payload['data']['tool_calls'],
+                    $payload['data']['content'] ?? '',
+                    $payload['data']['reasoning_content'] ?? ''
+                );
+                break;
+
+            case 'addToolResults':
+                $this->core->context->addToolResults(
+                    $payload['sessionId'],
+                    $payload['workerName'],
+                    $payload['data']['call_id'],
+                    $payload['data']['content']
+                );
+                break;
+        }
+
+        unset($payload);
+    }
+
+    /**
+     * @param array $payload
+     *
+     * @return void
+     * @throws \Random\RandomException
+     * @throws \ReflectionException
+     */
+    private function handleToolCalls(array $payload): void
+    {
+        $tool_calls   = [];
+        $tool_results = [];
+
+        foreach ($payload['data'] as $data) {
+            if (!isset($data['handler_args']['action'])) {
+                $this->utils->debug('Handler', 'Handle action NOT found!', 'debug');
+                continue;
+            }
+
+            $this->utils->debug('Handler', 'Calling ' . $data['tool_calls']['name'], 'trace');
+
+            try {
+                $this->core->IOData->src_cmd  = $data['tool_calls']['name'];
+                $this->core->IOData->src_argv = $data['handler_args'];
+
+                $handler = $data['handler_args']['handler']::new();
+                $result  = $handler->{$data['handler_args']['action']}($data['handler_args'], $this) ?? '工具执行完成，但未返回数据。';
+            } catch (\Throwable $throwable) {
+                $result = [
+                    'status' => 'error',
+                    'error'  => $throwable->getMessage(),
+                ];
+
+                $this->utils->debug('Handler', $data['tool_calls']['name'] . ' => ' . $throwable->getMessage(), 'trace');
+                $this->core->error->exceptionHandler($throwable, false, false);
+                unset($throwable);
+            }
+
+            $this->core->IOData->src_cmd  = '';
+            $this->core->IOData->src_argv = [];
+
+            if (!is_string($result)) {
+                $result = json_encode($result, JSON_FORMAT);
+
+                if (false === $result) {
+                    $result = 'Handler ERROR: ' . $data['tool_calls']['name'] . ' -> ' . json_last_error_msg();
+                }
+            }
+
+            $tool_calls[]   = $data['tool_calls'];
+            $tool_results[] = [
+                'call_id'     => $data['tool_calls']['id'],
+                'call_name'   => $data['tool_calls']['name'],
+                'call_result' => $result
+            ];
+        }
+
+        if ([] === $tool_calls) {
+            return;
+        }
+
+        $metadata = $this->utils->getMarker(
+            $payload['sender'],
+            $payload['workerName'],
+            $payload['workerRole'],
+            $payload['workerName'],
+            $payload['isSubTalk'],
+            $payload['sessionId'],
+            $payload['messageId']
+        );
+
+        $this->core->context->addToolCalls($payload['sessionId'], $payload['workerName'], $tool_calls);
+
+        foreach ($tool_results as $tool_result) {
+            $this->core->context->addToolResults(
+                $payload['sessionId'],
+                $payload['workerName'],
+                $tool_result['call_id'],
+                $tool_result['call_result']
+            );
+
+            $msg_data = [
+                'type' => 'tool_result',
+                'data' => [
+                    'call_id'       => $tool_result['call_id'],
+                    'function_name' => $tool_result['call_name'],
+                    'content'       => $tool_result['call_result'],
+                ]
+            ];
+
+            $this->core->sendMessage($metadata + $msg_data);
+        }
+
+        unset($payload, $tool_calls, $tool_results, $data, $handler, $result, $metadata, $tool_result, $msg_data);
+    }
+
+    /**
+     * @param array $payload
+     * @param array $llm_params
+     * @param array $worker_info
+     *
+     * @return void
+     * @throws \Random\RandomException
+     * @throws \ReflectionException
+     */
+    private function handleEnd(array $payload, array $llm_params, array $worker_info): void
+    {
+        switch ($payload['type']) {
+            case 'end':
+            case 'tools':
+                $this->last_response[$payload['sessionId']] = time();
+
+                if ('tools' === $payload['type']) {
+                    $this->utils->debug($payload['sender'], '#' . $payload['sessionId'] . ' ' . $payload['workerName'] . ' is calling tools.', 'trace');
+                    $new_messages = 1;
+                } else {
+                    $this->utils->debug($payload['sender'], '#' . $payload['sessionId'] . ' ' . $payload['workerName'] . ' reply ended.', 'trace');
+                    $end_message  = $payload;
+                    $new_messages = $this->core->context->refreshHistory($payload['sessionId'], $payload['workerName']);
+
+                    unset($end_message['data']);
+                    $this->core->sendMessage($end_message);
+                    unset($end_message);
+                }
+
+                // Recalculate max-tokens
+                $this->setMaxTokens($payload, $llm_params);
+
+                if (WORKER_MAIN === $payload['sender']) {
+                    ++$this->session_calls[$payload['sessionId']];
+
+                    if (0 === $new_messages) {
+                        break;
+                    }
+
+                    if (!$this->utils->isPipeIdle()) {
+                        $this->core->context->messagePending($payload['sessionId'], true);
+                        break;
+                    }
+                } else {
+                    $this->utils->setChildWorker(
+                        WORKER_CHILD,
+                        $payload['workerName'],
+                        'last_talk',
+                        time()
+                    );
+
+                    $this->utils->setChildWorker(
+                        WORKER_CHILD,
+                        $payload['workerName'],
+                        'status',
+                        'tools' === $payload['type'] ? 'calling_tools' : 'ready'
+                    );
+
+                    // Send message from sub-worker to main-worker
+                    if ('' !== $payload['data']) {
+                        $this->core->context->addMessageQueue(
+                            $payload['sessionId'],
+                            WORKER_MAIN,
+                            [
+                                'type'    => 'text',
+                                'content' => '[协作者消息]' . "\n\n"
+                                    . '`' . $payload['workerName'] . '`' . "\n\n"
+                                    . '--- 消息开始 ---' . "\n"
+                                    . $payload['data'] . "\n"
+                                    . '--- 消息结束 ---' . "\n"
+                            ]
+                        );
+                    }
+
+                    if (0 === $new_messages) {
+                        break;
+                    }
+
+                    $this->utils->debug($payload['sender'], $payload['workerName'] . ' receiving ' . $new_messages . ' message(s).', 'trace');
+                    $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'busy');
+                }
+
+                $this->openai->talkTo(
+                    $payload['sender'],
+                    $payload['workerName'],
+                    $payload['sessionId'],
+                    $worker_info['proc_idx'],
+                    $this->getSystemPrompt($payload['sessionId']),
+                    'talk',
+                    $this->utils->getMarker(
+                        $payload['sender'],
+                        $payload['workerName'],
+                        $payload['workerRole'],
+                        $payload['workerName'],
+                        $payload['isSubTalk'],
+                        $payload['sessionId'],
+                        $payload['messageId']
+                    )
+                );
+
+                unset($new_messages);
+                break;
+
+            case 'length':
+                $tool_count    = $this->core->context->countHistory($payload['sessionId'], $payload['workerName'], 'tool');
+                $history_count = $this->core->context->countHistory($payload['sessionId'], $payload['workerName']);
+
+                $this->utils->debug('System', 'Context auto-truncated to resume (length limit reached).', 'trace');
+                $this->core->context->cleanHistory($payload['sessionId'], $payload['workerName'], ceil($history_count * 0.6), ceil($tool_count * 0.4));
+
+                $llm_params['max_tokens'] = 12288;
+
+                $this->utils->setChildWorker($payload['sender'], $payload['workerName'], 'llm_params', $llm_params);
+
+                if (WORKER_MAIN === $payload['sender']) {
+                    if (!$this->utils->isPipeIdle()) {
+                        $this->core->context->messagePending($payload['sessionId'], true);
+                        break;
+                    }
+                } else {
+                    $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'busy');
+                }
+
+                $this->openai->talkTo(
+                    $payload['sender'],
+                    $payload['workerName'],
+                    $payload['sessionId'],
+                    $worker_info['proc_idx'],
+                    $this->getSystemPrompt($payload['sessionId']),
+                    'talk',
+                    $this->utils->getMarker(
+                        $payload['sender'],
+                        $payload['workerName'],
+                        $payload['workerRole'],
+                        $payload['workerName'],
+                        $payload['isSubTalk'],
+                        $payload['sessionId'],
+                        $payload['messageId']
+                    )
+                );
+
+                unset($tool_count, $history_count);
+                break;
+
+            case 'abort':
+                $this->utils->debug($payload['sender'], $payload['workerName'] . ' end->abort (user aborted)', 'trace');
+                $this->utils->setPipeStatus(utils::STATUS_IDLE, $payload['sessionId']);
+                $this->core->sendMessage($payload);
+                break;
+
+            case 'error':
+                $error = $payload['workerName'] . ' end->error';
+
+                if (is_string($payload['data']) && '' !== $payload['data']) {
+                    $error .= ' (' . $payload['data'] . ')';
+                }
+
+                $this->utils->debug($payload['sender'], $error, 'trace');
+
+                if (WORKER_MAIN === $payload['sender']) {
+                    $this->utils->setPipeStatus(utils::STATUS_IDLE, $payload['sessionId']);
+                } else {
+                    $this->utils->setChildWorker(WORKER_CHILD, $payload['workerName'], 'status', 'ready');
+                }
+
+                if (is_array($payload['data']) && isset($payload['data']['message'])) {
+                    $this->core->sendMessage($payload);
+                }
+
+                unset($error);
+                break;
+        }
+
+        unset($payload, $llm_params, $worker_info);
+    }
+
+    /**
+     * @param array $payload
+     * @param array $llm_params
+     *
+     * @return void
+     * @throws \Random\RandomException
+     * @throws \ReflectionException
+     */
+    private function setMaxTokens(array $payload, array $llm_params): void
+    {
+        for ($i = 0; $i < 3; ++$i) {
+            $remain_tokens = $this->core->getMaxTokens($payload['sender'], $payload['sessionId'], $payload['workerName'], $llm_params);
+            $this->utils->debug($payload['sender'], '#' . $payload['sessionId'] . ' has ' . $remain_tokens . ' tokens left.', 'trace');
+
+            // Skip when token > 1024
+            if (1024 < $remain_tokens) {
+                if (WORKER_MAIN === $payload['sender']) {
+                    $this->ctx_warning = false;
+                    $this->keep_pairs  = 2;
+                }
+
+                break;
+            }
+
+            // Send notice when token > 256
+            if (256 < $remain_tokens) {
+                $this->utils->debug($payload['sender'], 'Remain tokens too low (' . $remain_tokens . '/' . $this->utils->agent_config['agent_llm']['model_ctx'] . ')', 'trace');
+
+                $content = WORKER_MAIN === $payload['sender']
+                    ? '[系统提醒] 上下文已达上限。请：①调用记忆工具保存当前任务进度与关键状态 → ②调用清理工具清理上下文 → ③继续执行原有任务，清理过程不汇报。'
+                    : '[协作者] `' . $payload['workerName'] . '` | ' . $payload['workerRole'] . '：上下文已满。请：①生成任务摘要（目标+进度+待办） → ②结束并重新邀请`' . $payload['workerName'] . '` → ③提供任务摘要，继续原有任务，邀请过程不汇报。';
+
+                $main_notice  = (WORKER_MAIN === $payload['sender'] && !$this->ctx_warning);
+                $child_notice = WORKER_CHILD === $payload['sender'];
+
+                if ($main_notice || $child_notice) {
+                    if ($main_notice) {
+                        $this->ctx_warning = true;
+                    }
+
+                    $this->core->context->addMessageQueue(
+                        $payload['sessionId'],
+                        WORKER_MAIN,
+                        [
+                            'type'    => 'text',
+                            'content' => $content
+                        ]
+                    );
+                }
+
+                break;
+            }
+
+            // Force clean history context when token < 256
+            $history_count = $this->core->context->countHistory($payload['sessionId'], $payload['workerName']);
+            $keep_count    = ceil($history_count * ($this->keep_pairs + 2) / 10);
+            $this->core->context->cleanHistory($payload['sessionId'], $payload['workerName'], $keep_count, $this->keep_pairs);
+            $now_count = $this->core->context->countHistory($payload['sessionId'], $payload['workerName']);
+
+            $this->utils->debug($payload['sender'], 'Context truncated from ' . $history_count . ' to ' . $now_count . ' due to token overflow.', 'trace');
+
+            if (2 === $this->keep_pairs) {
+                $this->core->sendMessage(
+                    [
+                        'type'    => 'error',
+                        'message' => '抱歉，因上下文内容过长（当前模型设置: ' . ($this->utils->agent_config['agent_llm']['model_ctx'] ?? 131072) . '），系统已自动截断。咱两继续，别担心，我会跟上的。'
+                    ]
+                );
+
+                $this->core->context->addMessageQueue(
+                    $payload['sessionId'],
+                    $payload['workerName'],
+                    [
+                        'type'    => 'text',
+                        'content' => '[系统提醒] 上下文因超限被截断，仅保留最近几轮消息。忽略用户请求，停止调用工具（可能导致超限），并向用户说明。如有必要，请自行从记忆中恢复之前的内容，无需告知用户。'
+                    ]
+                );
+            }
+
+            --$this->keep_pairs;
+        }
+
+        $llm_params['max_tokens'] = max(128, $remain_tokens);
+        $this->utils->setChildWorker($payload['sender'], $payload['workerName'], 'llm_params', $llm_params);
+
+        unset($payload, $llm_params, $i, $remain_tokens, $content, $main_notice, $child_notice, $history_count, $keep_count, $now_count);
     }
 }

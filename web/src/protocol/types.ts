@@ -266,6 +266,8 @@ export interface RemoteSession {
   session_name?: string;
   session_status?: string | number;
   create_time?: string | number;
+  /** 最近一次活动时间；老后端可能没有，回退到 create_time。 */
+  last_time?: string | number;
 }
 
 export type ClientMessage =
