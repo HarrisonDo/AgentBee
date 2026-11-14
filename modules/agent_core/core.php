@@ -22,6 +22,7 @@ namespace modules\agent_core;
 
 use modules\agent_core\lib\context;
 use modules\agent_core\lib\utils;
+use modules\agent_toolsets\Memory\go as memory;
 use Nervsys\Core\Factory;
 use Nervsys\Core\Lib\Error;
 use Nervsys\Core\Lib\IOData;
@@ -34,6 +35,7 @@ final class core extends Factory
     use System;
 
     public utils     $utils;
+    public memory    $memory;
     public context   $context;
     public SocketMgr $socketMgr;
 
@@ -56,10 +58,12 @@ final class core extends Factory
         $this->utils     = utils::new();
         $this->error     = Error::new();
         $this->IOData    = IOData::new();
+        $this->memory    = memory::new();
         $this->context   = context::new();
         $this->socketMgr = SocketMgr::new(WORKER_MAIN);
 
         $this->utils->agent_config = $this->utils->config->get(true, $reload);
+        $this->context->setApiType($this->utils->agent_config['agent_llm']['api_type']);
     }
 
     /**
@@ -171,9 +175,9 @@ final class core extends Factory
         $this->IOData->src_argv = [];
 
         $results = [
-            'call_id'     => $call_id,
-            'call_name'   => $call_name,
-            'call_result' => $call_result
+            'id'      => $call_id,
+            'name'    => $call_name,
+            'content' => $call_result
         ];
 
         unset($call_id, $call_name, $tool_call_args, $module_name, $method_name, $fn_params, $fn_args, $tool_result, $call_result);

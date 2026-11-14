@@ -26,7 +26,9 @@ class messages extends stream
 {
     public array $tool_calls = [];
 
-    public string $tool_content      = '';
+    public int    $same_calls = 0;
+    public string $call_hash  = '';
+
     public string $reason_content    = '';
     public string $assistant_content = '';
 
@@ -97,14 +99,12 @@ class messages extends stream
                     }
 
                     if (isset($event['tool_calls']) && [] !== $event['tool_calls']) {
-                        foreach ($event['tool_calls'] as $tool_call) {
-                            $contents[] = [
-                                'type'  => 'tool_use',
-                                'id'    => $tool_call['id'],
-                                'name'  => $tool_call['name'],
-                                'input' => json_decode($tool_call['arguments'], true) ?: [],
-                            ];
-                        }
+                        $contents[] = [
+                            'type'  => 'tool_use',
+                            'id'    => $event['tool_calls']['id'],
+                            'name'  => $event['tool_calls']['name'],
+                            'input' => json_decode($event['tool_calls']['arguments'], true) ?: [],
+                        ];
                     }
 
                     $messages[] = [
@@ -119,7 +119,7 @@ class messages extends stream
                         'content' => [
                             [
                                 'type'        => 'tool_result',
-                                'tool_use_id' => $event['call_id'],
+                                'tool_use_id' => $event['id'],
                                 'content'     => $event['content'],
                             ],
                         ],
@@ -331,13 +331,8 @@ class messages extends stream
 
         switch ($this->finish_reason) {
             case 'stop':
-                if ('' !== $this->tool_content) {
-                    $this->output('memory', 'save', $metadata, $this->tool_content);
-                    $this->tool_content = '';
-                }
-
                 if ('' !== $this->assistant_content || '' !== $this->reason_content) {
-                    $this->output('history', 'addAssistantMessage', $metadata, $this->buildAssistantEvent());
+                    $this->output('context', 'addAssistantMessage', $metadata, $this->buildAssistantEvent());
                 }
 
                 if ('' !== $this->assistant_content) {
@@ -348,8 +343,8 @@ class messages extends stream
                 break;
 
             case 'length':
-                $this->output('history', 'addAssistantMessage', $metadata, $this->buildAssistantEvent());
-                $this->output('history', 'addUserMessage', $metadata, [
+                $this->output('context', 'addAssistantMessage', $metadata, $this->buildAssistantEvent());
+                $this->output('context', 'addUserMessage', $metadata, [
                     'role'    => 'user',
                     'content' => [[
                         'type'    => 'text',
@@ -368,13 +363,8 @@ class messages extends stream
                 $error_args    = 0;
                 $error_names   = 0;
                 $error_calls   = 0;
-                $correct_calls = [];
-                $tool_results  = [];
+                $tool_calls    = [];
                 $handler_calls = [];
-
-                if ('' !== $this->assistant_content) {
-                    $this->tool_content .= $this->assistant_content;
-                }
 
                 foreach ($this->tool_calls as $fn_call) {
                     if (!str_contains($fn_call['name'], '-')) {
@@ -387,6 +377,17 @@ class messages extends stream
                         continue;
                     }
 
+                    if ($this->tooManySameCalls($fn_call['name'], $fn_call['arguments'])) {
+                        $this->output('context', 'addUserMessage', $metadata, [
+                            'role'    => 'user',
+                            'content' => [[
+                                'type'    => 'text',
+                                'content' => '[系统提醒] 立即停止用相同参数重复调用`' . $fn_call['name'] . '`。重新审查需求，调整计划后再继续。',
+                            ]],
+                        ]);
+                        break;
+                    }
+
                     $tool_args = json_decode($fn_call['arguments'], true);
 
                     if (!is_array($tool_args)) {
@@ -396,64 +397,95 @@ class messages extends stream
 
                     $tool_call = [
                         'id'        => $fn_call['id'],
-                        'type'      => ($fn_call['type'] ?? 'function'),
+                        'type'      => $fn_call['type'],
                         'name'      => $fn_call['name'],
                         'arguments' => $fn_call['arguments'],
                     ];
 
                     try {
                         $exec_result = $this->core->execTools($fn_call['id'], $fn_call['name'], $tool_args);
-                        $this->output('stream', 'tool_calls', $metadata, $tool_call);
-                    } catch (\Throwable $throwable) {
-                        $this->output('stream', 'tool_result', $metadata, [
-                            'call_id'       => $fn_call['id'],
-                            'function_name' => $fn_call['name'],
-                            'error'         => $throwable->getMessage(),
-                        ]);
+                        $result_data = json_decode($exec_result['content'], true);
 
-                        ++$error_calls;
+                        if (!isset($result_data['handler'])) {
+                            // Sync tool calls
+                            $tool_calls[$fn_call['id']] = [
+                                'tools'   => $tool_call,
+                                'results' => [
+                                    'id'      => $exec_result['id'],
+                                    'content' => $exec_result['content']
+                                ]
+                            ];
+                        } else {
+                            // Async tool calls
+                            $result_data['session_id']   = $metadata['sessionId'];
+                            $result_data['process_name'] = $metadata['workerName'];
+
+                            $handler_calls[] = [
+                                'tool_calls'   => [
+                                    'id'             => $fn_call['id'],
+                                    'type'           => $fn_call['type'],
+                                    'name'           => $fn_call['name'],
+                                    'arguments'      => $fn_call['arguments'],
+                                    'content'        => $this->assistant_content,
+                                    'reason_content' => $this->reason_content
+                                ],
+                                'handler_args' => $result_data,
+                            ];
+                        }
+                    } catch (\Throwable $throwable) {
+                        // Tool calls with errors
+                        $tool_calls[$fn_call['id']] = [
+                            'tools'   => $tool_call,
+                            'results' => [
+                                'id'      => $fn_call['id'],
+                                'content' => $throwable->getMessage()
+                            ]
+                        ];
+
                         unset($throwable);
+                        ++$error_calls;
                         continue;
                     }
+                }
 
-                    $result_data = json_decode($exec_result['call_result'], true);
-
-                    if (!isset($result_data['handler'])) {
+                // Process sync tool calls and tool results
+                if ([] !== $tool_calls) {
+                    foreach ($tool_calls as $tool_call) {
+                        // Stream
+                        $this->output('stream', 'tool_calls', $metadata, [
+                            'id'        => $tool_call['tools']['id'],
+                            'name'      => $tool_call['tools']['name'],
+                            'arguments' => $tool_call['tools']['arguments']
+                        ]);
                         $this->output('stream', 'tool_result', $metadata, [
-                            'call_id'       => $exec_result['call_id'],
-                            'function_name' => $exec_result['call_name'],
-                            'content'       => $exec_result['call_result'],
+                            'id'      => $tool_call['results']['id'],
+                            'name'    => $tool_call['tools']['name'],
+                            'content' => $tool_call['results']['content']
                         ]);
 
-                        $correct_calls[] = $tool_call;
-                        $tool_results[]  = [
-                            'role'    => 'tool',
-                            'call_id' => $exec_result['call_id'],
-                            'content' => $exec_result['call_result'],
-                        ];
-                    } else {
-                        $result_data['session_id']   = $metadata['sessionId'];
-                        $result_data['process_name'] = $metadata['workerName'];
+                        // Context history
+                        $this->output('context', 'addToolCalls', $metadata, $this->buildToolEvent($tool_call['tools']));
+                        $this->output('context', 'addToolResults', $metadata, $tool_call['results']);
 
-                        $handler_calls[] = [
-                            'tool_calls'   => $tool_call,
-                            'handler_args' => $result_data,
-                        ];
+                        // Save chat history
+                        $this->output('memory', 'saveToolCalls', $metadata, [
+                            'tools'          => [
+                                'id'        => $tool_call['tools']['id'],
+                                'name'      => $tool_call['tools']['name'],
+                                'arguments' => $tool_call['tools']['arguments']
+                            ],
+                            'results'        => [
+                                'id'      => $tool_call['results']['id'],
+                                'name'    => $tool_call['tools']['name'],
+                                'content' => $tool_call['results']['content']
+                            ],
+                            'content'        => $this->assistant_content,
+                            'reason_content' => $this->reason_content
+                        ]);
                     }
                 }
 
-                if ([] !== $correct_calls) {
-                    $this->output('history', 'addToolCalls', $metadata,
-                        $this->buildAssistantEvent() + ['tool_calls' => $correct_calls]
-                    );
-                } elseif ('' !== $this->assistant_content || '' !== $this->reason_content) {
-                    $this->output('history', 'addAssistantMessage', $metadata, $this->buildAssistantEvent());
-                }
-
-                foreach ($tool_results as $tool_result) {
-                    $this->output('history', 'addToolResults', $metadata, $tool_result);
-                }
-
+                // Process async calls (Forward to main process)
                 if ([] !== $handler_calls) {
                     $this->output('toolCalls', 'callHandler', $metadata, $handler_calls);
                 }
@@ -473,7 +505,7 @@ class messages extends stream
                 }
 
                 if ([] !== $error_types) {
-                    $this->output('history', 'addUserMessage', $metadata, [
+                    $this->output('context', 'addUserMessage', $metadata, [
                         'role'    => 'user',
                         'content' => [[
                             'type'    => 'text',
@@ -482,9 +514,9 @@ class messages extends stream
                     ]);
                 }
 
-                $this->output('end', 'tools', $metadata, $correct_calls);
+                $this->output('end', 'tools', $metadata);
 
-                unset($error_args, $error_names, $error_calls, $correct_calls, $tool_results, $handler_calls, $fn_call, $tool_args, $tool_call, $exec_result, $result_data, $tool_result, $error_types);
+                unset($error_args, $error_names, $error_calls, $tool_calls, $handler_calls, $fn_call, $tool_args, $tool_call, $exec_result, $result_data, $error_types);
                 break;
 
             case 'content_filter':
@@ -494,7 +526,7 @@ class messages extends stream
 
             case 'undefined':
                 if ([] !== $this->tool_calls) {
-                    $this->output('history', 'addUserMessage', $metadata, [
+                    $this->output('context', 'addUserMessage', $metadata, [
                         'role'    => 'user',
                         'content' => [[
                             'type'    => 'text',
@@ -521,13 +553,54 @@ class messages extends stream
      */
     private function buildAssistantEvent(): array
     {
-        $event = ['role' => 'assistant', 'content' => $this->assistant_content];
+        $event = ['content' => $this->assistant_content];
 
         if ('' !== $this->reason_content) {
             $event['reasoning_content'] = $this->reason_content;
         }
 
         return $event;
+    }
+
+    /**
+     * @param array $tool_calls
+     *
+     * @return array
+     */
+    private function buildToolEvent(array $tool_calls): array
+    {
+        $event = [
+            'content'    => $this->assistant_content,
+            'tool_calls' => $tool_calls
+        ];
+
+        if ('' !== $this->reason_content) {
+            $event['reasoning_content'] = $this->reason_content;
+        }
+
+        unset($tool_calls);
+        return $event;
+    }
+
+    /**
+     * @param string $call_name
+     * @param string $call_argv
+     *
+     * @return bool
+     */
+    private function tooManySameCalls(string $call_name, string $call_argv): bool
+    {
+        $call_hash = hash('md5', $call_name . $call_argv);
+
+        if ($this->call_hash !== $call_hash) {
+            $this->call_hash  = $call_hash;
+            $this->same_calls = 0;
+        } else {
+            ++$this->same_calls;
+        }
+
+        unset($call_name, $call_argv, $call_hash);
+        return 3 <= $this->same_calls;
     }
 
     /**

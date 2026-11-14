@@ -23,7 +23,6 @@ namespace modules\agent_core;
 use modules\agent_core\lib\message;
 use modules\agent_core\lib\utils;
 use modules\agent_openai\go as openai;
-use modules\agent_toolsets\Memory\go as memory;
 use Nervsys\Core\Factory;
 use Nervsys\Core\Mgr\SocketMgr;
 
@@ -31,10 +30,8 @@ class go extends Factory
 {
     public core    $core;
     public utils   $utils;
+    public openai  $openai;
     public message $message;
-
-    public memory $memory;
-    public openai $openai;
 
     public int $keep_pairs = 2;
 
@@ -52,7 +49,6 @@ class go extends Factory
     {
         $this->core    = core::new();
         $this->utils   = utils::new();
-        $this->memory  = memory::new();
         $this->openai  = openai::new();
         $this->message = message::new();
 
@@ -197,7 +193,7 @@ class go extends Factory
             [$this, 'stdoutHandler']
         );
 
-        $this->session_list = array_column($this->memory->listSessions(0)['sessions'], 'session_id');
+        $this->session_list = array_column($this->core->memory->listSessions(0)['sessions'], 'session_id');
 
         $agent_toolsets = $this->utils->fetchToolset('modules/agent_toolsets');
         $this->core->addSkills($agent_toolsets);
@@ -234,7 +230,7 @@ class go extends Factory
     public function getSystemPrompt(string $session_id): string
     {
         $prompt   = $this->utils->getMainPrompt();
-        $memories = $this->memory->read('system', 0, 0, 0);
+        $memories = $this->core->memory->read('system', 0, 0, 0);
 
         if ([] !== $memories['data']) {
             $memory = ['## 用户与人物设定'];
@@ -251,7 +247,7 @@ class go extends Factory
         $prompt .= "\n\n" . '---' . "\n\n";
 
         if ('' !== $session_id) {
-            $session = $this->memory->listSessions(0, $session_id, false);
+            $session = $this->core->memory->listSessions(0, $session_id, false);
             $prompt  .= isset($session['sessions'][0]['session_id']) && $session['sessions'][0]['session_id'] === $session_id
                 ? '【当前会话】**' . $session['sessions'][0]['session_name'] . '**，【会话ID】`' . $session_id . '`，读写记忆时必传。'
                 : '【会话ID】`' . $session_id . '`，读写记忆时必传。';
@@ -356,7 +352,7 @@ class go extends Factory
     {
         $now_time       = time();
         $session_active = $this->core->context->getSessionList();
-        $session_list   = $this->memory->listSessions(0, '', true);
+        $session_list   = $this->core->memory->listSessions(0, '', true);
 
         foreach ($session_list['sessions'] as $session) {
             // Remove session history when last response duration is too long
@@ -385,12 +381,12 @@ class go extends Factory
             // Check session pending message/new message/task
             $pending_message = $this->core->context->isMessagePending($session['session_id']);
             $new_messages    = $this->core->context->refreshHistory($session['session_id'], WORKER_MAIN);
-            $task_list       = $this->memory->runTask($session['session_id']);
+            $task_list       = $this->core->memory->runTask($session['session_id']);
 
             // Remove all tasks if session is deleted
             if ([] !== $task_list && 1 !== $session['session_status']) {
                 foreach ($task_list as $task) {
-                    $this->memory->removeTask($task['create_id']);
+                    $this->core->memory->removeTask($task['create_id']);
                 }
 
                 $task_list = [];
@@ -551,7 +547,7 @@ class go extends Factory
             }
 
             if ('memory' === $data['type']) {
-                $data['content']['memory'] = $this->memory;
+                $data['content']['memory'] = $this->core->memory;
             }
 
             $result = $this->message->$type_method($data['content'], $data['sessionId'] ?? '');
@@ -595,19 +591,20 @@ class go extends Factory
                 return;
             }
 
-            // Save to misc memory
-            if (isset($result['saves']) && [] !== $result['saves']) {
-                $memory = implode(' ', $result['saves']);
+            // Save to session chat
+            if ([] !== $result['chat']) {
+                $this->core->memory->saveChat($data['sessionId'], WORKER_MAIN, 0, 'user', $result['chat']);
+            }
 
+            // Save to misc memory
+            if ('' !== $result['memory']) {
                 // Save to session
                 if (!in_array($data['sessionId'], $this->session_list)) {
                     $this->session_list[] = $data['sessionId'];
-                    $this->memory->createSession($data['sessionId'], mb_substr($memory, 0, 32, 'UTF-8'));
+                    $this->core->memory->createSession($data['sessionId'], mb_substr($result['memory'], 0, 32, 'UTF-8'));
                 }
 
-                $this->memory->save('misc', 'user', $memory, 0, $data['sessionId']);
-
-                unset($memory);
+                $this->core->memory->save('misc', 'user', $result['memory'], 0, $data['sessionId']);
             }
 
             if (isset($result['errors']) && [] !== $result['errors']) {
@@ -744,10 +741,10 @@ class go extends Factory
                 $this->handleMemory($payload);
                 break;
 
-            // Add session history
-            case 'history':
+            // Add session context
+            case 'context':
                 // addUserMessage/addAssistantMessage/addToolCalls/addToolResults
-                $this->handleHistory($payload);
+                $this->handleContext($payload);
                 break;
 
             // toolCalls call handler
@@ -779,11 +776,40 @@ class go extends Factory
      */
     private function handleMemory(array $payload): void
     {
-        if (WORKER_MAIN !== $payload['sender'] || '' === ($payload['data'] ?? '')) {
-            return;
-        }
+        switch ($payload['type']) {
+            // Save misc level memory
+            case 'save':
+                if (WORKER_MAIN === $payload['sender'] && '' !== ($payload['data'] ?? '')) {
+                    $this->core->memory->save('misc', 'assistant', $payload['data'], 0, $payload['sessionId']);
+                }
+                break;
 
-        $this->memory->save('misc', 'assistant', $payload['data'], 0, $payload['sessionId']);
+            // Save to chat history
+            case 'saveToolCalls':
+                $content = [
+                    'tools'   => $payload['data']['tools'],
+                    'results' => $payload['data']['results']
+                ];
+
+                if (isset($payload['data']['content']) && '' !== $payload['data']['content']) {
+                    $content['content'] = $payload['data']['content'];
+                }
+
+                if (isset($payload['data']['reasoning_content']) && '' !== $payload['data']['reasoning_content']) {
+                    $content['reasoning_content'] = $payload['data']['reasoning_content'];
+                }
+
+                $this->core->memory->saveChat(
+                    $payload['sessionId'],
+                    $payload['workerName'],
+                    $payload['isSubTalk'],
+                    'assistant',
+                    $content
+                );
+
+                unset($content);
+                break;
+        }
 
         unset($payload);
     }
@@ -792,8 +818,9 @@ class go extends Factory
      * @param array $payload
      *
      * @return void
+     * @throws \ReflectionException
      */
-    private function handleHistory(array $payload): void
+    private function handleContext(array $payload): void
     {
         switch ($payload['type']) {
             case 'addUserMessage':
@@ -811,6 +838,22 @@ class go extends Factory
                     $payload['data']['content'],
                     $payload['data']['reasoning_content'] ?? ''
                 );
+
+                $content = ['content' => $payload['data']['content']];
+
+                if (isset($payload['data']['reasoning_content']) && '' !== $payload['data']['reasoning_content']) {
+                    $content['reasoning_content'] = $payload['data']['reasoning_content'];
+                }
+
+                $this->core->memory->saveChat(
+                    $payload['sessionId'],
+                    $payload['workerName'],
+                    $payload['isSubTalk'],
+                    1 === $payload['isSubTalk'] && WORKER_MAIN === $payload['workerName'] ? 'user' : 'assistant',
+                    $content
+                );
+
+                unset($content);
                 break;
 
             case 'addToolCalls':
@@ -827,7 +870,7 @@ class go extends Factory
                 $this->core->context->addToolResults(
                     $payload['sessionId'],
                     $payload['workerName'],
-                    $payload['data']['call_id'],
+                    $payload['data']['id'],
                     $payload['data']['content']
                 );
                 break;
@@ -845,8 +888,7 @@ class go extends Factory
      */
     private function handleToolCalls(array $payload): void
     {
-        $tool_calls   = [];
-        $tool_results = [];
+        $tool_calls = [];
 
         foreach ($payload['data'] as $data) {
             if (!isset($data['handler_args']['action'])) {
@@ -856,16 +898,44 @@ class go extends Factory
 
             $this->utils->debug('Handler', 'Calling ' . $data['tool_calls']['name'], 'trace');
 
+            $tool_calls[$data['tool_calls']['id']]['response'] = [
+                'content' => $data['tool_calls']['content']
+            ];
+
+            if (isset($data['tool_calls']['reasoning_content']) && '' !== $data['tool_calls']['reasoning_content']) {
+                $tool_calls[$data['tool_calls']['id']]['response']['reasoning_content'] = $data['tool_calls']['reasoning_content'];
+            }
+
+            $tool_calls[$data['tool_calls']['id']]['tools'] = [
+                'id'        => $data['tool_calls']['id'],
+                'type'      => $data['tool_calls']['type'],
+                'name'      => $data['tool_calls']['name'],
+                'arguments' => json_encode($data['handler_args'], JSON_FORMAT)
+            ];
+
             try {
                 $this->core->IOData->src_cmd  = $data['tool_calls']['name'];
                 $this->core->IOData->src_argv = $data['handler_args'];
 
                 $handler = $data['handler_args']['handler']::new();
                 $result  = $handler->{$data['handler_args']['action']}($data['handler_args'], $this) ?? '工具执行完成，但未返回数据。';
+
+                if (!is_string($result)) {
+                    $result = json_encode($result, JSON_FORMAT);
+
+                    if (false === $result) {
+                        $result = 'Handler ERROR: ' . $data['tool_calls']['name'] . ' -> ' . json_last_error_msg();
+                    }
+                }
+
+                $tool_calls[$data['tool_calls']['id']]['results'] = [
+                    'id'      => $data['tool_calls']['id'],
+                    'content' => $result
+                ];
             } catch (\Throwable $throwable) {
-                $result = [
-                    'status' => 'error',
-                    'error'  => $throwable->getMessage(),
+                $tool_calls[$data['tool_calls']['id']]['results'] = [
+                    'id'      => $data['tool_calls']['id'],
+                    'content' => $throwable->getMessage()
                 ];
 
                 $this->utils->debug('Handler', $data['tool_calls']['name'] . ' => ' . $throwable->getMessage(), 'trace');
@@ -875,60 +945,94 @@ class go extends Factory
 
             $this->core->IOData->src_cmd  = '';
             $this->core->IOData->src_argv = [];
-
-            if (!is_string($result)) {
-                $result = json_encode($result, JSON_FORMAT);
-
-                if (false === $result) {
-                    $result = 'Handler ERROR: ' . $data['tool_calls']['name'] . ' -> ' . json_last_error_msg();
-                }
-            }
-
-            $tool_calls[]   = $data['tool_calls'];
-            $tool_results[] = [
-                'call_id'     => $data['tool_calls']['id'],
-                'call_name'   => $data['tool_calls']['name'],
-                'call_result' => $result
-            ];
         }
 
-        if ([] === $tool_calls) {
-            return;
-        }
-
-        $metadata = $this->utils->getMarker(
-            $payload['sender'],
-            $payload['workerName'],
-            $payload['workerRole'],
-            $payload['workerName'],
-            $payload['isSubTalk'],
-            $payload['sessionId'],
-            $payload['messageId']
-        );
-
-        $this->core->context->addToolCalls($payload['sessionId'], $payload['workerName'], $tool_calls);
-
-        foreach ($tool_results as $tool_result) {
-            $this->core->context->addToolResults(
-                $payload['sessionId'],
+        if ([] !== $tool_calls) {
+            $metadata = $this->utils->getMarker(
+                $payload['sender'],
                 $payload['workerName'],
-                $tool_result['call_id'],
-                $tool_result['call_result']
+                $payload['workerRole'],
+                $payload['workerName'],
+                $payload['isSubTalk'],
+                $payload['sessionId'],
+                $payload['messageId']
             );
 
-            $msg_data = [
-                'type' => 'tool_result',
-                'data' => [
-                    'call_id'       => $tool_result['call_id'],
-                    'function_name' => $tool_result['call_name'],
-                    'content'       => $tool_result['call_result'],
-                ]
-            ];
+            foreach ($tool_calls as $tool_call) {
+                // Stream
+                $this->core->sendMessage($metadata + [
+                        'type' => 'tool_calls',
+                        'data' => [
+                            'id'        => $tool_call['tools']['id'],
+                            'name'      => $tool_call['tools']['name'],
+                            'arguments' => $tool_call['tools']['arguments']
+                        ]
+                    ]
+                );
 
-            $this->core->sendMessage($metadata + $msg_data);
+                $this->core->sendMessage($metadata + [
+                        'type' => 'tool_result',
+                        'data' => [
+                            'id'      => $tool_call['results']['id'],
+                            'name'    => $tool_call['tools']['name'],
+                            'content' => $tool_call['results']['content']
+                        ]
+                    ]
+                );
+
+                // Context history
+                $this->core->context->addToolCalls(
+                    $payload['sessionId'],
+                    $payload['workerName'],
+                    $tool_call['tools'],
+                    $tool_call['response']['content'],
+                    $tool_call['response']['reasoning_content'] ?? ''
+                );
+
+                $this->core->context->addToolResults(
+                    $payload['sessionId'],
+                    $payload['workerName'],
+                    $tool_call['results']['id'],
+                    $tool_call['results']['content']
+                );
+
+                // Chat history
+                $content = [
+                    'tools'   => [
+                        'id'        => $tool_call['tools']['id'],
+                        'name'      => $tool_call['tools']['name'],
+                        'arguments' => $tool_call['tools']['arguments']
+                    ],
+                    'results' => [
+                        'id'      => $tool_call['results']['id'],
+                        'name'    => $tool_call['tools']['name'],
+                        'content' => $tool_call['results']['content']
+                    ]
+                ];
+
+                if (isset($tool_call['response']['content']) && '' !== $tool_call['response']['content']) {
+                    $content['content'] = $tool_call['response']['content'];
+                }
+
+                if (isset($tool_call['response']['reasoning_content']) && '' !== $tool_call['response']['reasoning_content']) {
+                    $content['reasoning_content'] = $tool_call['response']['reasoning_content'];
+                }
+
+                $this->core->memory->saveChat(
+                    $payload['sessionId'],
+                    $payload['workerName'],
+                    $payload['isSubTalk'],
+                    'assistant',
+                    $content
+                );
+
+                unset($content);
+            }
+
+            unset($metadata, $tool_call);
         }
 
-        unset($payload, $tool_calls, $tool_results, $data, $handler, $result, $metadata, $tool_result, $msg_data);
+        unset($payload, $tool_calls, $data, $handler, $result);
     }
 
     /**
@@ -1097,7 +1201,11 @@ class go extends Factory
                 }
 
                 if (is_array($payload['data']) && isset($payload['data']['message'])) {
+                    // Send error message and stop
                     $this->core->sendMessage($payload);
+                } else {
+                    // Retry on other uncaught errors
+                    $this->core->context->messagePending($payload['sessionId'], true);
                 }
 
                 unset($error);

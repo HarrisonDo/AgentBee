@@ -166,17 +166,46 @@ class message extends Factory
 
         switch ($act) {
             case 'read':
-                $content = $data_content['memory']->read('misc', 0, 0, $data_content['length'], $session_id, $data_content['create_id'] ?? 0, true);
+                $data_content['create_id']   ??= 0;
+                $data_content['window_type'] ??= 0;
+                $data_content['worker_name'] ??= WORKER_MAIN;
 
-                $content['act'] = $act;
+                $content = [
+                    'act'         => $act,
+                    'session_id'  => $session_id,
+                    'window_type' => $data_content['window_type'],
+                    'worker_name' => $data_content['worker_name'],
+                    'data'        => $data_content['memory']->readChat(
+                        $session_id,
+                        $data_content['window_type'],
+                        $data_content['worker_name'],
+                        $data_content['create_id'],
+                        $data_content['length']
+                    )
+                ];
                 break;
 
             case 'delete':
-                $content = [] !== $data_content['create_ids']
-                    ? $data_content['memory']->delete('misc', $data_content['create_ids'])
-                    : ['status' => 'error', 'error' => '缺少目标记忆ID'];
+                $content = ['act' => $act, 'status' => 'success'];
 
-                $content['act'] = $act;
+                if (isset($data_content['create_id']) && is_int($data_content['create_id'])) {
+                    if ($data_content['memory']->deleteChat($session_id, $data_content['create_id'])) {
+                        $content['deleted_id'] = $data_content['create_id'];
+                    } else {
+                        $content['status'] = 'error';
+                        $content['error']  = '删除失败，请重试';
+                    }
+                } else {
+                    $content['status'] = 'error';
+                    $content['error']  = '缺少目标记忆ID';
+                }
+                break;
+
+            case 'readGroups':
+                $content = [
+                    'act'  => $act,
+                    'data' => $data_content['memory']->readChatGroups($session_id)
+                ];
                 break;
 
             case 'listSessions':
@@ -244,9 +273,12 @@ class message extends Factory
      */
     public function process_chat(array $data_content): array
     {
+        $user_text   = [];
+        $user_files  = [];
+        $user_images = [];
+
         $content = [];
         $errors  = [];
-        $saves   = [];
         $files   = [];
         $reset   = false;
 
@@ -264,8 +296,8 @@ class message extends Factory
                 }
 
                 if ('/reset' !== $text) {
-                    $saves[]   = $text;
-                    $content[] = ['type' => 'text', 'content' => $text];
+                    $user_text[] = $text;
+                    $content[]   = ['type' => 'text', 'content' => $text];
                 } else {
                     $reset = true;
                 }
@@ -289,9 +321,21 @@ class message extends Factory
                     }
 
                     try {
-                        $data_url  = $this->utils->resizeImage($binary);
-                        $content[] = ['type' => 'text', 'content' => '"' . $data['file']['filename'] . '"：图片已加载到上下文，无需读取文件，直接识别。'];
-                        $content[] = ['type' => 'image', 'content' => $data_url];
+                        $save_file   = $this->saveUploadFile($data['file']['filename'], $binary);
+                        $prompt_text = '"' . $data['file']['filename'] . '"：图片已附在上下文中，可直接查看，无需读取文件。';
+
+                        if ($save_file['uploaded']) {
+                            $prompt_text .= "\n" . '原图路径：`' . $save_file['file_path'] . '`，需要时可读取。';
+                        }
+
+                        $content[] = ['type' => 'text', 'content' => $prompt_text];
+                        $content[] = ['type' => 'image', 'content' => $this->utils->resizeImage($binary)];
+
+                        $user_images[] = [
+                            'filename'   => $data['file']['filename'],
+                            'file_path'  => $save_file['file_path'] ?? '',
+                            'img_base64' => $this->utils->resizeImage($binary, 320, 320)
+                        ];
                     } catch (\Throwable $throwable) {
                         $errors[] = $data['file']['filename'] . '：' . $throwable->getMessage();
                         unset($throwable);
@@ -311,14 +355,27 @@ class message extends Factory
                             throw new \RuntimeException('文本提取失败');
                         }
 
+                        $save_file   = $this->saveUploadFile($data['file']['filename'], $binary);
+                        $prompt_text = '--- 文件信息 ---' . "\n"
+                            . '文件名: ' . $data['file']['filename'] . "\n"
+                            . 'MIME类型: ' . $data['file']['mimeType'] . "\n";
+
+                        if ($save_file['uploaded']) {
+                            $prompt_text .= '文件路径：`' . $save_file['file_path'] . '`，需要时可读取。' . "\n";
+                        }
+
+                        $prompt_text .= '--- 文件内容（开始） ---' . "\n"
+                            . $file_text . "\n"
+                            . '--- 文件内容（结束） ---';
+
                         $content[] = [
                             'type'    => 'text',
-                            'content' => '--- 文件信息 ---' . "\n"
-                                . '文件名: ' . $data['file']['filename'] . "\n"
-                                . 'MIME类型: ' . $data['file']['mimeType'] . "\n"
-                                . '--- 文件内容（开始） ---' . "\n"
-                                . $file_text . "\n"
-                                . '--- 文件内容（结束） ---'
+                            'content' => $prompt_text
+                        ];
+
+                        $user_files[] = [
+                            'filename'  => $data['file']['filename'],
+                            'file_path' => $save_file['file_path'] ?? ''
                         ];
                     } catch (\Throwable $throwable) {
                         $errors[] = $data['file']['filename'] . '：' . $throwable->getMessage();
@@ -329,26 +386,19 @@ class message extends Factory
                 }
 
                 // 2.3 Process other type of files
-                $upload_path = $this->upload_path . DIRECTORY_SEPARATOR . date('Ymd');
+                $save_file = $this->saveUploadFile($data['file']['filename'], $binary);
 
-                if (!is_dir($upload_path)) {
-                    try {
-                        mkdir($upload_path, 0777, true);
-                    } catch (\Throwable) {
-                    }
+                if ($save_file['uploaded']) {
+                    $files[] = [
+                        'filename' => $data['file']['filename'],
+                        'filepath' => $save_file['file_path']
+                    ];
+
+                    $user_files[] = [
+                        'filename'  => $data['file']['filename'],
+                        'file_path' => $save_file['file_path']
+                    ];
                 }
-
-                $file_path  = $upload_path . DIRECTORY_SEPARATOR . $data['file']['filename'];
-                $save_bytes = file_put_contents($file_path, $binary);
-
-                if (false === $save_bytes || 0 === $save_bytes) {
-                    continue;
-                }
-
-                $files[] = [
-                    'filename' => $data['file']['filename'],
-                    'filepath' => $file_path
-                ];
             }
         }
 
@@ -356,8 +406,7 @@ class message extends Factory
             $file_list = '';
 
             foreach ($files as $i => $file) {
-                $file_list .= ($i + 1) . '. 文件名: ' . $file['filename'] . "\n"
-                    . '   文件路径: ' . $file['filepath'] . "\n";
+                $file_list .= ($i + 1) . '. 文件名: ' . $file['filename'] . "\n" . '   文件路径: ' . $file['filepath'] . "\n";
             }
 
             $content[] = [
@@ -373,24 +422,40 @@ class message extends Factory
         }
 
         if ([] !== $content) {
+            $full_chat = [];
+            $full_text = [] !== $user_text ? implode(' ', $user_text) : '';
+
+            if ('' !== $full_text) {
+                $full_chat['content'] = $full_text;
+            }
+            if ([] !== $user_images) {
+                $full_chat['images'] = $user_images;
+            }
+            if ([] !== $user_files) {
+                $full_chat['files'] = $user_files;
+            }
+
             $result = [
+                'type'     => 'chat',
                 'need_llm' => true,
                 'content'  => $content,
                 'errors'   => $errors,
-                'saves'    => $saves,
-                'type'     => 'chat'
+                'memory'   => $full_text,
+                'chat'     => $full_chat
             ];
+
+            unset($full_chat, $full_text);
         } else {
             $result = [
+                'type'     => 'message',
                 'need_llm' => false,
                 'content'  => $reset
                     ? ['status' => 'success', 'act' => 'reset', 'content' => '好了，上下文已重置，我们继续吧。']
-                    : ['status' => 'success', 'act' => 'idle', 'content' => '我在呢。有需要就告诉我，没事也可以聊两句。'],
-                'type'     => 'message'
+                    : ['status' => 'success', 'act' => 'idle', 'content' => '我在呢。有需要就告诉我，没事也可以聊两句。']
             ];
         }
 
-        unset($data_content, $content, $errors, $saves, $files, $reset, $data, $text, $binary, $data_url, $detected, $file_text, $upload_path, $file_path);
+        unset($data_content, $user_text, $user_files, $user_images, $content, $errors, $files, $reset, $data, $text, $binary, $save_file, $prompt_text, $detected, $file_text);
         return $result;
     }
 
@@ -424,6 +489,34 @@ class message extends Factory
 
         unset($data_content, $msg_marker, $msg_list, $data, $text);
         return $message;
+    }
+
+    /**
+     * @param string $filename
+     * @param string $binary
+     *
+     * @return array|false[]
+     */
+    private function saveUploadFile(string $filename, string $binary): array
+    {
+        $upload_path = $this->upload_path . DIRECTORY_SEPARATOR . date('Ymd');
+
+        if (!is_dir($upload_path)) {
+            try {
+                mkdir($upload_path, 0777, true);
+            } catch (\Throwable) {
+            }
+        }
+
+        $file_path  = $upload_path . DIRECTORY_SEPARATOR . $filename;
+        $save_bytes = file_put_contents($file_path, $binary);
+
+        $result = false !== $save_bytes && 0 < $save_bytes
+            ? ['uploaded' => true, 'file_path' => $file_path]
+            : ['uploaded' => false];
+
+        unset($filename, $binary, $upload_path, $file_path, $save_bytes);
+        return $result;
     }
 
     /**
